@@ -287,3 +287,23 @@ class BlacklistEntry:
         object.__setattr__(
             self, "created_at", optional_str(self.created_at, "created_at")
         )
+
+
+@dataclass(frozen=True, slots=True)
+class LikedArtist:
+    """An artist liked by the user to steer recommendations and taste matching."""
+
+    artist_name: str
+    normalized_key: str
+    created_at: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "artist_name", require_str(self.artist_name, "artist_name")
+        )
+        object.__setattr__(
+            self, "normalized_key", require_str(self.normalized_key, "normalized_key")
+        )
+        object.__setattr__(
+            self, "created_at", optional_str(self.created_at, "created_at")
+        )

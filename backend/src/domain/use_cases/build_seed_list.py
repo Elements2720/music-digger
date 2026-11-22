@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from ..entities.track import SeedArtist
 from ..interfaces.catalog import ISeedDiscovery
 from ..interfaces.llm import ILLMService
-from ..interfaces.repositories import ISeedRepository
+from ..interfaces.repositories import ILikedArtistRepository, ISeedRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,10 +50,12 @@ class BuildSeedList:
         discovery: ISeedDiscovery | None,
         seed_repository: ISeedRepository,
         llm_service: ILLMService | None = None,
+        liked_artist_repository: ILikedArtistRepository | None = None,
     ) -> None:
         self._discovery = discovery
         self._seed_repository = seed_repository
         self._llm_service = llm_service
+        self._liked_artist_repository = liked_artist_repository
 
     async def execute(
         self,
@@ -67,6 +69,7 @@ class BuildSeedList:
         exclude_artists: Sequence[str] = (),
         progress: Callable[[CrawlProgress], None] | None = None,
         use_local_seeds: bool = False,
+        use_liked_seeds: bool = False,
         seed_artists: Sequence[str] | None = None,
     ) -> BuildSeedListResult:
         """Discover seeds, persist them, and return the resulting counts.
@@ -92,6 +95,17 @@ class BuildSeedList:
             if local_seeds:
                 effective_seed_artists = tuple(seed.name for seed in local_seeds)
 
+        if use_liked_seeds and self._liked_artist_repository is not None:
+            liked = await self._liked_artist_repository.list_all()
+            if liked:
+                liked_names = tuple(a.artist_name for a in liked)
+                if effective_seed_artists:
+                    effective_seed_artists = tuple(
+                        dict.fromkeys(list(effective_seed_artists) + list(liked_names))
+                    )
+                else:
+                    effective_seed_artists = liked_names
+
         discovered: Sequence[SeedArtist] = ()
         if use_deezer and self._discovery is not None:
             if effective_seed_artists is not None:
@@ -109,6 +123,20 @@ class BuildSeedList:
                     max_depth=max_depth,
                     progress=progress,
                 )
+
+        if use_liked_seeds and discovered:
+            boosted = [
+                SeedArtist(
+                    name=s.name,
+                    priority_score=max(0.90, s.priority_score),
+                    category=s.category,
+                    status=s.status,
+                    source="liked-related",
+                    external_id=s.external_id,
+                )
+                for s in discovered
+            ]
+            discovered = tuple(boosted)
 
         llm_generated: Sequence[SeedArtist] = ()
         if self._llm_service is not None and llm_count > 0 and llm_genres:

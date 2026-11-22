@@ -22,7 +22,9 @@ from rich.progress import (
 from rich.table import Table
 
 from container import Container
+from data.normalization import normalize_artist_key
 from domain.entities.search import SearchFilter
+from domain.entities.track import SeedArtist
 from domain.use_cases import (
     DEFAULT_TECHNO_TERMS,
     SetNotEmbeddedError,
@@ -802,6 +804,11 @@ def seed_crawl(
         "--use-local-seeds",
         help="Use artists discovered from local library as crawl roots.",
     ),
+    use_liked_seeds: bool = typer.Option(
+        False,
+        "--use-liked-seeds",
+        help="Use liked artists as priority crawl roots.",
+    ),
 ) -> None:
     """Populate seed_artists from Deezer's related-artist graph and charts."""
 
@@ -836,6 +843,7 @@ def seed_crawl(
                     use_deezer=True,
                     progress=on_progress,
                     use_local_seeds=use_local_seeds,
+                    use_liked_seeds=use_liked_seeds,
                 )
             _print_seed_result(result)
 
@@ -1311,6 +1319,84 @@ def blacklist_remove(
                 console.print(f"[red]Error:[/] Blacklist entry {entry_id} not found.")
                 raise typer.Exit(1)
             console.print(f"[green]Removed blacklist entry {entry_id}.[/]")
+
+    _run(run())
+
+
+@app.command("like-artist")
+def like_artist_cmd(
+    name: str = typer.Argument(..., help="Artist name to like."),
+) -> None:
+    """Like an artist to steer recommendations and discovery."""
+
+    async def run() -> None:
+        async with Container() as container:
+            clean = name.strip()
+            if container.blacklist_repository:
+                norm_key = normalize_artist_key(clean)
+                if await container.blacklist_repository.is_artist_blocked(norm_key):
+                    console.print(
+                        f"[red]Cannot like '{clean}': artist is blacklisted. Unblock first.[/]"
+                    )
+                    return
+            assert container.liked_artist_repository is not None
+            liked = await container.liked_artist_repository.like(clean)
+            if container.seed_repository:
+                await container.seed_repository.record_discovery(
+                    [SeedArtist(clean, 1.0, "electronic", source="liked-artist")],
+                    priority_increment=0.5,
+                )
+            if hasattr(container.track_repository, "_invalidate_taste_cache"):
+                container.track_repository._invalidate_taste_cache()
+            console.print(f"[green]Liked artist:[/] {liked.artist_name}")
+
+    _run(run())
+
+
+@app.command("unlike-artist")
+def unlike_artist_cmd(
+    name: str = typer.Argument(..., help="Artist name to unlike."),
+) -> None:
+    """Remove an artist from your liked artists."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.liked_artist_repository is not None
+            deleted = await container.liked_artist_repository.unlike(name.strip())
+            if hasattr(container.track_repository, "_invalidate_taste_cache"):
+                container.track_repository._invalidate_taste_cache()
+            if deleted:
+                console.print(f"[green]Unliked artist:[/] {name.strip()}")
+            else:
+                console.print(f"[yellow]Artist '{name.strip()}' was not liked.[/]")
+
+    _run(run())
+
+
+@app.command("liked-artists")
+def liked_artists_cmd() -> None:
+    """List all liked artists."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.liked_artist_repository is not None
+            liked = await container.liked_artist_repository.list_all()
+            if not liked:
+                console.print(
+                    "[dim]No liked artists yet. Use `dig like-artist <name>`.[/]"
+                )
+                return
+            table = Table(title=f"Liked Artists ({len(liked)})")
+            table.add_column("Artist")
+            table.add_column("Normalized Key", style="dim")
+            table.add_column("Liked At", style="dim")
+            for item in liked:
+                table.add_row(
+                    item.artist_name,
+                    item.normalized_key,
+                    str(item.created_at or "-"),
+                )
+            console.print(table)
 
     _run(run())
 

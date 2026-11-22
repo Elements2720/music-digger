@@ -122,6 +122,33 @@ CREATE INDEX IF NOT EXISTS idx_blacklist_kind
 CREATE INDEX IF NOT EXISTS idx_blacklist_normalized_key
     ON blacklist(normalized_key);
 
+CREATE TABLE IF NOT EXISTS liked_artists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    artist_name TEXT NOT NULL,
+    normalized_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_liked_artists_key
+    ON liked_artists(normalized_key);
+
+CREATE TABLE IF NOT EXISTS planned_sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS planned_set_tracks (
+    set_id INTEGER NOT NULL REFERENCES planned_sets(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    track_id TEXT NOT NULL,
+    PRIMARY KEY(set_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_planned_set_tracks_set_id
+    ON planned_set_tracks(set_id);
+
 """
 
 

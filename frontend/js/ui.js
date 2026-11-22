@@ -92,6 +92,17 @@ export function trackRow(
   const dig = el("button", { class: "dig-btn", type: "button", text: "DIG >" });
   dig.addEventListener("click", () => emit("dig:track", track));
 
+  const addSet = el("button", {
+    class: "btn tiny ghost add-set-btn",
+    type: "button",
+    title: "Add to Set Builder",
+    text: "+ SET",
+  });
+  addSet.addEventListener("click", () => {
+    emit("builder:add-track", track);
+    emit("toast", `Added "${track.title}" to set plan`);
+  });
+
   const del = el("button", {
     class: "icon-btn delete-btn",
     type: "button",
@@ -115,7 +126,7 @@ export function trackRow(
       class: "track-score",
       text: similarity === null ? "" : `${Number(similarity).toFixed(1)}%`,
     }),
-    el("div", { class: "track-actions" }, [play, heard, dig, del]),
+    el("div", { class: "track-actions" }, [play, heard, dig, addSet, del]),
   ]);
 
   del.addEventListener("click", async (e) => {

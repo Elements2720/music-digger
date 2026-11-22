@@ -19,6 +19,7 @@
       <button class="tab active" data-tab="run" type="button">RUN</button>
       <button class="tab" data-tab="dig" type="button">DIG</button>
       <button class="tab" data-tab="sets" type="button">SETS</button>
+      <button class="tab" data-tab="builder" type="button">BUILDER</button>
       <button class="tab" data-tab="stats" type="button">STATS</button>
     </nav>
     <div class="topbar-meta" id="topbar-meta">
@@ -221,6 +222,117 @@
       </div>
     </section>
 
+    <!-- --------------------------------------------------------- BUILDER -->
+    <section class="tab-panel" id="tab-builder">
+      <!-- Top Action Strip -->
+      <div class="panel builder-action-strip">
+        <div class="builder-strip-left">
+          <input class="input builder-name-input" id="builder-set-name" type="text" value="My DJ Set Plan" placeholder="Set name…">
+          <select class="input builder-saved-select" id="builder-saved-sets">
+            <option value="">-- Load Saved Set --</option>
+          </select>
+        </div>
+        <div class="builder-strip-actions">
+          <button class="btn tiny primary" id="builder-save-btn" type="button">SAVE SET</button>
+          <div class="dropdown-wrap" style="display: inline-flex; position: relative;">
+            <button class="btn tiny ghost" id="builder-auto-seq-btn" type="button" title="Auto-sequence tracks using 2-opt search">AUTO-SEQUENCE ▾</button>
+            <div class="popup-menu hidden" id="builder-auto-seq-menu">
+              <button class="popup-item" data-flow="ramp_up" type="button">Ramp Up (+2 BPM flow)</button>
+              <button class="popup-item" data-flow="steady" type="button">Steady (Keep tempo)</button>
+              <button class="popup-item" data-flow="cool_down" type="button">Cool Down (-2 BPM flow)</button>
+              <button class="popup-item" data-flow="any" type="button">Any Flow (Harmonic first)</button>
+            </div>
+          </div>
+          <button class="btn tiny ghost" id="builder-export-btn" type="button" title="Export as M3U8 playlist">EXPORT .M3U8</button>
+          <button class="btn tiny danger ghost" id="builder-clear-btn" type="button">CLEAR</button>
+        </div>
+      </div>
+
+      <!-- Two-Column Workbench -->
+      <div class="builder-workbench">
+        <!-- Left Column: Set Tracklist & Energy Progression -->
+        <div class="panel builder-set-column">
+          <div class="panel-head">
+            <div>
+              <h2>Set Tracklist</h2>
+              <div class="builder-summary-bar mono" id="builder-summary">
+                <span id="builder-track-count">0 tracks</span> ·
+                <span id="builder-total-time">00:00:00</span> ·
+                <span class="chip taste-mid" id="builder-avg-score">Avg Flow: —</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Energy & BPM Curve -->
+          <div class="builder-curve-container">
+            <div class="builder-curve-header dim">
+              <span>BPM &amp; Energy Progression</span>
+              <span class="mono" id="builder-curve-range">—</span>
+            </div>
+            <div class="builder-svg-wrap" id="builder-curve-wrap">
+              <svg id="builder-energy-curve" viewBox="0 0 600 80" preserveAspectRatio="none">
+                <text x="300" y="45" text-anchor="middle" fill="#666" font-size="12">Add 2+ tracks to see the BPM and energy progression</text>
+              </svg>
+            </div>
+          </div>
+
+          <!-- Tracklist items & transition connector pills -->
+          <div class="builder-tracklist" id="builder-tracklist">
+            <div class="empty" id="builder-tracklist-empty">
+              Set is currently empty.<br>Pick recommendations from the right or click "+ SET" while digging.
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Smart Next-Track Picker & Bridge Finder -->
+        <div class="panel builder-picker-column">
+          <!-- Picker Subtabs / Header -->
+          <div class="builder-picker-head">
+            <div class="subtabs" id="builder-picker-modes">
+              <button class="subtab active" id="builder-mode-next-btn" type="button">NEXT TRACK</button>
+              <button class="subtab" id="builder-mode-bridge-btn" type="button">FIND BRIDGE</button>
+            </div>
+            <label class="check compact">
+              <input type="checkbox" id="builder-local-only"> Local files only
+            </label>
+          </div>
+
+          <!-- Mode A: Next Track Recommendations -->
+          <div class="builder-mode-panel" id="builder-panel-next">
+            <!-- Flow preset pills & search input -->
+            <div class="builder-filter-strip">
+              <div class="flow-presets" id="builder-flow-presets">
+                <button class="flow-btn active" data-flow="steady" type="button">Steady</button>
+                <button class="flow-btn" data-flow="ramp_up" type="button">Ramp Up (+2)</button>
+                <button class="flow-btn" data-flow="cool_down" type="button">Cool Down (-2)</button>
+                <button class="flow-btn" data-flow="any" type="button">Any</button>
+              </div>
+              <input class="input compact" id="builder-catalog-search" type="search" placeholder="Search catalog to add…">
+            </div>
+            <div class="builder-reference-banner" id="builder-next-reference-banner">
+              <span class="dim">Transitioning from:</span>
+              <strong id="builder-next-ref-title">Pick or add a track first</strong>
+            </div>
+            <div class="results builder-results-list" id="builder-next-results">
+              <div class="empty">Add tracks to the set on the left to see intelligent next-track recommendations.</div>
+            </div>
+          </div>
+
+          <!-- Mode B: Bridge Finder -->
+          <div class="builder-mode-panel hidden" id="builder-panel-bridge">
+            <div class="bridge-selector-bar">
+              <div class="bridge-node" id="bridge-node-a">Track A: —</div>
+              <div class="bridge-arrow">──► [BRIDGE] ──►</div>
+              <div class="bridge-node" id="bridge-node-b">Track B: —</div>
+            </div>
+            <div class="results builder-results-list" id="builder-bridge-results">
+              <div class="empty">Click [+ BRIDGE] on any transition pill between two tracks on the left to find ideal stepping-stone tracks.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ----------------------------------------------------------- STATS -->
     <section class="tab-panel" id="tab-stats">
       <div class="panel">
@@ -276,6 +388,13 @@
               <option value="taste_desc">Highest Taste Match</option>
               <option value="taste_asc">Lowest Taste Match</option>
             </select>
+            <select class="input" id="artists-taste-mode-select" title="Taste match profile">
+              <option value="both" selected>Taste: Auto (Both)</option>
+              <option value="local">Taste: Local Library</option>
+              <option value="liked">Taste: Liked Artists</option>
+            </select>
+            <button class="btn tiny ghost" id="artists-liked-only-btn" type="button" title="Filter to liked artists only">♥ LIKED ONLY</button>
+            <button class="btn tiny ghost" id="artists-similar-liked-btn" type="button" title="Discover artists similar to liked artists">SIMILAR TO LIKED</button>
             <button class="btn tiny primary" id="artists-fetch-btn" type="button">+ FETCH ARTIST</button>
           </div>
         </div>
@@ -313,8 +432,11 @@
             <div class="cell-badges" id="seeds-source-pills" style="margin-top: 6px;"></div>
           </div>
           <div class="filter-row">
-            <button class="btn tiny danger" id="seeds-purge-failed-btn" type="button">PURGE FAILED</button>
-            <button class="btn tiny danger ghost" id="seeds-purge-pending-btn" type="button">PURGE ALL PENDING</button>
+            <button class="btn tiny ghost" id="seeds-keep-core-btn" type="button" title="Delete pending seeds except core sources">KEEP CORE ONLY</button>
+            <button class="btn tiny ghost" id="seeds-purge-general-btn" type="button" title="Delete pending general seeds">PURGE GENERAL</button>
+            <button class="btn tiny ghost" id="seeds-purge-filtered-btn" type="button" disabled title="Purge matching currently selected filters">PURGE FILTERED</button>
+            <button class="btn tiny danger ghost" id="seeds-purge-failed-btn" type="button" title="Purge all failed seeds">PURGE FAILED</button>
+            <button class="btn tiny danger" id="seeds-clear-all-pending-btn" type="button" title="Delete ALL pending seeds">CLEAR ALL PENDING</button>
           </div>
         </div>
         <div class="filter-row" style="margin-top: 10px;">
@@ -482,7 +604,10 @@
     <div class="modal-dialog modal-tracks-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-artist-tracks-title">
       <div class="modal-head sticky-head">
         <div class="modal-title-group">
-          <h3 id="modal-artist-tracks-title">—</h3>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button class="heart-btn" id="modal-artist-tracks-like" type="button" title="Like artist">♡</button>
+            <h3 id="modal-artist-tracks-title">—</h3>
+          </div>
           <span class="modal-subtitle dim mono" id="modal-artist-tracks-count">0 tracks</span>
         </div>
         <div class="modal-head-actions">
@@ -494,6 +619,43 @@
       <div class="modal-body scrollable-body">
         <div class="list" id="modal-artist-tracks-list">
           <div class="empty">Loading tracks…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- -------------------------------------------- MODAL: SIMILAR TO LIKED -->
+  <div class="modal-backdrop hidden" id="modal-similar-artists">
+    <div class="modal-dialog modal-tracks-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-similar-artists-title">
+      <div class="modal-head sticky-head">
+        <div class="modal-title-group">
+          <h3 id="modal-similar-artists-title">Similar to Liked Artists</h3>
+          <span class="modal-subtitle dim mono" id="modal-similar-artists-count">AI recommendations based on your favorite artists</span>
+        </div>
+        <div class="modal-head-actions">
+          <input class="input mono compact" id="similar-artists-min-year" type="number" min="1900" max="2100" placeholder="Min Year" style="width: 90px;">
+          <button class="btn tiny ghost" id="similar-artists-refresh-btn" type="button">REFRESH</button>
+          <button class="btn tiny ghost" id="modal-similar-artists-close" type="button" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div class="modal-body scrollable-body">
+        <div class="table-container">
+          <table class="data-table" id="similar-artists-table">
+            <thead>
+              <tr>
+                <th>Artist</th>
+                <th>Match</th>
+                <th>Tracks</th>
+                <th>BPM</th>
+                <th>Years</th>
+                <th>Genres</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="similar-artists-tbody">
+              <tr><td colspan="7" class="empty">Loading recommendations…</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

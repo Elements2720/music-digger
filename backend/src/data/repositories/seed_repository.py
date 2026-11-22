@@ -299,9 +299,10 @@ class SQLiteSeedRepository(ISeedRepository):
     async def purge_seeds(
         self,
         *,
-        status: str | None = None,
+        status: str = "pending",
         source: str | None = None,
         category: str | None = None,
+        exclude_sources: Sequence[str] = (),
     ) -> int:
         clauses: list[str] = []
         params: list[Any] = []
@@ -317,6 +318,10 @@ class SQLiteSeedRepository(ISeedRepository):
                 raise ValueError(f"category must be one of {sorted(SEED_CATEGORIES)}")
             clauses.append("category = ?")
             params.append(category)
+        if exclude_sources:
+            placeholders = ", ".join("?" for _ in exclude_sources)
+            clauses.append(f"source NOT IN ({placeholders})")
+            params.extend(exclude_sources)
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"DELETE FROM seed_artists {where}"

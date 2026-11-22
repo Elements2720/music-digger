@@ -14,9 +14,10 @@ from .._validation import (
     normalize_track_key,
     require_str,
 )
-from ..entities.track import BlacklistEntry
+from ..entities.track import BlacklistEntry, LikedArtist, SeedArtist
 from ..interfaces.repositories import (
     IBlacklistRepository,
+    ILikedArtistRepository,
     ISeedRepository,
     ITrackRepository,
 )
@@ -50,10 +51,35 @@ class ManageCatalog:
         track_repository: ITrackRepository,
         seed_repository: ISeedRepository,
         blacklist_repository: IBlacklistRepository,
+        liked_artist_repository: ILikedArtistRepository | None = None,
     ) -> None:
         self._track_repository = track_repository
         self._seed_repository = seed_repository
         self._blacklist_repository = blacklist_repository
+        self._liked_artist_repository = liked_artist_repository
+
+    async def like_artist(self, artist_name: str) -> LikedArtist:
+        clean = require_str(artist_name, "artist_name").strip()
+        blocked = await self._blacklist_repository.get_blocked_artist_keys()
+        if normalize_artist_key(clean) in blocked:
+            raise ValueError(
+                f"Cannot like blacklisted artist '{clean}'. Unblock first."
+            )
+        if self._liked_artist_repository is None:
+            raise RuntimeError("LikedArtistRepository not configured")
+        liked = await self._liked_artist_repository.like(clean)
+        # Bump in seed_artists with priority_score=1.0, category="electronic", source="liked-artist"
+        await self._seed_repository.record_discovery(
+            [SeedArtist(clean, 1.0, "electronic", source="liked-artist")],
+            priority_increment=0.5,
+        )
+        return liked
+
+    async def unlike_artist(self, artist_name: str) -> bool:
+        clean = require_str(artist_name, "artist_name").strip()
+        if self._liked_artist_repository is None:
+            return False
+        return await self._liked_artist_repository.unlike(clean)
 
     async def delete_track(
         self,

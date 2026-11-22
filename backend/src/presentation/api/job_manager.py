@@ -268,6 +268,7 @@ class JobManager:
             use_deezer=True,
             progress=on_progress,
             use_local_seeds=config.get("use_local_seeds", False),
+            use_liked_seeds=config.get("use_liked_seeds", False),
         )
         job.result = _seed_result(result)
 
@@ -610,6 +611,7 @@ class JobManager:
             "general_limit": _as_int(params, "general_limit", 300, minimum=0),
             "max_depth": _as_int(params, "max_depth", 2, minimum=0, maximum=5),
             "use_local_seeds": _as_bool(params, "use_local_seeds", False),
+            "use_liked_seeds": _as_bool(params, "use_liked_seeds", False),
         }
 
     @staticmethod

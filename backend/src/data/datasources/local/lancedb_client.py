@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -193,9 +193,11 @@ class LanceDBClient:
     async def compute_similarity_to_seed_ids(
         self,
         seed_track_ids: Sequence[str],
+        *,
+        weights: Mapping[str, float] | None = None,
         batch_size: int = 2048,
     ) -> dict[str, float]:
-        """Compute cosine similarity percent against the mean vector of ``seed_track_ids``.
+        """Compute cosine similarity percent against the (optionally weighted) mean vector of ``seed_track_ids``.
 
         Streams dataset batches so peak RAM usage remains small and bounded.
         Returns a mapping of track_id to similarity percentage (0.0 to 100.0).
@@ -206,17 +208,19 @@ class LanceDBClient:
             return {}
         table = await self._ensure_table()
         return await asyncio.to_thread(
-            self._compute_similarity_sync, table, seed_track_ids, batch_size
+            self._compute_similarity_sync, table, seed_track_ids, weights, batch_size
         )
 
     def _compute_similarity_sync(
         self,
         table: Any,
         seed_track_ids: Sequence[str],
+        weights: Mapping[str, float] | None,
         batch_size: int,
     ) -> dict[str, float]:
         lance_ds = table.to_lance()
         seed_vecs: list[list[float]] = []
+        seed_weights: list[float] = []
         for i in range(0, len(seed_track_ids), 500):
             chunk = seed_track_ids[i : i + 500]
             quoted_chunk = ", ".join(self._quote(tid) for tid in chunk)
@@ -229,6 +233,9 @@ class LanceDBClient:
                 for r in rows:
                     if r.get("vector") is not None:
                         seed_vecs.append(r["vector"])
+                        tid = str(r["id"])
+                        w = float(weights[tid]) if (weights and tid in weights) else 1.0
+                        seed_weights.append(w)
             except Exception:  # noqa: BLE001, S112
                 continue
 
@@ -236,8 +243,14 @@ class LanceDBClient:
             return {}
 
         arr = np.array(seed_vecs, dtype=np.float32)
-        mean_vec = np.mean(arr, axis=0)
-        norm = np.linalg.norm(mean_vec)
+        weight_arr = np.array(seed_weights, dtype=np.float32)
+        sum_weight = float(np.sum(weight_arr))
+        if sum_weight <= 1e-9:
+            mean_vec = np.mean(arr, axis=0)
+        else:
+            mean_vec = np.average(arr, axis=0, weights=weight_arr)
+
+        norm = float(np.linalg.norm(mean_vec))
         if norm <= 1e-9:
             return {}
         taste_vec = mean_vec / norm
@@ -258,6 +271,36 @@ class LanceDBClient:
                 pct = round(float(max(0.0, min(1.0, dot))) * 100.0, 1)
                 results[str(track_id)] = pct
 
+        return results
+
+    async def get_vectors(
+        self, track_ids: Sequence[str]
+    ) -> dict[str, tuple[float, ...]]:
+        """Fetch vectors for a specific list of track IDs."""
+        if not track_ids or await self.count() == 0:
+            return {}
+        table = await self._ensure_table()
+        return await asyncio.to_thread(self._get_vectors_sync, table, track_ids)
+
+    def _get_vectors_sync(
+        self, table: Any, track_ids: Sequence[str]
+    ) -> dict[str, tuple[float, ...]]:
+        lance_ds = table.to_lance()
+        results: dict[str, tuple[float, ...]] = {}
+        for i in range(0, len(track_ids), 500):
+            chunk = track_ids[i : i + 500]
+            quoted_chunk = ", ".join(self._quote(tid) for tid in chunk)
+            try:
+                sub_table = lance_ds.to_table(
+                    filter=f"id IN ({quoted_chunk})",
+                    columns=["id", "vector"],
+                )
+                rows = sub_table.to_pylist()
+                for r in rows:
+                    if r.get("vector") is not None:
+                        results[str(r["id"])] = tuple(float(v) for v in r["vector"])
+            except Exception:  # noqa: BLE001, S112
+                continue
         return results
 
     async def count(self) -> int:

@@ -18,6 +18,7 @@ from .dig_similar_tracks import (
     TrackNotEmbeddedError,
     TrackNotFoundError,
 )
+from .dj_set_helper import DJSetHelper, evaluate_transition
 from .fetch_artist_tracks import (
     FetchArtistProgress,
     FetchArtistResult,
@@ -49,6 +50,7 @@ __all__ = [
     "CrawlITunesResult",
     "CrawlITunesSeeds",
     "CrawlProgress",
+    "DJSetHelper",
     "DeleteArtistResult",
     "DeleteTrackResult",
     "DigLookupError",
@@ -74,4 +76,5 @@ __all__ = [
     "TrackNotEmbeddedError",
     "TrackNotFoundError",
     "VibeSearch",
+    "evaluate_transition",
 ]

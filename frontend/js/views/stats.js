@@ -13,7 +13,22 @@ const SEEDS_PAGE_SIZE = 20;
 let artistsSearchTimer = null;
 let seedsSearchTimer = null;
 let blacklistSearchTimer = null;
+let similarSearchTimer = null;
 let openFetchModalFn = null;
+let artistsLikedOnlyActive = false;
+let likedArtistsSet = new Set();
+
+async function refreshLikedArtists() {
+  try {
+    const res = await api.likedArtists();
+    const list = res?.liked_artists ?? (Array.isArray(res) ? res : []);
+    likedArtistsSet = new Set(
+      list.map((a) => (a.artist_name || a.artist || "").toLowerCase())
+    );
+  } catch {
+    // ignore
+  }
+}
 
 function $(id) {
   return document.getElementById(id);
@@ -127,6 +142,8 @@ async function loadArtists(page = 1) {
   const minYearVal = $("artists-min-year") ? $("artists-min-year").value.trim() : "";
   const minYear = minYearVal ? Number(minYearVal) : undefined;
   const sort = $("artists-sort").value;
+  const tasteMode = $("artists-taste-mode-select") ? $("artists-taste-mode-select").value : "both";
+  const likedOnly = artistsLikedOnlyActive;
   const offset = (artistPage - 1) * ARTIST_PAGE_SIZE;
 
   try {
@@ -138,6 +155,8 @@ async function loadArtists(page = 1) {
       sort,
       limit: ARTIST_PAGE_SIZE,
       offset,
+      taste_mode: tasteMode,
+      liked_only: likedOnly,
     });
 
     const total = data.total;
@@ -157,6 +176,47 @@ async function loadArtists(page = 1) {
 
     tbody.replaceChildren(
       ...artists.map((artist) => {
+        const isLiked = artist.is_liked || likedArtistsSet.has(artist.artist.toLowerCase());
+        if (artist.is_liked) likedArtistsSet.add(artist.artist.toLowerCase());
+
+        const heartBtn = el("button", {
+          class: `heart-btn${isLiked ? " liked" : ""}`,
+          type: "button",
+          title: isLiked ? "Unlike artist" : "Like artist",
+          text: isLiked ? "♥" : "♡",
+        });
+        heartBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const wasLiked = heartBtn.classList.contains("liked");
+          heartBtn.disabled = true;
+          try {
+            if (wasLiked) {
+              await api.unlikeArtist(artist.artist);
+              likedArtistsSet.delete(artist.artist.toLowerCase());
+              heartBtn.classList.remove("liked");
+              heartBtn.textContent = "♡";
+              heartBtn.title = "Like artist";
+              emit("toast", `Unliked "${artist.artist}"`);
+              emit("artist:liked", { artist: artist.artist, liked: false });
+              if (artistsLikedOnlyActive) {
+                await loadArtists(artistPage);
+              }
+            } else {
+              await api.likeArtist(artist.artist);
+              likedArtistsSet.add(artist.artist.toLowerCase());
+              heartBtn.classList.add("liked");
+              heartBtn.textContent = "♥";
+              heartBtn.title = "Unlike artist";
+              emit("toast", `Liked "${artist.artist}"`);
+              emit("artist:liked", { artist: artist.artist, liked: true });
+            }
+          } catch (err) {
+            emit("toast", err.message);
+          } finally {
+            heartBtn.disabled = false;
+          }
+        });
+
         const fetchBtn = el("button", {
           class: "btn tiny primary",
           type: "button",
@@ -240,7 +300,10 @@ async function loadArtists(page = 1) {
 
         return el("tr", {}, [
           el("td", { class: "artist-name-cell" }, [
-            el("strong", { text: artist.artist }),
+            el("div", { class: "artist-name-group" }, [
+              heartBtn,
+              el("strong", { text: artist.artist }),
+            ]),
           ]),
           el("td", { class: "mono", text: fmtNumber(artist.track_count) }),
           el("td", { class: "mono" }, [
@@ -321,6 +384,14 @@ async function openArtistTracksModal(artistName) {
   if (filterInput) filterInput.value = "";
   if (list) list.replaceChildren(el("div", { class: "empty", text: "Loading tracks…" }));
 
+  const isLiked = likedArtistsSet.has(artistName.toLowerCase());
+  const likeBtn = $("modal-artist-tracks-like");
+  if (likeBtn) {
+    likeBtn.classList.toggle("liked", isLiked);
+    likeBtn.textContent = isLiked ? "♥" : "♡";
+    likeBtn.title = isLiked ? "Unlike artist" : "Like artist";
+  }
+
   modal?.classList.remove("hidden");
   document.body.style.overflow = "hidden";
 
@@ -342,6 +413,181 @@ function closeArtistTracksModal() {
   currentArtistTracks = [];
   currentArtistName = "";
   $("modal-artist-tracks-list")?.replaceChildren();
+}
+
+async function openSimilarArtistsModal() {
+  const modal = $("modal-similar-artists");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+  await loadSimilarArtists();
+}
+
+function closeSimilarArtistsModal() {
+  const modal = $("modal-similar-artists");
+  if (!modal || modal.classList.contains("hidden")) return;
+  modal.classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+async function loadSimilarArtists() {
+  const tbody = $("similar-artists-tbody");
+  if (!tbody) return;
+  tbody.replaceChildren(
+    el("tr", {}, [
+      el("td", {
+        colspan: 7,
+        class: "empty",
+        text: "Computing similarity to liked artists…",
+      }),
+    ])
+  );
+  const minYearVal = $("similar-artists-min-year")
+    ? $("similar-artists-min-year").value.trim()
+    : "";
+  const minYear = minYearVal ? Number(minYearVal) : undefined;
+
+  try {
+    const data = await api.similarLikedArtists({ min_year: minYear, limit: 30 });
+    const items = data.items || [];
+    const seedCount = (data.seed_artists || []).length;
+    const countLabel = $("modal-similar-artists-count");
+    if (countLabel) {
+      countLabel.textContent = `Based on ${seedCount} liked artist${seedCount === 1 ? "" : "s"} (${data.seed_tracks_used || 0} reference tracks)`;
+    }
+
+    if (items.length === 0) {
+      tbody.replaceChildren(
+        el("tr", {}, [
+          el("td", {
+            colspan: 7,
+            class: "empty",
+            text:
+              seedCount === 0
+                ? "No liked artists yet! Click the heart ♥ on your favorite artists in the Artists Explorer to get recommendations."
+                : "No similar artists found in catalog.",
+          }),
+        ])
+      );
+      return;
+    }
+
+    tbody.replaceChildren(
+      ...items.map((item) => {
+        const isLiked =
+          item.is_liked || likedArtistsSet.has(item.artist.toLowerCase());
+        if (item.is_liked) likedArtistsSet.add(item.artist.toLowerCase());
+
+        const heartBtn = el("button", {
+          class: `heart-btn${isLiked ? " liked" : ""}`,
+          type: "button",
+          title: isLiked ? "Unlike artist" : "Like artist",
+          text: isLiked ? "♥" : "♡",
+        });
+        heartBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const wasLiked = heartBtn.classList.contains("liked");
+          heartBtn.disabled = true;
+          try {
+            if (wasLiked) {
+              await api.unlikeArtist(item.artist);
+              likedArtistsSet.delete(item.artist.toLowerCase());
+              heartBtn.classList.remove("liked");
+              heartBtn.textContent = "♡";
+              heartBtn.title = "Like artist";
+              emit("toast", `Unliked "${item.artist}"`);
+              emit("artist:liked", { artist: item.artist, liked: false });
+            } else {
+              await api.likeArtist(item.artist);
+              likedArtistsSet.add(item.artist.toLowerCase());
+              heartBtn.classList.add("liked");
+              heartBtn.textContent = "♥";
+              heartBtn.title = "Unlike artist";
+              emit("toast", `Liked "${item.artist}"`);
+              emit("artist:liked", { artist: item.artist, liked: true });
+            }
+          } catch (err) {
+            emit("toast", err.message);
+          } finally {
+            heartBtn.disabled = false;
+          }
+        });
+
+        const fetchBtn = el("button", {
+          class: "btn tiny primary",
+          type: "button",
+          text: "FETCH",
+        });
+        fetchBtn.addEventListener("click", () => {
+          closeSimilarArtistsModal();
+          if (openFetchModalFn) openFetchModalFn(item.artist);
+        });
+
+        const tracksBtn = el("button", {
+          class: "btn tiny ghost",
+          type: "button",
+          text: "TRACKS",
+        });
+        tracksBtn.addEventListener("click", () => {
+          closeSimilarArtistsModal();
+          openArtistTracksModal(item.artist);
+        });
+
+        const score = Math.round(item.similarity_percent || 0);
+        const tier =
+          score >= 80 ? "taste-high" : score >= 65 ? "taste-mid" : "taste-low";
+        const matchEl = el("span", { class: `chip ${tier}`, text: `${score}%` });
+
+        const bpmText =
+          item.bpm_min && item.bpm_max
+            ? item.bpm_min === item.bpm_max
+              ? `${Math.round(item.bpm_min)}`
+              : `${Math.round(item.bpm_min)}–${Math.round(item.bpm_max)}`
+            : "—";
+
+        const yearText =
+          item.year_min && item.year_max
+            ? item.year_min === item.year_max
+              ? `${item.year_min}`
+              : `${item.year_min}–${item.year_max}`
+            : "—";
+
+        const rawGenres = item.genres || [];
+        const genreChips = rawGenres
+          .slice(0, 3)
+          .map((g) => el("span", { class: "chip genre-chip", text: g }));
+
+        return el("tr", {}, [
+          el("td", { class: "artist-name-cell" }, [
+            el("div", { class: "artist-name-group" }, [
+              heartBtn,
+              el("strong", { text: item.artist }),
+            ]),
+          ]),
+          el("td", {}, [matchEl]),
+          el("td", { class: "mono" }, [
+            el("span", { text: `${fmtNumber(item.track_count)} ` }),
+            el("span", {
+              class: "dim",
+              text: `(${fmtNumber(item.embedded_count)} emb)`,
+            }),
+          ]),
+          el("td", { class: "mono dim", text: bpmText }),
+          el("td", { class: "mono dim", text: yearText }),
+          el("td", {}, [el("div", { class: "cell-badges" }, genreChips)]),
+          el("td", {}, [
+            el("div", { class: "cell-actions" }, [fetchBtn, tracksBtn]),
+          ]),
+        ]);
+      })
+    );
+  } catch (error) {
+    tbody.replaceChildren(
+      el("tr", {}, [
+        el("td", { colspan: 7, class: "empty", text: error.message }),
+      ])
+    );
+  }
 }
 
 async function loadSeeds(page = 1) {
@@ -691,10 +937,34 @@ export function mount() {
     artistsSearchTimer = setTimeout(() => loadArtists(1), 300);
   });
   $("artists-sort").addEventListener("change", () => loadArtists(1));
+  $("artists-taste-mode-select")?.addEventListener("change", () => loadArtists(1));
+  $("artists-liked-only-btn")?.addEventListener("click", () => {
+    artistsLikedOnlyActive = !artistsLikedOnlyActive;
+    $("artists-liked-only-btn")?.classList.toggle("active-filter", artistsLikedOnlyActive);
+    loadArtists(1);
+  });
+  $("artists-similar-liked-btn")?.addEventListener("click", () => openSimilarArtistsModal());
   $("artists-prev").addEventListener("click", () => loadArtists(artistPage - 1));
   $("artists-next").addEventListener("click", () => loadArtists(artistPage + 1));
 
   populateGenreFilter();
+
+  function updateSeedsPurgeFilteredBtn() {
+    const btn = $("seeds-purge-filtered-btn");
+    if (!btn) return;
+    const source = $("seeds-source-filter")?.value || "";
+    const category = $("seeds-category-filter")?.value || "";
+    const hasFilter = !!(source || category);
+    btn.disabled = !hasFilter;
+    if (hasFilter) {
+      const parts = [];
+      if (source) parts.push(`source '${source}'`);
+      if (category) parts.push(`category '${category}'`);
+      btn.title = `Purge seeds matching ${parts.join(" and ")}`;
+    } else {
+      btn.title = "Select a source or category filter first";
+    }
+  }
 
   // Seeds queue listeners
   $("seeds-search")?.addEventListener("input", () => {
@@ -702,12 +972,70 @@ export function mount() {
     seedsSearchTimer = setTimeout(() => loadSeeds(1), 300);
   });
   $("seeds-status-filter")?.addEventListener("change", () => loadSeeds(1));
-  $("seeds-source-filter")?.addEventListener("change", () => loadSeeds(1));
-  $("seeds-category-filter")?.addEventListener("change", () => loadSeeds(1));
+  $("seeds-source-filter")?.addEventListener("change", () => {
+    updateSeedsPurgeFilteredBtn();
+    loadSeeds(1);
+  });
+  $("seeds-category-filter")?.addEventListener("change", () => {
+    updateSeedsPurgeFilteredBtn();
+    loadSeeds(1);
+  });
   $("seeds-prev")?.addEventListener("click", () => loadSeeds(seedsPage - 1));
   $("seeds-next")?.addEventListener("click", () => loadSeeds(seedsPage + 1));
 
   // Purge buttons
+  $("seeds-keep-core-btn")?.addEventListener("click", async () => {
+    if (
+      !window.confirm(
+        "Delete all pending seeds EXCEPT core sources (local-library, itunes-crawl, manual-artist, dj-set, liked-artist)?"
+      )
+    )
+      return;
+    try {
+      const res = await api.purgeSeeds({
+        status: "pending",
+        exclude_sources: ["local-library", "itunes-crawl", "manual-artist", "dj-set", "liked-artist"],
+      });
+      emit("toast", `Purged ${res.purged} non-core pending seeds`);
+      await Promise.all([loadAnalytics(), loadSeeds(1)]);
+    } catch (err) {
+      emit("toast", err.message);
+    }
+  });
+
+  $("seeds-purge-general-btn")?.addEventListener("click", async () => {
+    if (!window.confirm("Purge all pending seeds in category 'general'?")) return;
+    try {
+      const res = await api.purgeSeeds({ status: "pending", category: "general" });
+      emit("toast", `Purged ${res.purged} general seeds`);
+      await Promise.all([loadAnalytics(), loadSeeds(1)]);
+    } catch (err) {
+      emit("toast", err.message);
+    }
+  });
+
+  $("seeds-purge-filtered-btn")?.addEventListener("click", async () => {
+    const source = $("seeds-source-filter")?.value || "";
+    const category = $("seeds-category-filter")?.value || "";
+    const status = $("seeds-status-filter")?.value || "pending";
+    if (!source && !category) return;
+    const parts = [`status '${status}'`];
+    if (source) parts.push(`source '${source}'`);
+    if (category) parts.push(`category '${category}'`);
+    if (!window.confirm(`Purge seeds matching ${parts.join(" and ")}?`)) return;
+    try {
+      const res = await api.purgeSeeds({
+        status,
+        source: source || undefined,
+        category: category || undefined,
+      });
+      emit("toast", `Purged ${res.purged} filtered seeds`);
+      await Promise.all([loadAnalytics(), loadSeeds(1)]);
+    } catch (err) {
+      emit("toast", err.message);
+    }
+  });
+
   $("seeds-purge-failed-btn")?.addEventListener("click", async () => {
     if (!window.confirm("Purge ALL failed seeds from the queue?")) return;
     try {
@@ -719,11 +1047,12 @@ export function mount() {
     }
   });
 
-  $("seeds-purge-pending-btn")?.addEventListener("click", async () => {
-    if (!window.confirm("Purge ALL pending seeds from the queue?")) return;
+  $("seeds-clear-all-pending-btn")?.addEventListener("click", async () => {
+    if (!window.confirm("WARNING: Are you sure you want to delete ALL pending seeds in the entire queue?"))
+      return;
     try {
       const res = await api.purgeSeeds({ status: "pending" });
-      emit("toast", `Purged ${res.purged} pending seeds`);
+      emit("toast", `Cleared ${res.purged} pending seeds`);
       await Promise.all([loadAnalytics(), loadSeeds(1)]);
     } catch (err) {
       emit("toast", err.message);
@@ -793,6 +1122,52 @@ export function mount() {
     closeArtistTracksModal();
     if (openFetchModalFn) openFetchModalFn(artist);
   });
+  $("modal-artist-tracks-like")?.addEventListener("click", async () => {
+    if (!currentArtistName) return;
+    const likeBtn = $("modal-artist-tracks-like");
+    const wasLiked = likeBtn?.classList.contains("liked");
+    if (likeBtn) likeBtn.disabled = true;
+    try {
+      if (wasLiked) {
+        await api.unlikeArtist(currentArtistName);
+        likedArtistsSet.delete(currentArtistName.toLowerCase());
+        if (likeBtn) {
+          likeBtn.classList.remove("liked");
+          likeBtn.textContent = "♡";
+          likeBtn.title = "Like artist";
+        }
+        emit("toast", `Unliked "${currentArtistName}"`);
+        emit("artist:liked", { artist: currentArtistName, liked: false });
+      } else {
+        await api.likeArtist(currentArtistName);
+        likedArtistsSet.add(currentArtistName.toLowerCase());
+        if (likeBtn) {
+          likeBtn.classList.add("liked");
+          likeBtn.textContent = "♥";
+          likeBtn.title = "Unlike artist";
+        }
+        emit("toast", `Liked "${currentArtistName}"`);
+        emit("artist:liked", { artist: currentArtistName, liked: true });
+      }
+      loadArtists(artistPage);
+    } catch (err) {
+      emit("toast", err.message);
+    } finally {
+      if (likeBtn) likeBtn.disabled = false;
+    }
+  });
+
+  // Similar artists modal wiring
+  const similarModal = $("modal-similar-artists");
+  $("modal-similar-artists-close")?.addEventListener("click", closeSimilarArtistsModal);
+  similarModal?.addEventListener("click", (e) => {
+    if (e.target === similarModal) closeSimilarArtistsModal();
+  });
+  $("similar-artists-refresh-btn")?.addEventListener("click", () => loadSimilarArtists());
+  $("similar-artists-min-year")?.addEventListener("input", () => {
+    clearTimeout(similarSearchTimer);
+    similarSearchTimer = setTimeout(() => loadSimilarArtists(), 300);
+  });
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
@@ -802,7 +1177,19 @@ export function mount() {
       }
       if (tracksModal && !tracksModal.classList.contains("hidden")) {
         closeArtistTracksModal();
+        return;
       }
+      if (similarModal && !similarModal.classList.contains("hidden")) {
+        closeSimilarArtistsModal();
+      }
+    }
+  });
+
+  on("artist:liked", ({ artist, liked }) => {
+    if (liked) {
+      likedArtistsSet.add((artist || "").toLowerCase());
+    } else {
+      likedArtistsSet.delete((artist || "").toLowerCase());
     }
   });
 
@@ -876,7 +1263,7 @@ export function mount() {
   });
 
   loadAnalytics();
-  loadArtists(1);
+  refreshLikedArtists().then(() => loadArtists(1));
   loadSeeds(1);
   loadBlacklist();
   loadHardware();

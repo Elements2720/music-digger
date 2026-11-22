@@ -67,14 +67,21 @@ export function setupPlayer() {
     if (current) emit("dig:track", current);
   });
 
-  audio.addEventListener("play", syncToggle);
-  audio.addEventListener("pause", syncToggle);
+  audio.addEventListener("play", () => {
+    syncToggle();
+    emit("player:state", { track: current, playing: true });
+  });
+  audio.addEventListener("pause", () => {
+    syncToggle();
+    emit("player:state", { track: current, playing: false });
+  });
   audio.addEventListener("timeupdate", syncSeek);
   audio.addEventListener("durationchange", syncSeek);
   audio.addEventListener("ended", () => {
     audio.currentTime = 0;
     syncToggle();
     syncSeek();
+    emit("player:state", { track: current, playing: false });
   });
 
   syncToggle();
@@ -122,4 +129,8 @@ export function playTrack(track) {
 
 export function currentTrack() {
   return current;
+}
+
+export function isAudioPlaying() {
+  return !!(current && !audio.paused && !audio.ended);
 }

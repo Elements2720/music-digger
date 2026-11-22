@@ -99,6 +99,41 @@ export const api = {
       body: payload,
     }),
 
+  likedArtists: () => request("/api/catalog/liked-artists"),
+  likeArtist: (name) =>
+    request(`/api/catalog/liked-artists/${encodeURIComponent(name)}`, {
+      method: "POST",
+    }),
+  unlikeArtist: (name) =>
+    request(`/api/catalog/liked-artists/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+  similarLikedArtists: (params = {}) =>
+    request("/api/catalog/liked-artists/similar", { params }),
+
+  setHelperSuggestNext: (payload) =>
+    request("/api/set-helper/suggest-next", { method: "POST", body: payload }),
+  setHelperBridge: (payload) =>
+    request("/api/set-helper/bridge", { method: "POST", body: payload }),
+  setHelperAutoSequence: (payload) =>
+    request("/api/set-helper/auto-sequence", { method: "POST", body: payload }),
+  setHelperEvaluate: (payload) =>
+    request("/api/set-helper/evaluate", { method: "POST", body: payload }),
+  setHelperListSets: () => request("/api/set-helper/sets"),
+  setHelperCreateSet: (payload) =>
+    request("/api/set-helper/sets", { method: "POST", body: payload }),
+  setHelperGetSet: (setId) =>
+    request(`/api/set-helper/sets/${encodeURIComponent(setId)}`),
+  setHelperUpdateSet: (setId, payload) =>
+    request(`/api/set-helper/sets/${encodeURIComponent(setId)}`, {
+      method: "PUT",
+      body: payload,
+    }),
+  setHelperDeleteSet: (setId) =>
+    request(`/api/set-helper/sets/${encodeURIComponent(setId)}`, {
+      method: "DELETE",
+    }),
+
   currentJob: () => request("/api/jobs/current"),
   startJob: (kind, params) =>
     request("/api/jobs", { method: "POST", body: { kind, params } }),

@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 from domain.entities.analytics import (
     ArtistSummary,
@@ -73,12 +73,14 @@ class HybridTrackRepository(ITrackRepository):
         self._sqlite = sqlite
         self._vectors = vectors
         self._blacklist = blacklist
-        self._taste_scores_cache: tuple[dict[str, float], int] | None = None
-        self._taste_scores_timestamp: float = 0.0
+        self._taste_scores_cache: dict[
+            tuple[str, int], tuple[dict[str, float], int]
+        ] = {}
+        self._taste_scores_timestamp: dict[tuple[str, int], float] = {}
 
     def _invalidate_taste_cache(self) -> None:
-        self._taste_scores_cache = None
-        self._taste_scores_timestamp = 0.0
+        self._taste_scores_cache.clear()
+        self._taste_scores_timestamp.clear()
 
     async def upsert_many(self, tracks: Sequence[Track]) -> int:
         if not tracks:
@@ -439,35 +441,74 @@ class HybridTrackRepository(ITrackRepository):
         )
         return tuple(row_to_track(row) for row in rows)
 
-    async def get_artist_taste_scores(self) -> tuple[dict[str, float], int]:
-        """Compute mean taste match percentage per artist against local library profile."""
+    async def get_artist_taste_scores(
+        self,
+        *,
+        mode: Literal["local", "liked", "both"] = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[dict[str, float], int]:
+        """Compute mean taste match percentage per artist against taste profile."""
+        cache_key = (mode, hash(liked_artist_keys))
         now = time.monotonic()
         if (
-            self._taste_scores_cache is not None
-            and (now - self._taste_scores_timestamp) < 300.0
+            cache_key in self._taste_scores_cache
+            and (now - self._taste_scores_timestamp.get(cache_key, 0.0)) < 300.0
         ):
-            return self._taste_scores_cache
+            return self._taste_scores_cache[cache_key]
 
-        local_rows = await self._sqlite.fetchall(
-            "SELECT id FROM tracks WHERE source = 'local' AND is_embedded = 1"
+        embedded_rows = await self._sqlite.fetchall(
+            "SELECT id, artist, source FROM tracks WHERE is_embedded = 1"
         )
-        if not local_rows:
-            self._taste_scores_cache = ({}, 0)
-            self._taste_scores_timestamp = now
-            return ({}, 0)
+        if not embedded_rows:
+            result = ({}, 0)
+            self._taste_scores_cache[cache_key] = result
+            self._taste_scores_timestamp[cache_key] = now
+            return result
 
-        seed_ids = [str(r["id"]) for r in local_rows]
-        track_scores = await self._vectors.compute_similarity_to_seed_ids(seed_ids)
+        local_ids: list[str] = []
+        liked_ids: list[str] = []
+        for r in embedded_rows:
+            tid = str(r["id"])
+            if r["source"] == "local":
+                local_ids.append(tid)
+            if (
+                liked_artist_keys
+                and normalize_artist_key(str(r["artist"])) in liked_artist_keys
+            ):
+                liked_ids.append(tid)
+
+        weights: dict[str, float] | None = None
+        seed_ids: list[str] = []
+        if mode == "local":
+            seed_ids = local_ids
+        elif mode == "liked":
+            seed_ids = liked_ids
+        else:  # "both"
+            weight_map: dict[str, float] = {}
+            for tid in local_ids:
+                weight_map[tid] = 1.0
+            for tid in liked_ids:
+                weight_map[tid] = 2.0
+            seed_ids = list(weight_map.keys())
+            weights = weight_map if seed_ids else None
+
+        if not seed_ids:
+            result = ({}, 0)
+            self._taste_scores_cache[cache_key] = result
+            self._taste_scores_timestamp[cache_key] = now
+            return result
+
+        track_scores = await self._vectors.compute_similarity_to_seed_ids(
+            seed_ids, weights=weights
+        )
         if not track_scores:
-            self._taste_scores_cache = ({}, len(seed_ids))
-            self._taste_scores_timestamp = now
-            return ({}, len(seed_ids))
+            result = ({}, len(seed_ids))
+            self._taste_scores_cache[cache_key] = result
+            self._taste_scores_timestamp[cache_key] = now
+            return result
 
-        artist_rows = await self._sqlite.fetchall(
-            "SELECT id, artist FROM tracks WHERE is_embedded = 1"
-        )
         artist_scores_accum: dict[str, list[float]] = {}
-        for r in artist_rows:
+        for r in embedded_rows:
             tid = str(r["id"])
             artist = str(r["artist"])
             if tid in track_scores:
@@ -479,9 +520,21 @@ class HybridTrackRepository(ITrackRepository):
                 artist_taste_scores[artist] = round(sum(scores) / len(scores), 1)
 
         result = (artist_taste_scores, len(seed_ids))
-        self._taste_scores_cache = result
-        self._taste_scores_timestamp = now
+        self._taste_scores_cache[cache_key] = result
+        self._taste_scores_timestamp[cache_key] = now
         return result
+
+    async def get_embeddings_map(
+        self, track_ids: Sequence[str]
+    ) -> dict[str, EmbeddingVector]:
+        """Fetch vectors for track IDs and return mapping of track_id to EmbeddingVector."""
+        if not track_ids:
+            return {}
+        vectors_map = await self._vectors.get_vectors(track_ids)
+        return {
+            tid: EmbeddingVector(values=vec, dimension=len(vec))
+            for tid, vec in vectors_map.items()
+        }
 
     async def list_artists_summary(
         self,
@@ -493,6 +546,9 @@ class HybridTrackRepository(ITrackRepository):
         sort: str = "tracks_desc",
         limit: int = 50,
         offset: int = 0,
+        taste_mode: Literal["local", "liked", "both"] = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        liked_only: bool = False,
     ) -> tuple[Sequence[ArtistSummary], int]:
         """List artists summary with counts and genres, returning (artists, total_count)."""
         clauses: list[str] = []
@@ -518,7 +574,9 @@ class HybridTrackRepository(ITrackRepository):
         if total_artists == 0 or limit <= 0:
             return ((), total_artists)
 
-        taste_scores, _ = await self.get_artist_taste_scores()
+        taste_scores, _ = await self.get_artist_taste_scores(
+            mode=taste_mode, liked_artist_keys=liked_artist_keys
+        )
         is_taste_sort = sort in ("taste_desc", "taste_asc")
 
         if sort == "artist_asc":
@@ -532,7 +590,7 @@ class HybridTrackRepository(ITrackRepository):
                 "track_count DESC, embedded_count DESC, artist COLLATE NOCASE ASC"
             )
 
-        if is_taste_sort:
+        if is_taste_sort or liked_only:
             summary_sql = f"""
             SELECT
                 artist,
@@ -574,11 +632,16 @@ class HybridTrackRepository(ITrackRepository):
 
         summaries: list[ArtistSummary] = []
         for row in rows:
+            artist_name = str(row["artist"])
+            norm_key = normalize_artist_key(artist_name)
+            is_liked = norm_key in liked_artist_keys
+            if liked_only and not is_liked:
+                continue
+
             genres_raw = row["genres_concat"] or ""
             genres = tuple(g for g in genres_raw.split(",") if g)
             sources_raw = row["sources_concat"] or ""
             sources = tuple(s for s in sources_raw.split(",") if s)
-            artist_name = str(row["artist"])
             taste_pct = taste_scores.get(artist_name)
             summaries.append(
                 ArtistSummary(
@@ -598,8 +661,12 @@ class HybridTrackRepository(ITrackRepository):
                     if row["year_max"] is not None
                     else None,
                     taste_match_percent=taste_pct,
+                    is_liked=is_liked,
                 )
             )
+
+        if liked_only:
+            total_artists = len(summaries)
 
         if is_taste_sort:
             if sort == "taste_desc":
@@ -624,6 +691,8 @@ class HybridTrackRepository(ITrackRepository):
                     ),
                     reverse=True,
                 )
+
+        if is_taste_sort or liked_only:
             summaries = summaries[offset : offset + limit]
 
         return (tuple(summaries), total_artists)

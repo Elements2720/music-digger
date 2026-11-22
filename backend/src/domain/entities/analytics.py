@@ -99,6 +99,7 @@ class ArtistSummary:
     year_min: int | None = None
     year_max: int | None = None
     taste_match_percent: float | None = None
+    is_liked: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "artist", require_str(self.artist, "artist"))
@@ -132,6 +133,52 @@ class ArtistSummary:
                 "taste_match_percent",
                 require_float(self.taste_match_percent, "taste_match_percent"),
             )
+        if not isinstance(self.is_liked, bool):
+            raise TypeError("is_liked must be a bool")
+        object.__setattr__(self, "is_liked", self.is_liked)
+
+
+@dataclass(frozen=True, slots=True)
+class SimilarArtistMatch:
+    """Artist ranked by CLAP audio similarity to a seed/liked artist profile."""
+
+    artist: str
+    similarity_percent: float
+    track_count: int
+    embedded_count: int
+    genres: tuple[str, ...]
+    bpm_min: float | None = None
+    bpm_max: float | None = None
+    year_min: int | None = None
+    year_max: int | None = None
+    is_liked: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artist", require_str(self.artist, "artist"))
+        pct = require_float(self.similarity_percent, "similarity_percent")
+        if not 0.0 <= pct <= 100.0:
+            raise ValueError("similarity_percent must be between 0.0 and 100.0")
+        object.__setattr__(self, "similarity_percent", pct)
+        tc = require_int(self.track_count, "track_count")
+        if tc < 0:
+            raise ValueError("track_count must be non-negative")
+        object.__setattr__(self, "track_count", tc)
+        ec = require_int(self.embedded_count, "embedded_count")
+        if ec < 0:
+            raise ValueError("embedded_count must be non-negative")
+        object.__setattr__(self, "embedded_count", ec)
+        object.__setattr__(self, "genres", freeze_tuple(self.genres, "genres", str))
+        if self.bpm_min is not None:
+            object.__setattr__(self, "bpm_min", require_float(self.bpm_min, "bpm_min"))
+        if self.bpm_max is not None:
+            object.__setattr__(self, "bpm_max", require_float(self.bpm_max, "bpm_max"))
+        if self.year_min is not None:
+            object.__setattr__(self, "year_min", require_int(self.year_min, "year_min"))
+        if self.year_max is not None:
+            object.__setattr__(self, "year_max", require_int(self.year_max, "year_max"))
+        if not isinstance(self.is_liked, bool):
+            raise TypeError("is_liked must be a bool")
+        object.__setattr__(self, "is_liked", self.is_liked)
 
 
 @dataclass(frozen=True, slots=True)

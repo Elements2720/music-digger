@@ -7,12 +7,14 @@ import { toast } from "./ui.js";
 import * as runView from "./views/run.js";
 import * as digView from "./views/dig.js";
 import * as setsView from "./views/sets.js";
+import * as builderView from "./views/builder.js";
 import * as statsView from "./views/stats.js";
 
 const VIEWS = {
   run: runView,
   dig: digView,
   sets: setsView,
+  builder: builderView,
   stats: statsView,
 };
 
@@ -55,6 +57,10 @@ function bind() {
   on("dig:track", (track) => {
     showTab("dig");
     digView.selectTrack(track);
+  });
+  on("builder:add-track", (track) => {
+    showTab("builder");
+    builderView.addTrackToSet(track);
   });
 
   // A finished job can change counts or add a set: refresh whatever is open.

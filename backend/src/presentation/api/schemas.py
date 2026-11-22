@@ -7,6 +7,7 @@ FastAPI already depends on it — domain entities stay framework-free.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -61,9 +62,10 @@ class ResetEmbeddingsRequest(BaseModel):
 class SeedPurgeRequest(BaseModel):
     """Request to purge seeds by status/source/category."""
 
-    status: str | None = None
+    status: str = "pending"
     source: str | None = None
     category: str | None = None
+    exclude_sources: list[str] = Field(default_factory=list)
 
 
 class BlacklistCreateRequest(BaseModel):
@@ -73,6 +75,54 @@ class BlacklistCreateRequest(BaseModel):
     name: str = Field(..., min_length=1)
     track_title: str | None = None
     reason: str | None = None
+
+
+class SuggestNextRequest(BaseModel):
+    """Request next track recommendations following a reference track."""
+
+    from_track_id: str
+    limit: int = Field(default=15, ge=1, le=100)
+    flow: Literal["steady", "ramp_up", "cool_down", "any"] = "steady"
+    local_only: bool = False
+    bpm_max_delta: float = Field(default=6.0, ge=0.0, le=50.0)
+
+
+class FindBridgeRequest(BaseModel):
+    """Find tracks bridging two distant tracks."""
+
+    track_a_id: str
+    track_b_id: str
+    limit: int = Field(default=10, ge=1, le=50)
+    local_only: bool = False
+
+
+class AutoSequenceRequest(BaseModel):
+    """Request auto-ordering a list of tracks for set flow."""
+
+    track_ids: list[str] = Field(..., min_length=1)
+    flow: Literal["steady", "ramp_up", "cool_down", "any"] = "ramp_up"
+    lock_first: bool = False
+
+
+class EvaluateSequenceRequest(BaseModel):
+    """Request step-by-step transition evaluation for an ordered list of tracks."""
+
+    track_ids: list[str] = Field(..., min_length=1)
+    flow: Literal["steady", "ramp_up", "cool_down", "any"] = "steady"
+
+
+class PlannedSetCreateRequest(BaseModel):
+    """Save a new planned set."""
+
+    name: str = Field(..., min_length=1)
+    track_ids: list[str] = Field(default_factory=list)
+
+
+class PlannedSetUpdateRequest(BaseModel):
+    """Update an existing planned set's name or tracks."""
+
+    name: str | None = None
+    track_ids: list[str] | None = None
 
 
 # ------------------------------------------------------------------ serializers
@@ -229,6 +279,30 @@ def artist_summary_payload(summary: Any) -> dict[str, Any]:
         "year_min": getattr(summary, "year_min", None),
         "year_max": getattr(summary, "year_max", None),
         "taste_match_percent": getattr(summary, "taste_match_percent", None),
+        "is_liked": getattr(summary, "is_liked", False),
+    }
+
+
+def liked_artist_payload(liked: Any) -> dict[str, Any]:
+    return {
+        "artist_name": liked.artist_name,
+        "normalized_key": liked.normalized_key,
+        "created_at": liked.created_at,
+    }
+
+
+def similar_artist_payload(match: Any) -> dict[str, Any]:
+    return {
+        "artist": match.artist,
+        "similarity_percent": match.similarity_percent,
+        "track_count": match.track_count,
+        "embedded_count": match.embedded_count,
+        "genres": list(match.genres),
+        "bpm_min": match.bpm_min,
+        "bpm_max": match.bpm_max,
+        "year_min": match.year_min,
+        "year_max": match.year_max,
+        "is_liked": match.is_liked,
     }
 
 
@@ -289,3 +363,53 @@ def seed_breakdown_payload(breakdown: Any) -> dict[str, Any]:
         "failed": breakdown.failed,
         "by_source": [seed_source_stat_payload(s) for s in breakdown.by_source],
     }
+
+
+def transition_evaluation_payload(ev: Any) -> dict[str, Any]:
+    return {
+        "score": ev.score,
+        "harmonic_score": ev.harmonic_score,
+        "bpm_score": ev.bpm_score,
+        "audio_score": ev.audio_score,
+        "camelot_move": ev.camelot_move,
+        "bpm_delta": ev.bpm_delta,
+    }
+
+
+def next_track_suggestion_payload(
+    sug: Any, *, heard: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    return {
+        "track": track_payload(sug.track, heard=heard),
+        "evaluation": transition_evaluation_payload(sug.evaluation),
+    }
+
+
+def bridge_suggestion_payload(
+    bridge: Any, *, heard: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    return {
+        "bridge_track": track_payload(bridge.bridge_track, heard=heard),
+        "eval_from_a": transition_evaluation_payload(bridge.eval_from_a),
+        "eval_to_b": transition_evaluation_payload(bridge.eval_to_b),
+        "combined_score": bridge.combined_score,
+    }
+
+
+def planned_set_payload(
+    pset: Any,
+    *,
+    tracks: Sequence[Any] | None = None,
+    heard: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": pset.id,
+        "name": pset.name,
+        "track_ids": list(pset.track_ids),
+        "track_count": len(pset.track_ids),
+        "created_at": pset.created_at,
+        "updated_at": pset.updated_at,
+    }
+    if tracks is not None:
+        payload["tracks"] = [track_payload(t, heard=heard) for t in tracks]
+    return payload

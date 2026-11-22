@@ -30,6 +30,8 @@ from data.ml.hardware_probe import HardwareProbe
 from data.ml.librosa_analyzer import LibrosaFeatureExtractor
 from data.ml.set_segmenter import SetSegmenter
 from data.repositories.blacklist_repository import SQLiteBlacklistRepository
+from data.repositories.liked_artist_repository import SQLiteLikedArtistRepository
+from data.repositories.planned_set_repository import SQLitePlannedSetRepository
 from data.repositories.seed_repository import SQLiteSeedRepository
 from data.repositories.set_repository import HybridSetRepository
 from data.repositories.track_repository import HybridTrackRepository
@@ -38,6 +40,7 @@ from domain.use_cases import (
     BuildSeedList,
     CrawlITunesSeeds,
     DigSimilarTracks,
+    DJSetHelper,
     FetchArtistTracks,
     FetchCatalogMetadata,
     FindSimilarForSet,
@@ -213,7 +216,10 @@ class Container:
         self.seed_repository: SQLiteSeedRepository | None = None
         self.track_repository: HybridTrackRepository | None = None
         self.blacklist_repository: SQLiteBlacklistRepository | None = None
+        self.liked_artist_repository: SQLiteLikedArtistRepository | None = None
+        self.planned_set_repository: SQLitePlannedSetRepository | None = None
         self.manage_catalog: ManageCatalog | None = None
+        self.dj_set_helper: DJSetHelper | None = None
         self.http_client: httpx.AsyncClient | None = None
         self.itunes_provider: ITunesProvider | None = None
         self.deezer_crawler: DeezerSeedCrawler | None = None
@@ -259,6 +265,8 @@ class Container:
         vectors = LanceDBClient(settings.lancedb_path)
         await vectors.connect()
         blacklist_repository = SQLiteBlacklistRepository(sqlite)
+        liked_artist_repository = SQLiteLikedArtistRepository(sqlite)
+        planned_set_repository = SQLitePlannedSetRepository(sqlite)
         seed_repository = SQLiteSeedRepository(sqlite, blacklist=blacklist_repository)
         track_repository = HybridTrackRepository(
             sqlite, vectors, blacklist=blacklist_repository
@@ -304,6 +312,8 @@ class Container:
         self.sqlite = sqlite
         self.vectors = vectors
         self.blacklist_repository = blacklist_repository
+        self.liked_artist_repository = liked_artist_repository
+        self.planned_set_repository = planned_set_repository
         self.seed_repository = seed_repository
         self.track_repository = track_repository
         self.http_client = http_client
@@ -318,6 +328,7 @@ class Container:
             discovery=deezer_crawler,
             seed_repository=seed_repository,
             llm_service=llm_service,
+            liked_artist_repository=liked_artist_repository,
         )
         self.crawl_itunes_seeds = CrawlITunesSeeds(
             catalog_provider=itunes_provider,
@@ -342,6 +353,7 @@ class Container:
             track_repository=track_repository,
             seed_repository=seed_repository,
             blacklist_repository=blacklist_repository,
+            liked_artist_repository=liked_artist_repository,
         )
         self.index_catalog = IndexCatalog(
             track_repository=track_repository,
@@ -353,6 +365,11 @@ class Container:
         )
         self.dig_similar_tracks = DigSimilarTracks(
             track_repository=track_repository,
+        )
+        self.dj_set_helper = DJSetHelper(
+            track_repository=track_repository,
+            planned_set_repository=planned_set_repository,
+            blacklist_repository=blacklist_repository,
         )
         self.vibe_search = VibeSearch(
             embedder=clap_embedder,

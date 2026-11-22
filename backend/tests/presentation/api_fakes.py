@@ -20,14 +20,24 @@ from domain.entities.analytics import (
 )
 from domain.entities.dj_set import DJSet, Passage, SetMatch, TrackMatch
 from domain.entities.search import SearchFilter
-from domain.entities.track import AudioBuffer, BlacklistEntry, SeedArtist, Track
+from domain.entities.set_plan import PlannedSet
+from domain.entities.track import (
+    AudioBuffer,
+    BlacklistEntry,
+    LikedArtist,
+    SeedArtist,
+    Track,
+)
 from domain.interfaces.repositories import (
     IBlacklistRepository,
+    ILikedArtistRepository,
+    IPlannedSetRepository,
     ISetRepository,
     ITrackRepository,
 )
 from domain.use_cases import (
     DigSimilarTracks,
+    DJSetHelper,
     FindSimilarForSet,
     ManageCatalog,
     VibeSearch,
@@ -216,13 +226,22 @@ class FakeTrackRepository(ITrackRepository):
         sort: str = "tracks_desc",
         limit: int = 50,
         offset: int = 0,
+        taste_mode: str = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        liked_only: bool = False,
     ) -> tuple[Sequence[ArtistSummary], int]:
+        from domain._validation import normalize_artist_key
+
         by_artist: dict[str, list[Track]] = {}
         for t in self.tracks.values():
             by_artist.setdefault(t.artist, []).append(t)
 
         summaries: list[ArtistSummary] = []
         for artist, trks in by_artist.items():
+            norm_k = normalize_artist_key(artist)
+            is_liked = norm_k in liked_artist_keys
+            if liked_only and not is_liked:
+                continue
             if query and query.casefold() not in artist.casefold():
                 continue
             if genre and not any(
@@ -250,6 +269,7 @@ class FakeTrackRepository(ITrackRepository):
                     sample_track_title=trks[0].title if trks else None,
                     year_min=min(years) if years else None,
                     year_max=max(years) if years else None,
+                    is_liked=is_liked,
                 )
             )
 
@@ -285,6 +305,15 @@ class FakeTrackRepository(ITrackRepository):
             )
 
         return (tuple(summaries[offset : offset + limit]), len(summaries))
+
+    async def get_embeddings_map(
+        self, track_ids: Sequence[str]
+    ) -> dict[str, EmbeddingVector]:
+        return {
+            tid: self.tracks[tid].embedding
+            for tid in track_ids
+            if tid in self.tracks and self.tracks[tid].embedding is not None
+        }
 
     async def get_artist_taste_scores(self) -> tuple[dict[str, float], int]:
         local_count = sum(1 for t in self.tracks.values() if t.source == "local")
@@ -492,9 +521,10 @@ class FakeSeedRepository:
     async def purge_seeds(
         self,
         *,
-        status: str | None = None,
+        status: str = "pending",
         source: str | None = None,
         category: str | None = None,
+        exclude_sources: Sequence[str] = (),
     ) -> int:
         before = len(self.seeds)
         self.seeds = [
@@ -504,9 +534,23 @@ class FakeSeedRepository:
                 (status is None or s.status == status)
                 and (source is None or s.source == source)
                 and (category is None or s.category == category)
+                and (
+                    not exclude_sources
+                    or (s.source or "unknown") not in exclude_sources
+                )
             )
         ]
         return before - len(self.seeds)
+
+    async def record_discovery(
+        self,
+        seeds: Sequence[SeedArtist],
+        *,
+        priority_increment: float = 0.5,
+    ) -> int:
+        for s in seeds:
+            self.seeds.append(s)
+        return len(seeds)
 
 
 class FakeBlacklistRepository(IBlacklistRepository):
@@ -583,6 +627,131 @@ class FakeBlacklistRepository(IBlacklistRepository):
 
     async def is_track_blocked(self, normalized_track_key: str) -> bool:
         return normalized_track_key in await self.get_blocked_track_keys()
+
+
+class FakeLikedArtistRepository(ILikedArtistRepository):
+    def __init__(self) -> None:
+        self.liked: dict[str, LikedArtist] = {}
+
+    async def like(self, artist_name: str) -> LikedArtist:
+        from domain._validation import normalize_artist_key
+
+        clean = artist_name.strip()
+        norm_key = normalize_artist_key(clean)
+        liked = LikedArtist(
+            artist_name=clean, normalized_key=norm_key, created_at="2026-11-22"
+        )
+        self.liked[norm_key] = liked
+        return liked
+
+    async def unlike(self, artist_name: str) -> bool:
+        from domain._validation import normalize_artist_key
+
+        norm_key = normalize_artist_key(artist_name.strip())
+        return self.liked.pop(norm_key, None) is not None
+
+    async def is_liked(self, artist_name: str) -> bool:
+        from domain._validation import normalize_artist_key
+
+        norm_key = normalize_artist_key(artist_name.strip())
+        return norm_key in self.liked
+
+    async def list_all(self) -> Sequence[LikedArtist]:
+        return tuple(self.liked.values())
+
+    async def get_liked_keys(self) -> frozenset[str]:
+        return frozenset(self.liked.keys())
+
+    async def count(self) -> int:
+        return len(self.liked)
+
+
+class FakePlannedSetRepository(IPlannedSetRepository):
+    def __init__(self) -> None:
+        self.sets: dict[int, PlannedSet] = {}
+        self._next_id = 1
+
+    async def save(self, planned_set: PlannedSet) -> PlannedSet:
+        if planned_set.id is None:
+            sid = self._next_id
+            self._next_id += 1
+        else:
+            sid = planned_set.id
+        saved = PlannedSet(
+            id=sid,
+            name=planned_set.name,
+            track_ids=tuple(planned_set.track_ids),
+            created_at="2026-11-22T00:00:00",
+            updated_at="2026-11-22T00:00:00",
+        )
+        self.sets[sid] = saved
+        return saved
+
+    async def get_by_id(self, set_id: int) -> PlannedSet | None:
+        return self.sets.get(set_id)
+
+    async def list_all(self) -> Sequence[PlannedSet]:
+        return tuple(self.sets.values())
+
+    async def delete(self, set_id: int) -> bool:
+        return self.sets.pop(set_id, None) is not None
+
+
+class FakeVectors:
+    def __init__(self, tracks: list[Track]) -> None:
+        self.tracks = tracks
+
+    async def compute_similarity_to_seed_ids(
+        self,
+        seed_track_ids: Sequence[str],
+        *,
+        weights: Any = None,
+        batch_size: int = 2048,
+    ) -> dict[str, float]:
+        return {
+            t.id: 85.0
+            for t in self.tracks
+            if t.embedding is not None and t.id not in seed_track_ids
+        }
+
+    async def get_vectors(
+        self, track_ids: Sequence[str]
+    ) -> dict[str, tuple[float, ...]]:
+        return {
+            t.id: t.embedding.values
+            for t in self.tracks
+            if t.id in track_ids and t.embedding is not None
+        }
+
+
+class FakeSqlite:
+    def __init__(self, tracks: list[Track]) -> None:
+        self.tracks = tracks
+
+    async def fetchall(self, sql: str, params: Any = ()) -> list[dict[str, Any]]:
+        if "GROUP BY artist" in sql:
+            by_artist: dict[str, list[Track]] = {}
+            for t in self.tracks:
+                by_artist.setdefault(t.artist, []).append(t)
+            return [
+                {
+                    "artist": artist,
+                    "track_count": len(trks),
+                    "embedded_count": sum(1 for t in trks if t.embedding is not None),
+                    "bpm_min": 124.0,
+                    "bpm_max": 124.0,
+                    "year_min": 2020,
+                    "year_max": 2022,
+                    "genres_concat": ",".join(filter(None, [t.genre for t in trks]))
+                    or "Techno",
+                }
+                for artist, trks in by_artist.items()
+            ]
+        return [
+            {"id": t.id, "artist": t.artist, "source": t.source}
+            for t in self.tracks
+            if t.embedding is not None
+        ]
 
 
 class FakeEmbedder:
@@ -899,15 +1068,25 @@ def make_container(
     set_list = list(sets) if sets is not None else [make_set()]
     set_repository = FakeSetRepository(set_list, similar_sets)
     blacklist_repository = FakeBlacklistRepository()
+    liked_artist_repository = FakeLikedArtistRepository()
+    planned_set_repository = FakePlannedSetRepository()
     seed_repository = FakeSeedRepository()
     manage_catalog = ManageCatalog(
         track_repository=track_repository,
         seed_repository=seed_repository,
         blacklist_repository=blacklist_repository,
+        liked_artist_repository=liked_artist_repository,
+    )
+    dj_set_helper = DJSetHelper(
+        track_repository=track_repository,
+        planned_set_repository=planned_set_repository,
+        blacklist_repository=blacklist_repository,
     )
     embedder = FakeClapEmbedder()
     decoder = FakeDecoder()
     dj_set = set_list[0] if set_list else make_set()
+    fake_vectors = FakeVectors(track_list)
+    fake_sqlite = FakeSqlite(track_list)
 
     return SimpleNamespace(
         settings=SimpleNamespace(
@@ -917,10 +1096,15 @@ def make_container(
             ytdlp_cookies_file=None,
             ytdlp_cookies_from_browser=None,
         ),
+        sqlite=fake_sqlite,
+        vectors=fake_vectors,
         track_repository=track_repository,
         seed_repository=seed_repository,
         blacklist_repository=blacklist_repository,
+        liked_artist_repository=liked_artist_repository,
+        planned_set_repository=planned_set_repository,
         manage_catalog=manage_catalog,
+        dj_set_helper=dj_set_helper,
         set_repository=set_repository,
         dig_similar_tracks=DigSimilarTracks(track_repository=track_repository),
         find_similar_for_set=FindSimilarForSet(

@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from typing import Literal
 
 from ..entities.analytics import ArtistSummary, CatalogAnalytics, SeedBreakdown
 from ..entities.dj_set import DJSet, SetMatch, TrackMatch
 from ..entities.search import SearchFilter
-from ..entities.track import BlacklistEntry, SeedArtist, SeedStatus, Track
+from ..entities.set_plan import PlannedSet
+from ..entities.track import BlacklistEntry, LikedArtist, SeedArtist, SeedStatus, Track
 from ..value_objects.audio_features import EmbeddingVector
 
 
@@ -162,17 +164,31 @@ class ITrackRepository(ABC):
         sort: str = "tracks_desc",
         limit: int = 50,
         offset: int = 0,
+        taste_mode: Literal["local", "liked", "both"] = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        liked_only: bool = False,
     ) -> tuple[Sequence[ArtistSummary], int]:
         """List artists summary with counts and genres, returning (artists, total_count)."""
         return ((), 0)
 
-    async def get_artist_taste_scores(self) -> tuple[dict[str, float], int]:
-        """Return (artist_taste_scores, local_taste_count).
+    async def get_artist_taste_scores(
+        self,
+        *,
+        mode: Literal["local", "liked", "both"] = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[dict[str, float], int]:
+        """Return (artist_taste_scores, seed_count).
 
         Scores are 0.0-100.0 percentages reflecting how close each artist's
-        catalog is to the user's local music taste profile.
+        catalog is to the user's taste profile.
         """
         return ({}, 0)
+
+    async def get_embeddings_map(
+        self, track_ids: Sequence[str]
+    ) -> dict[str, EmbeddingVector]:
+        """Return mapping of track_id to EmbeddingVector for specified IDs."""
+        return {}
 
     async def get_catalog_analytics(self) -> CatalogAnalytics:
         """Return high-level analytics and distributions across the catalog."""
@@ -308,9 +324,10 @@ class ISeedRepository(ABC):
     async def purge_seeds(
         self,
         *,
-        status: str | None = None,
+        status: str = "pending",
         source: str | None = None,
         category: str | None = None,
+        exclude_sources: Sequence[str] = (),
     ) -> int:
         """Purge seeds matching criteria, returning the count of deleted seeds."""
         return 0
@@ -361,3 +378,51 @@ class IBlacklistRepository(ABC):
     async def get_by_key(self, kind: str, normalized_key: str) -> BlacklistEntry | None:
         """Fetch a blacklist entry by kind and normalized key."""
         return None
+
+
+class ILikedArtistRepository(ABC):
+    """Persistence for user-liked artists."""
+
+    @abstractmethod
+    async def like(self, artist_name: str) -> LikedArtist:
+        """Like an artist, returning the persisted LikedArtist."""
+
+    @abstractmethod
+    async def unlike(self, artist_name: str) -> bool:
+        """Unlike an artist by name, returning True if removed."""
+
+    @abstractmethod
+    async def is_liked(self, artist_name: str) -> bool:
+        """Return True if the artist is liked."""
+
+    @abstractmethod
+    async def list_all(self) -> Sequence[LikedArtist]:
+        """Return all liked artists, newest first."""
+
+    @abstractmethod
+    async def get_liked_keys(self) -> frozenset[str]:
+        """Return frozenset of normalized keys of all liked artists."""
+
+    @abstractmethod
+    async def count(self) -> int:
+        """Return count of liked artists."""
+
+
+class IPlannedSetRepository(ABC):
+    """Persistence for user-curated planned sets."""
+
+    @abstractmethod
+    async def save(self, planned_set: PlannedSet) -> PlannedSet:
+        """Save or update a planned set along with its ordered track IDs."""
+
+    @abstractmethod
+    async def get_by_id(self, set_id: int) -> PlannedSet | None:
+        """Fetch a planned set by its ID."""
+
+    @abstractmethod
+    async def list_all(self) -> Sequence[PlannedSet]:
+        """Return all planned sets, ordered by updated_at descending."""
+
+    @abstractmethod
+    async def delete(self, set_id: int) -> bool:
+        """Delete a planned set by its ID."""

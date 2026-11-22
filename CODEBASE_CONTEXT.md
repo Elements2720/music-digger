@@ -19,10 +19,11 @@ backend/
       __init__.py
       entities/
         __init__.py
-        track.py                                  # Track, BlacklistEntry, BlacklistKind, SeedArtist, AudioBuffer, TrackReference, TrackVibe
-        analytics.py                              # GenreStat, BpmBucketStat, SourceStat, KeyStat, ArtistSummary, CatalogAnalytics, SeedBreakdown, SeedSourceStat
+        track.py                                  # Track, LikedArtist, BlacklistEntry, BlacklistKind, SeedArtist, AudioBuffer, TrackReference, TrackVibe
+        analytics.py                              # GenreStat, BpmBucketStat, SourceStat, KeyStat, ArtistSummary, CatalogAnalytics, SeedBreakdown, SeedSourceStat, SimilarArtistMatch
         dj_set.py                                 # TrackMatch, Passage, DJSet, DownloadedSet, SetMatch
         search.py                                 # SearchFilter (min_year, max_year, genres)
+        set_plan.py                               # TransitionEvaluation, NextTrackSuggestion, BridgeSuggestion, PlannedSet, FlowMode
       value_objects/
         __init__.py
         audio_features.py                         # BPM, CamelotKey, TimeRange, EmbeddingVector, AudioFeatures
@@ -34,13 +35,14 @@ backend/
         hardware.py                               # IHardwareProbe
         llm.py                                    # ILLMService
         local_library.py                          # ILocalLibraryScanner
-        repositories.py                           # ITrackRepository, ISetRepository, ISeedRepository, IBlacklistRepository
+        repositories.py                           # ITrackRepository, ISetRepository, ISeedRepository, IBlacklistRepository, ILikedArtistRepository, IPlannedSetRepository
       use_cases/
         __init__.py
         analyze_dj_set.py                         # AnalyzeDJSet (Phase 4: end-to-end DJ set pipeline, multi-probe Shazam, boundary avoidance)
-        build_seed_list.py                        # BuildSeedList (Deezer BFS + LLM seed generation, CrawlProgress, local roots)
+        build_seed_list.py                        # BuildSeedList (Deezer BFS + LLM seed generation, CrawlProgress, local roots, liked seeds)
         crawl_itunes_seeds.py                     # CrawlITunesSeeds (Phase B: iTunes techno/label keyword crawler)
         dig_similar_tracks.py                     # DigSimilarTracks (track-to-track similarity, harmonic/BPM filter)
+        dj_set_helper.py                          # DJSetHelper (transition evaluation, next track suggestion, bridge finder, 2-opt auto-sequence, M3U8 export)
         fetch_artist_tracks.py                    # FetchArtistTracks (targeted artist track fetching, auto-indexing, related discovery)
         fetch_catalog_metadata.py                 # FetchCatalogMetadata (iTunes artist metadata harvester, blacklist-aware)
         find_similar_for_set.py                   # FindSimilarForSet (set-to-set & passage-to-track similarity)
@@ -86,25 +88,28 @@ backend/
       repositories/
         __init__.py
         blacklist_repository.py                   # SQLiteBlacklistRepository (IBlacklistRepository)
+        liked_artist_repository.py                # SQLiteLikedArtistRepository (ILikedArtistRepository)
+        planned_set_repository.py                 # SQLitePlannedSetRepository (IPlannedSetRepository)
         seed_repository.py                        # SQLiteSeedRepository (ISeedRepository: blacklist filtering, delete_by_name)
         set_repository.py                         # SQLiteSetRepository (ISetRepository: SQLite + LanceDB set vectors)
-        track_repository.py                       # HybridTrackRepository (ITrackRepository: blacklist filtering, safe delete, analytics)
+        track_repository.py                       # HybridTrackRepository (ITrackRepository: blacklist filtering, safe delete, analytics, taste scores)
     presentation/
       __init__.py
       cli/
         __init__.py
         __main__.py                               # python -m presentation.cli
-        commands.py                               # Typer `dig` CLI (ASCII only, rich progress, delete/blacklist/stats commands)
+        commands.py                               # Typer `dig` CLI (ASCII only, rich progress, delete/blacklist/stats/liked-artist commands)
       api/
         __init__.py
         app.py                                    # FastAPI application factory & static file mounting
         job_manager.py                            # JobManager (single-job concurrency, SSE streaming, turbo mode, telemetry)
-        schemas.py                                # Pydantic schemas, JobKind literal, Blacklist schemas & analytics serializers
+        schemas.py                                # Pydantic schemas, JobKind literal, Blacklist schemas, SetHelper schemas & analytics serializers
         routes/
           __init__.py
-          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig, analytics, artists, blacklist)
+          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig, analytics, artists, blacklist, liked-artists)
           hardware.py                             # /api/hardware endpoints (GPU, VRAM, RAM, FFmpeg probe)
           jobs.py                                 # /api/jobs endpoints (start, cancel, snapshot, SSE stream)
+          set_helper.py                           # /api/set-helper endpoints (suggest-next, bridge, auto-sequence, evaluate, sets CRUD, export.m3u8)
           sets.py                                 # /api/sets endpoints (DJ set analysis, passage queries, similar sets)
   tests/
     domain/
@@ -117,6 +122,7 @@ backend/
       test_crawl_itunes_seeds.py                  # iTunes techno keyword crawler tests
       test_dig_similar_tracks.py
       test_dj_set_entities.py                     # DJ set entity tests + 0.05s tolerance auto-clamp tests
+      test_dj_set_helper.py                       # DJ set transition evaluation, bridge finder, 2-opt sequence tests
       test_embedding_vector.py
       test_find_similar_for_set.py
       test_import_local_library.py                # Local library import & taste-based artist seeding tests
@@ -140,11 +146,13 @@ backend/
       test_hardware_probe.py
       test_itunes_provider.py                     # iTunes provider tests (18 req/min, crawl_keyword, token bucket)
       test_librosa_analyzer.py
+      test_liked_artist_repository.py             # Liked artist CRUD and normalization tests
       test_llm_client.py
       test_rate_limiter.py
       test_set_repository.py
       test_set_segmenter.py                       # Segmenter tests (semantic + acoustic boundary detection, duration clamp)
       test_shazam_client.py                       # Shazam tests (timeout, circuit breaker, CancelledError propagation)
+      test_sqlite_planned_set_repository.py       # Planned set CRUD, track ordering, and foreign key tests
       test_sqlite_seed_repository.py
       test_track_repository.py
       test_ytdlp_downloader.py
@@ -165,10 +173,11 @@ frontend/
     state.js                                      # Lightweight global reactive state
     ui.js                                         # DOM construction helpers (trackRow with quick delete action)
     views/
+      builder.js                                  # Builder view (interactive DJ set builder, energy curve, transitions, bridge finder, 2-opt auto-sequence, M3U8 export)
       dig.js                                      # Dig view (track-to-track similarity, audio preview, harmonic filter)
       run.js                                      # Run view (job configuration, live progress, speed, recent messages log)
       sets.js                                     # Sets view (analyzed DJ set browser, tracklist, passage timeline)
-      stats.js                                    # Stats view (rich Library Overview & Manager, KPI cards, visual distribution bars, searchable artists drawer, blacklist tab)
+      stats.js                                    # Stats view (rich Library Overview & Manager, KPI cards, visual distribution bars, searchable artists drawer, blacklist tab, liked artists)
 ```
 
 ### 1.2 Python Version & Key Dependencies

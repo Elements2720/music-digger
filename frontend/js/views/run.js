@@ -25,6 +25,7 @@ const FIELDS = {
     { key: "general_limit", label: "General seeds", type: "number", value: 300, min: 0 },
     { key: "max_depth", label: "Deezer related-artist depth", type: "number", value: 2, min: 0, max: 5 },
     { key: "use_local_seeds", label: "Use my local library artists as roots", type: "checkbox", value: false },
+    { key: "use_liked_seeds", label: "Use my Liked Artists as priority roots", type: "checkbox", value: false },
   ],
   "seed-llm": [
     { key: "genre", label: "Genre focus", type: "text", value: "Melodic Techno & Afro House", placeholder: "comma-separated genres" },

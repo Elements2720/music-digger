@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 from .job_manager import JobManager
-from .routes import catalog, hardware, jobs, sets
+from .routes import catalog, hardware, jobs, set_helper, sets
 
 LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +75,7 @@ def create_app(container: Any | None = None) -> FastAPI:
     app.include_router(catalog.router)
     app.include_router(sets.router)
     app.include_router(hardware.router)
+    app.include_router(set_helper.router)
 
     @app.api_route(
         "/api/{full_path:path}",

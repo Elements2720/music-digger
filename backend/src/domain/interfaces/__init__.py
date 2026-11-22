@@ -14,6 +14,8 @@ from .llm import ILLMService
 from .local_library import ILocalLibraryScanner
 from .repositories import (
     IBlacklistRepository,
+    ILikedArtistRepository,
+    IPlannedSetRepository,
     ISeedRepository,
     ISetRepository,
     ITrackRepository,
@@ -29,7 +31,9 @@ __all__ = [
     "IFingerprinter",
     "IHardwareProbe",
     "ILLMService",
+    "ILikedArtistRepository",
     "ILocalLibraryScanner",
+    "IPlannedSetRepository",
     "ISeedCrawler",
     "ISeedDiscovery",
     "ISeedRepository",

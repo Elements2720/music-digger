@@ -8,7 +8,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from data.normalization import normalize_artist_key
+from domain.entities.analytics import SimilarArtistMatch
 from domain.entities.search import SearchFilter
+from domain.entities.track import SeedArtist
 from domain.genres import ELECTRONIC_ALLOWED_GENRE_TOKENS, TECHNO_SUBGENRE_PRESETS
 from domain.use_cases import TrackNotEmbeddedError, TrackNotFoundError
 
@@ -21,9 +24,11 @@ from ..schemas import (
     artist_summary_payload,
     blacklist_entry_payload,
     catalog_analytics_payload,
+    liked_artist_payload,
     match_payload,
     seed_breakdown_payload,
     seed_payload,
+    similar_artist_payload,
     track_payload,
 )
 from . import get_container
@@ -236,9 +241,17 @@ async def get_artists_summary(
     sort: str = Query("tracks_desc"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    taste_mode: str = Query("both"),
+    liked_only: bool = Query(False),
     container: Any = Depends(get_container),
 ) -> dict[str, Any]:
     """Search and browse aggregated artist summaries."""
+    liked_keys = (
+        await container.liked_artist_repository.get_liked_keys()
+        if getattr(container, "liked_artist_repository", None)
+        else frozenset()
+    )
+    mode = taste_mode if taste_mode in ("local", "liked", "both") else "both"
     summaries, total = await container.track_repository.list_artists_summary(
         query=q,
         genre=genre,
@@ -247,6 +260,9 @@ async def get_artists_summary(
         sort=sort,
         limit=limit,
         offset=offset,
+        taste_mode=mode,
+        liked_artist_keys=liked_keys,
+        liked_only=liked_only,
     )
     return {
         "artists": [artist_summary_payload(s) for s in summaries],
@@ -417,8 +433,183 @@ async def purge_seeds(
         status=payload.status,
         source=payload.source,
         category=payload.category,
+        exclude_sources=payload.exclude_sources,
     )
     return {"purged": purged}
+
+
+@router.get("/catalog/liked-artists")
+async def list_liked_artists(
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """List all user-liked artists."""
+    if not getattr(container, "liked_artist_repository", None):
+        return {"liked_artists": [], "total": 0}
+    artists = await container.liked_artist_repository.list_all()
+    return {
+        "liked_artists": [liked_artist_payload(a) for a in artists],
+        "total": len(artists),
+    }
+
+
+@router.post("/catalog/liked-artists/{artist_name:path}")
+async def like_artist(
+    artist_name: str,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Like an artist, bumping them in discovery and invalidating taste cache."""
+    clean_name = artist_name.strip()
+    if getattr(container, "blacklist_repository", None):
+        norm_key = normalize_artist_key(clean_name)
+        if await container.blacklist_repository.is_artist_blocked(norm_key):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Artist '{clean_name}' is blacklisted. Unblock first before liking.",
+            )
+    if not getattr(container, "liked_artist_repository", None):
+        raise HTTPException(status_code=500, detail="LikedArtistRepository unavailable")
+    liked = await container.liked_artist_repository.like(clean_name)
+    if getattr(container, "seed_repository", None) and hasattr(
+        container.seed_repository, "record_discovery"
+    ):
+        await container.seed_repository.record_discovery(
+            [SeedArtist(clean_name, 1.0, "electronic", source="liked-artist")],
+            priority_increment=0.5,
+        )
+    if hasattr(container.track_repository, "_invalidate_taste_cache"):
+        container.track_repository._invalidate_taste_cache()
+    return {"liked": True, "artist": liked_artist_payload(liked)}
+
+
+@router.delete("/catalog/liked-artists/{artist_name:path}")
+async def unlike_artist(
+    artist_name: str,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Unlike an artist."""
+    clean_name = artist_name.strip()
+    if not getattr(container, "liked_artist_repository", None):
+        return {"deleted": False, "unliked": False, "artist": clean_name}
+    deleted = await container.liked_artist_repository.unlike(clean_name)
+    if hasattr(container.track_repository, "_invalidate_taste_cache"):
+        container.track_repository._invalidate_taste_cache()
+    return {"deleted": deleted, "unliked": deleted, "artist": clean_name}
+
+
+@router.get("/catalog/liked-artists/similar")
+async def get_similar_liked_artists(
+    artist: str | None = Query(None),
+    min_year: int | None = Query(None, ge=1900, le=2100),
+    limit: int = Query(24, ge=1, le=100),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Discover other artists in the catalog similar to liked artists or a specific artist."""
+    liked_repo = getattr(container, "liked_artist_repository", None)
+    sqlite = getattr(container, "sqlite", None)
+    vectors = getattr(container, "vectors", None)
+
+    if artist and artist.strip():
+        seed_artists = [artist.strip()]
+    elif liked_repo:
+        all_liked = await liked_repo.list_all()
+        seed_artists = [a.artist_name for a in all_liked]
+    else:
+        seed_artists = []
+
+    if not seed_artists or not sqlite or not vectors:
+        return {"seed_artists": seed_artists, "seed_tracks_used": 0, "items": []}
+
+    normalized_seed_keys = {normalize_artist_key(a) for a in seed_artists}
+    liked_keys = await liked_repo.get_liked_keys() if liked_repo else frozenset()
+
+    all_embedded = await sqlite.fetchall(
+        "SELECT id, artist FROM tracks WHERE is_embedded = 1"
+    )
+    seed_track_ids = [
+        str(r["id"])
+        for r in all_embedded
+        if normalize_artist_key(str(r["artist"])) in normalized_seed_keys
+    ]
+
+    if not seed_track_ids:
+        return {"seed_artists": seed_artists, "seed_tracks_used": 0, "items": []}
+
+    track_sims = await vectors.compute_similarity_to_seed_ids(seed_track_ids)
+    if not track_sims:
+        return {
+            "seed_artists": seed_artists,
+            "seed_tracks_used": len(seed_track_ids),
+            "items": [],
+        }
+
+    artist_rows = await sqlite.fetchall(
+        """
+        SELECT
+            artist,
+            COUNT(*) AS track_count,
+            SUM(is_embedded) AS embedded_count,
+            MIN(bpm) AS bpm_min,
+            MAX(bpm) AS bpm_max,
+            MIN(release_year) AS year_min,
+            MAX(release_year) AS year_max,
+            GROUP_CONCAT(DISTINCT genre) AS genres_concat
+        FROM tracks
+        WHERE is_embedded = 1
+        GROUP BY artist
+        """
+    )
+
+    artist_scores: dict[str, list[float]] = {}
+    for r in all_embedded:
+        art = str(r["artist"])
+        if normalize_artist_key(art) in normalized_seed_keys:
+            continue
+        tid = str(r["id"])
+        if tid in track_sims:
+            artist_scores.setdefault(art, []).append(track_sims[tid])
+
+    matches = []
+    for row in artist_rows:
+        art = str(row["artist"])
+        norm_k = normalize_artist_key(art)
+        if norm_k in normalized_seed_keys:
+            continue
+        scores = artist_scores.get(art, [])
+        if not scores:
+            continue
+        avg_sim = round(sum(scores) / len(scores), 1)
+        y_min = int(row["year_min"]) if row["year_min"] is not None else None
+        y_max = int(row["year_max"]) if row["year_max"] is not None else None
+        if min_year is not None and (y_max is None or y_max < min_year):
+            continue
+        genres_raw = row["genres_concat"] or ""
+        genres = tuple(g for g in genres_raw.split(",") if g)
+        b_min = float(row["bpm_min"]) if row["bpm_min"] is not None else None
+        b_max = float(row["bpm_max"]) if row["bpm_max"] is not None else None
+        is_liked = norm_k in liked_keys
+
+        matches.append(
+            SimilarArtistMatch(
+                artist=art,
+                similarity_percent=avg_sim,
+                track_count=int(row["track_count"] or 0),
+                embedded_count=int(row["embedded_count"] or 0),
+                genres=genres,
+                bpm_min=b_min,
+                bpm_max=b_max,
+                year_min=y_min,
+                year_max=y_max,
+                is_liked=is_liked,
+            )
+        )
+
+    matches.sort(key=lambda m: (m.similarity_percent, m.track_count), reverse=True)
+    sliced = matches[:limit]
+    return {
+        "seed_artists": seed_artists,
+        "seed_tracks_used": len(seed_track_ids),
+        "items": [similar_artist_payload(m) for m in sliced],
+    }
 
 
 __all__ = ["router"]

@@ -1,7 +1,8 @@
 /* DIG tab: pick a reference track, then similarity-dig or vibe-search. */
 
 import { api } from "../api.js";
-import { state } from "../state.js";
+import { currentTrack, isAudioPlaying, playTrack } from "../player.js";
+import { emit, on, state } from "../state.js";
 import { artwork, chips, el, renderMatches } from "../ui.js";
 
 let mounted = false;
@@ -14,25 +15,43 @@ function $(id) {
 }
 
 function pickerItem(track) {
-  const item = el("button", {
-    class: `picker-item${track.id === activeId ? " active" : ""}`,
+  const isPlaying = currentTrack()?.id === track.id && isAudioPlaying();
+  const playBtn = el("button", {
+    class: `icon-btn picker-play-btn${isPlaying ? " playing" : ""}`,
     type: "button",
-  }, [
-    artwork(track.artwork_url, "picker-art"),
-    el("div", { class: "picker-copy" }, [
-      el("div", { class: "picker-title", text: track.title }),
-      el("div", { class: "picker-artist", text: track.artist }),
-    ]),
-    el("div", { class: "picker-badges" }, [
-      track.source === "local" || track.local_path
-        ? el("span", { class: "chip local", text: "LOCAL" })
-        : null,
-      track.bpm !== null
-        ? el("span", { class: "chip bpm", text: String(Math.round(track.bpm)) })
-        : null,
-      track.key ? el("span", { class: "chip key", text: track.key }) : null,
-    ]),
-  ]);
+    title: isPlaying ? "Pause preview" : "Play preview",
+    text: isPlaying ? "❚❚" : "▶",
+  });
+  playBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    playTrack(track);
+  });
+
+  const item = el(
+    "button",
+    {
+      class: `picker-item${track.id === activeId ? " active" : ""}`,
+      type: "button",
+      "data-track-id": track.id,
+    },
+    [
+      artwork(track.artwork_url, "picker-art"),
+      el("div", { class: "picker-copy" }, [
+        el("div", { class: "picker-title", text: track.title }),
+        el("div", { class: "picker-artist", text: track.artist }),
+      ]),
+      el("div", { class: "picker-badges" }, [
+        playBtn,
+        track.source === "local" || track.local_path
+          ? el("span", { class: "chip local", text: "LOCAL" })
+          : null,
+        track.bpm !== null
+          ? el("span", { class: "chip bpm", text: String(Math.round(track.bpm)) })
+          : null,
+        track.key ? el("span", { class: "chip key", text: track.key }) : null,
+      ]),
+    ]
+  );
   item.addEventListener("click", () => selectTrack(track));
   return item;
 }
@@ -56,12 +75,82 @@ function renderReference(track) {
     return;
   }
   card.classList.remove("hidden");
+  const isPlaying = currentTrack()?.id === track.id && isAudioPlaying();
+  const playBtn = el("button", {
+    class: `icon-btn reference-play-btn${isPlaying ? " playing" : ""}`,
+    type: "button",
+    title: isPlaying ? "Pause preview" : "Play preview",
+    text: isPlaying ? "❚❚" : "▶",
+  });
+  playBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    playTrack(track);
+  });
+
+  const heartBtn = el("button", {
+    class: "heart-btn",
+    type: "button",
+    title: "Like artist",
+    text: "♡",
+  });
+  api
+    .likedArtists()
+    .then((res) => {
+      const list = res?.liked_artists ?? (Array.isArray(res) ? res : []);
+      const isLiked = list.some(
+        (a) =>
+          (a.artist_name || a.artist || "").toLowerCase() ===
+          (track.artist || "").toLowerCase()
+      );
+      heartBtn.classList.toggle("liked", isLiked);
+      heartBtn.textContent = isLiked ? "♥" : "♡";
+      heartBtn.title = isLiked ? "Unlike artist" : "Like artist";
+    })
+    .catch(() => {});
+
+  heartBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const wasLiked = heartBtn.classList.contains("liked");
+    heartBtn.disabled = true;
+    try {
+      if (wasLiked) {
+        await api.unlikeArtist(track.artist);
+        heartBtn.classList.remove("liked");
+        heartBtn.textContent = "♡";
+        heartBtn.title = "Like artist";
+        emit("toast", `Unliked "${track.artist}"`);
+        emit("artist:liked", { artist: track.artist, liked: false });
+      } else {
+        await api.likeArtist(track.artist);
+        heartBtn.classList.add("liked");
+        heartBtn.textContent = "♥";
+        heartBtn.title = "Unlike artist";
+        emit("toast", `Liked "${track.artist}"`);
+        emit("artist:liked", { artist: track.artist, liked: true });
+      }
+    } catch (err) {
+      emit("toast", err.message);
+    } finally {
+      heartBtn.disabled = false;
+    }
+  });
+
   card.replaceChildren(
-    el("div", { class: "track-main" }, [
-      artwork(track.artwork_url, "row-art"),
-      el("div", { class: "picker-copy" }, [
-        el("div", { class: "row-title", text: track.title }),
-        el("div", { class: "row-artist", text: track.artist }),
+    el("div", { class: "reference-main" }, [
+      playBtn,
+      el("div", { class: "track-main" }, [
+        artwork(track.artwork_url, "row-art"),
+        el("div", { class: "picker-copy" }, [
+          el("div", { class: "row-title", text: track.title }),
+          el(
+            "div",
+            {
+              class: "row-artist",
+              style: "display: flex; align-items: center; gap: 4px;",
+            },
+            [el("span", { text: track.artist }), heartBtn]
+          ),
+        ]),
       ]),
     ]),
     chips(track)
@@ -174,6 +263,23 @@ export function mount() {
     runDig();
   });
   $("vibe-form").addEventListener("submit", runVibe);
+
+  on("player:state", () => {
+    if (state.reference) {
+      renderReference(state.reference);
+    }
+    const list = $("track-results");
+    if (list) {
+      for (const btn of list.querySelectorAll(".picker-play-btn")) {
+        const item = btn.closest(".picker-item");
+        const trackId = item?.dataset.trackId;
+        const isPlaying = trackId && currentTrack()?.id === trackId && isAudioPlaying();
+        btn.textContent = isPlaying ? "❚❚" : "▶";
+        btn.classList.toggle("playing", isPlaying);
+        btn.title = isPlaying ? "Pause preview" : "Play preview";
+      }
+    }
+  });
 
   loadRecent();
 }

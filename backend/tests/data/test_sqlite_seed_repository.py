@@ -285,3 +285,23 @@ async def test_list_seeds_breakdown_and_purge(repository: SQLiteSeedRepository) 
     assert purged_deezer_pending == 1
     assert await repository.get_by_name("Tale of Us") is None
     assert await repository.count() == 5
+
+    # 9. purge_seeds with exclude_sources (keeping core)
+    # Remaining pending seeds: "ARTBAT" (source="itunes"), "Solomun" (source="local-library")
+    # If we add a seed with source="crawl", then purge with exclude_sources=("local-library", "itunes")
+    await repository.upsert_many(
+        [
+            SeedArtist(
+                "Random Crawl", 0.3, "electronic", status="pending", source="crawl"
+            )
+        ]
+    )
+    assert await repository.count() == 6
+    purged_non_core = await repository.purge_seeds(
+        status="pending",
+        exclude_sources=("local-library", "itunes"),
+    )
+    assert purged_non_core == 1
+    assert await repository.get_by_name("Random Crawl") is None
+    assert await repository.get_by_name("Solomun") is not None
+    assert await repository.get_by_name("ARTBAT") is not None

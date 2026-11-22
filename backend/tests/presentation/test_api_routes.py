@@ -401,3 +401,133 @@ async def test_seeds_endpoints(client: httpx.AsyncClient) -> None:
     purge_res = await client.post("/api/catalog/seeds/purge", json={"status": "failed"})
     assert purge_res.status_code == 200
     assert purge_res.json()["purged"] == 1
+
+
+async def test_liked_artists_endpoints(client: httpx.AsyncClient) -> None:
+    # 1. Initial list is empty
+    res = await client.get("/api/catalog/liked-artists")
+    assert res.status_code == 200
+    assert res.json()["liked_artists"] == []
+    assert res.json()["total"] == 0
+
+    # 2. Like an artist
+    like_res = await client.post("/api/catalog/liked-artists/Enrico%20Sangiuliano")
+    assert like_res.status_code == 200
+    body = like_res.json()
+    assert body["liked"] is True
+    assert body["artist"]["artist_name"] == "Enrico Sangiuliano"
+    assert body["artist"]["normalized_key"] == "enrico sangiuliano"
+
+    # 3. List shows the liked artist
+    list_res = await client.get("/api/catalog/liked-artists")
+    assert list_res.status_code == 200
+    assert list_res.json()["total"] == 1
+    assert list_res.json()["liked_artists"][0]["artist_name"] == "Enrico Sangiuliano"
+
+    # 4. Filter artists by liked_only
+    artists_res = await client.get(
+        "/api/catalog/artists", params={"liked_only": "true"}
+    )
+    assert artists_res.status_code == 200
+
+    # 5. Unlike the artist
+    unlike_res = await client.delete("/api/catalog/liked-artists/Enrico%20Sangiuliano")
+    assert unlike_res.status_code == 200
+    assert unlike_res.json()["deleted"] is True
+
+    # 6. Verify list is empty again
+    empty_res = await client.get("/api/catalog/liked-artists")
+    assert empty_res.status_code == 200
+    assert empty_res.json()["total"] == 0
+    assert empty_res.json()["liked_artists"] == []
+
+
+async def test_similar_liked_artists_endpoint(client: httpx.AsyncClient) -> None:
+    # Query similar artists
+    res = await client.get(
+        "/api/catalog/liked-artists/similar",
+        params={"artist": "Test Artist", "limit": 10},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "seed_artists" in data
+    assert "items" in data
+
+
+async def test_set_helper_endpoints(client: httpx.AsyncClient) -> None:
+    # 1. Suggest next track
+    suggest_res = await client.post(
+        "/api/set-helper/suggest-next",
+        json={"from_track_id": "itunes:1", "limit": 5, "flow": "steady"},
+    )
+    assert suggest_res.status_code == 200
+    assert "suggestions" in suggest_res.json()
+
+    # 2. Bridge between two tracks
+    bridge_res = await client.post(
+        "/api/set-helper/bridge",
+        json={"track_a_id": "itunes:1", "track_b_id": "itunes:2", "limit": 5},
+    )
+    assert bridge_res.status_code == 200
+    assert "bridges" in bridge_res.json()
+
+    # 3. Auto-sequence
+    auto_res = await client.post(
+        "/api/set-helper/auto-sequence",
+        json={"track_ids": ["itunes:2", "itunes:1"], "flow": "ramp_up"},
+    )
+    assert auto_res.status_code == 200
+    assert len(auto_res.json()["ordered_track_ids"]) == 2
+
+    # 4. Evaluate sequence
+    eval_res = await client.post(
+        "/api/set-helper/evaluate",
+        json={"track_ids": ["itunes:1", "itunes:2"], "flow": "steady"},
+    )
+    assert eval_res.status_code == 200
+    assert len(eval_res.json()["transitions"]) == 1
+
+    # 5. CRUD Planned Sets
+    # Create
+    create_res = await client.post(
+        "/api/set-helper/sets",
+        json={"name": "Friday Peak", "track_ids": ["itunes:1", "itunes:2"]},
+    )
+    assert create_res.status_code == 200
+    set_data = create_res.json()
+    assert set_data["name"] == "Friday Peak"
+    assert set_data["track_ids"] == ["itunes:1", "itunes:2"]
+    set_id = set_data["id"]
+
+    # List
+    list_res = await client.get("/api/set-helper/sets")
+    assert list_res.status_code == 200
+    assert len(list_res.json()) >= 1
+
+    # Get by ID
+    get_res = await client.get(f"/api/set-helper/sets/{set_id}")
+    assert get_res.status_code == 200
+    assert get_res.json()["id"] == set_id
+    assert len(get_res.json()["tracks"]) == 2
+
+    # Update
+    update_res = await client.put(
+        f"/api/set-helper/sets/{set_id}",
+        json={"name": "Friday Peak Rev 1", "track_ids": ["itunes:2", "itunes:1"]},
+    )
+    assert update_res.status_code == 200
+    assert update_res.json()["name"] == "Friday Peak Rev 1"
+    assert update_res.json()["track_ids"] == ["itunes:2", "itunes:1"]
+
+    # Export M3U8
+    export_res = await client.get(f"/api/set-helper/sets/{set_id}/export.m3u8")
+    assert export_res.status_code == 200
+    assert "audio/x-mpegurl" in export_res.headers.get(
+        "content-type", ""
+    ) or "application/x-mpegurl" in export_res.headers.get("content-type", "")
+    assert "#EXTM3U" in export_res.text
+
+    # Delete
+    del_res = await client.delete(f"/api/set-helper/sets/{set_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["deleted"] is True
