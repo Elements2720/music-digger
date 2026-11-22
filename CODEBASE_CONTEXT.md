@@ -18,7 +18,8 @@ backend/
       __init__.py
       entities/
         __init__.py
-        track.py                                  # Track, SeedArtist, AudioBuffer, TrackReference, TrackVibe
+        track.py                                  # Track, BlacklistEntry, BlacklistKind, SeedArtist, AudioBuffer, TrackReference, TrackVibe
+        analytics.py                              # GenreStat, BpmBucketStat, SourceStat, KeyStat, ArtistSummary, CatalogAnalytics
         dj_set.py                                 # TrackMatch, Passage, DJSet, DownloadedSet, SetMatch
         search.py                                 # SearchFilter
       value_objects/
@@ -32,17 +33,18 @@ backend/
         hardware.py                               # IHardwareProbe
         llm.py                                    # ILLMService
         local_library.py                          # ILocalLibraryScanner
-        repositories.py                           # ITrackRepository, ISetRepository, ISeedRepository
+        repositories.py                           # ITrackRepository, ISetRepository, ISeedRepository, IBlacklistRepository
       use_cases/
         __init__.py
-        analyze_dj_set.py                         # AnalyzeDJSet (Phase 4: end-to-end DJ set pipeline, live progress)
+        analyze_dj_set.py                         # AnalyzeDJSet (Phase 4: end-to-end DJ set pipeline, multi-probe Shazam, boundary avoidance)
         build_seed_list.py                        # BuildSeedList (Deezer BFS + LLM seed generation, CrawlProgress, local roots)
         crawl_itunes_seeds.py                     # CrawlITunesSeeds (Phase B: iTunes techno/label keyword crawler)
         dig_similar_tracks.py                     # DigSimilarTracks (track-to-track similarity, harmonic/BPM filter)
-        fetch_catalog_metadata.py                 # FetchCatalogMetadata (iTunes artist metadata harvester)
+        fetch_catalog_metadata.py                 # FetchCatalogMetadata (iTunes artist metadata harvester, blacklist-aware)
         find_similar_for_set.py                   # FindSimilarForSet (set-to-set & passage-to-track similarity)
         import_local_library.py                   # ImportLocalLibrary (local folder import, middle-window decode, artist seeding)
         index_catalog.py                          # IndexCatalog (streaming audio decode, librosa analysis, CLAP embed)
+        manage_catalog.py                         # ManageCatalog (safe track/artist delete without disk deletion, blacklist CRUD)
         vibe_search.py                            # VibeSearch (natural language query -> CLAP text embedding)
     data/
       __init__.py
@@ -52,8 +54,8 @@ backend/
         __init__.py
         local/
           __init__.py
-          sqlite_client.py                        # SQLiteClient + Schema DDL (tracks, seed_artists, dj_sets, set_passages)
-          lancedb_client.py                       # LanceDBClient + VectorMatch (disk-backed IVF-PQ cosine index)
+          sqlite_client.py                        # SQLiteClient + Schema DDL (tracks, seed_artists, dj_sets, set_passages, blacklist)
+          lancedb_client.py                       # LanceDBClient + VectorMatch (disk-backed IVF-PQ cosine index, delete_ids)
           local_library_scanner.py                # LocalLibraryScanner (ffprobe recursive tag reader + filename fallback)
         remote/
           __init__.py
@@ -68,6 +70,7 @@ backend/
         multi_llm_client.py                       # MultiLLMClient (ILLMService: OpenAI-compatible local LLM client)
       mappers/
         __init__.py
+        blacklist_mapper.py                       # row_to_blacklist
         seed_mapper.py                            # seed_to_row / row_to_seed
         set_mapper.py                             # set_to_row / row_to_set / passage_to_row / row_to_passage
         track_mapper.py                           # track_to_row / row_to_track / track_to_vector_row
@@ -77,33 +80,34 @@ backend/
         ffmpeg_decoder.py                         # FFmpegAudioDecoder (f32le 48kHz mono pipes, RAM-only, no disk writes)
         hardware_probe.py                         # HardwareProbe (CUDA/VRAM/RAM/FFmpeg probe)
         librosa_analyzer.py                       # LibrosaFeatureExtractor (BPM tempo folding, CQT Camelot key detection)
-        set_segmenter.py                          # SetSegmenter (checkerboard novelty curve, strictly clamped passage boundaries)
+        set_segmenter.py                          # SetSegmenter (semantic CLAP + acoustic novelty curve, strictly clamped passage boundaries)
       repositories/
         __init__.py
-        seed_repository.py                        # SQLiteSeedRepository (ISeedRepository)
+        blacklist_repository.py                   # SQLiteBlacklistRepository (IBlacklistRepository)
+        seed_repository.py                        # SQLiteSeedRepository (ISeedRepository: blacklist filtering, delete_by_name)
         set_repository.py                         # SQLiteSetRepository (ISetRepository: SQLite + LanceDB set vectors)
-        track_repository.py                       # HybridTrackRepository (ITrackRepository: SQLite metadata + LanceDB vectors)
+        track_repository.py                       # HybridTrackRepository (ITrackRepository: blacklist filtering, safe delete, analytics)
     presentation/
       __init__.py
       cli/
         __init__.py
         __main__.py                               # python -m presentation.cli
-        commands.py                               # Typer `dig` CLI (ASCII only, rich progress)
+        commands.py                               # Typer `dig` CLI (ASCII only, rich progress, delete/blacklist/stats commands)
       api/
         __init__.py
         app.py                                    # FastAPI application factory & static file mounting
         job_manager.py                            # JobManager (single-job concurrency, SSE streaming, turbo mode, telemetry)
-        schemas.py                                # Pydantic schemas, JobKind literal
+        schemas.py                                # Pydantic schemas, JobKind literal, Blacklist schemas & analytics serializers
         routes/
           __init__.py
-          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig)
+          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig, analytics, artists, blacklist)
           hardware.py                             # /api/hardware endpoints (GPU, VRAM, RAM, FFmpeg probe)
           jobs.py                                 # /api/jobs endpoints (start, cancel, snapshot, SSE stream)
           sets.py                                 # /api/sets endpoints (DJ set analysis, passage queries, similar sets)
   tests/
     domain/
       test_domain_purity.py                       # AST import scan: enforces stdlib-only imports in domain/
-      test_analyze_dj_set.py                      # Phase 4 use case unit tests (per-passage progress, fast CLAP default)
+      test_analyze_dj_set.py                      # DJ set use case unit tests (multi-probe Shazam, interior core, duplicate merging)
       test_audio_features.py
       test_bpm.py
       test_build_seed_list.py                     # Seed list building + CrawlProgress tests
@@ -116,6 +120,7 @@ backend/
       test_import_local_library.py                # Local library import & taste-based artist seeding tests
       test_index_catalog.py
       test_interfaces.py
+      test_manage_catalog.py                      # Safe track/artist deletion and blacklist tests
       test_search_filter.py
       test_set_entities.py
       test_time_range.py
@@ -126,6 +131,7 @@ backend/
       conftest.py
       fakes.py                                    # Shared test doubles (FakeClock, MockTransport)
       test_artist_parser.py
+      test_blacklist_repository.py                # Blacklist repository CRUD and cache tests
       test_clap_embedder.py
       test_deezer_crawler.py
       test_ffmpeg_decoder.py
@@ -135,32 +141,32 @@ backend/
       test_llm_client.py
       test_rate_limiter.py
       test_set_repository.py
-      test_set_segmenter.py                       # Segmenter tests (boundary detection, non-integer duration clamp)
+      test_set_segmenter.py                       # Segmenter tests (semantic + acoustic boundary detection, duration clamp)
       test_shazam_client.py                       # Shazam tests (timeout, circuit breaker, CancelledError propagation)
       test_sqlite_seed_repository.py
       test_track_repository.py
       test_ytdlp_downloader.py
     presentation/
       api_fakes.py                                # Duck-typed container & fake services for API testing
-      test_api_routes.py                          # FastAPI endpoint integration tests
+      test_api_routes.py                          # FastAPI endpoint integration tests (catalog, blacklist, deletion)
       test_job_manager.py                         # JobManager execution, SSE streaming, turbo mode, speed/telemetry
 
 frontend/
-  index.html                                      # SPA single-page shell
+  index.html                                      # SPA single-page shell (modals for delete confirmation and blacklist)
   css/
-    style.css                                     # Minimalist dark theme, responsive grid, progress tracks, #job-log
+    style.css                                     # Minimalist dark theme, responsive grid, progress tracks, #job-log, library manager UI
   js/
-    api.js                                        # Fetch API client & SSE event source subscription
+    api.js                                        # Fetch API client (analytics, artist management, blacklist CRUD, SSE subscription)
     format.js                                     # Number/BPM/Camelot/Time formatting utilities
     main.js                                       # Router & view switcher
     player.js                                     # Audio preview player controller
     state.js                                      # Lightweight global reactive state
-    ui.js                                         # DOM construction helpers
+    ui.js                                         # DOM construction helpers (trackRow with quick delete action)
     views/
       dig.js                                      # Dig view (track-to-track similarity, audio preview, harmonic filter)
       run.js                                      # Run view (job configuration, live progress, speed, recent messages log)
       sets.js                                     # Sets view (analyzed DJ set browser, tracklist, passage timeline)
-      stats.js                                    # Stats view (catalog & seed analytics)
+      stats.js                                    # Stats view (rich Library Overview & Manager, KPI cards, visual distribution bars, searchable artists drawer, blacklist tab)
 ```
 
 ### 1.2 Python Version & Key Dependencies
@@ -249,6 +255,9 @@ frontend/
 | `require_int` | `(value, field) -> int` | Reject bool |
 | `require_bool` | `(value, field) -> bool` | Strict bool |
 | `freeze_tuple` | `(value, field, expected_type=None) -> tuple[T, ...]` | Freeze iterable, optional type check |
+| `normalize_key` | `(text: str) -> str` | Pure stdlib alphanumeric lowercase normalization (re `[^a-z0-9]`) |
+| `normalize_artist_key`| `(artist: str) -> str` | Normalized deduplication key for artist names |
+| `normalize_track_key` | `(artist: str, title: str) -> str` | Composite normalized deduplication key (`artist:::title`) |
 
 ### 2.2 Value Objects (`domain/value_objects/`)
 
@@ -326,8 +335,29 @@ Properties: `has_ffmpeg`, `gpu_ready`. Methods: `vram_summary() -> str`, `ram_su
 | `source` | `str` | `"unknown"` |
 | `external_id` | `str | None` | `None` |
 | `embedding` | `EmbeddingVector | None` | `None` |
+| `local_path` | `str | None` | `None` |
 
 Properties: `track_id`, `duration`, `display_name`. Methods: `with_embedding(EmbeddingVector) -> Track`
+
+#### `BlacklistEntry` (frozen, slotted)
+| Field | Type | Default |
+|---|---|---|
+| `id` | `int | None` | `None` |
+| `kind` | `Literal["artist", "track"]` | *required* |
+| `normalized_key` | `str` | *required* |
+| `display_name` | `str` | *required* |
+| `artist_name` | `str | None` | `None` |
+| `track_title` | `str | None` | `None` |
+| `reason` | `str | None` | `None` |
+| `created_at` | `str | None` | `None` |
+
+#### Analytics Entities (`domain/entities/analytics.py`, frozen, slotted)
+- `GenreStat`: `genre: str`, `track_count: int`, `embedded_count: int`
+- `BpmBucketStat`: `label: str`, `track_count: int`
+- `SourceStat`: `source: str`, `track_count: int`, `embedded_count: int`
+- `KeyStat`: `camelot_key: str`, `track_count: int`
+- `ArtistSummary`: `artist: str`, `track_count: int`, `embedded_count: int`, `genres: tuple[str, ...]`, `sample_track_id: str | None = None`, `sample_track_title: str | None = None`
+- `CatalogAnalytics`: `total_tracks: int`, `total_embedded: int`, `total_artists: int`, `total_local: int`, `total_itunes: int`, `genres: tuple[GenreStat, ...]`, `bpm_buckets: tuple[BpmBucketStat, ...]`, `sources: tuple[SourceStat, ...]`, `keys: tuple[KeyStat, ...]`
 
 #### `SeedArtist` (frozen, slotted)
 | Field | Type | Default |
@@ -535,6 +565,11 @@ async def count_embedded(self) -> int
 async def list_unembedded(self, limit=100, *, max_failures=3) -> Sequence[Track]
 async def list_embedded(self, limit=20, *, offset=0) -> Sequence[Track]
 async def mark_index_failed(self, track_id: str) -> None
+async def delete_by_ids(self, track_ids: Sequence[str]) -> tuple[int, tuple[str, ...]]
+async def delete_by_artist(self, artist_name: str) -> tuple[int, tuple[str, ...]]
+async def list_by_artist(self, artist_name: str) -> Sequence[Track]
+async def list_artists_summary(self, *, query: str | None = None, sort: str = "tracks_desc", limit: int = 50, offset: int = 0) -> tuple[Sequence[ArtistSummary], int]
+async def get_catalog_analytics(self) -> CatalogAnalytics
 ```
 
 #### `ISetRepository` (ABC)
@@ -557,21 +592,31 @@ async def update_status(self, name: str, status: SeedStatus) -> None
 async def count_by_category(self, category: str) -> int
 async def count_by_status(self, status: SeedStatus) -> int
 async def count(self) -> int
+async def delete_by_name(self, name: str) -> bool
+```
+
+#### `IBlacklistRepository` (ABC)
+```python
+async def add(self, entry: BlacklistEntry) -> BlacklistEntry
+async def get_by_key(self, kind: BlacklistKind, normalized_key: str) -> BlacklistEntry | None
+async def is_blacklisted(self, kind: BlacklistKind, normalized_key: str) -> bool
+async def list_all(self, kind: BlacklistKind | None = None) -> Sequence[BlacklistEntry]
+async def remove(self, entry_id: int) -> bool
 ```
 
 ### 2.5 Use Cases (`domain/use_cases/`)
 
 #### `AnalyzeDJSet`
 - **Dependencies**: `ISetDownloader`, `IAudioSegmenter`, `IAudioDecoder`, `IFeatureExtractor`, `IAudioEmbedder`, `ITrackRepository`, `ISetRepository`, `ISeedRepository`, `IFingerprinter | None`, `ILLMService | None`.
-- **Entry**: `async execute(source, destination_dir=..., use_shazam=True, use_comments=True, keep_audio=False, progress=None) -> DJSet`
+- **Entry**: `async execute(source, destination_dir=..., use_shazam=True, use_comments=True, keep_audio=False, shazam_probes: int = 3, progress=None) -> DJSet`
 - **Flow**:
   1. `download`: Streams audio file/URL to temporary disk storage via `ISetDownloader.fetch_set`.
-  2. `segment`: Calls `IAudioSegmenter.detect_passages` to partition the set into coherent musical passages.
+  2. `segment`: Calls `IAudioSegmenter.detect_passages` to partition the set into coherent musical passages (semantic CLAP + acoustic novelty curves).
   3. `extract`: Emits per-passage `1/N .. N/N` feature extraction events (BPM & Camelot key) processed via bounded `ProcessPoolExecutor`.
-  4. `embed`: Decodes 30s centered core windows, computes CLAP embeddings in micro-batches (`<= 32`), frees raw PCM immediately, emits per-passage `1/N .. N/N` embed events.
+  4. `embed`: Uses `_safe_interior()` boundary avoidance (inward shrink of 25s for >=90s, 10s for 45s-90s) to center 30s core windows cleanly away from transitions; computes CLAP embeddings in micro-batches (`<= 32`), frees raw PCM immediately, emits per-passage `1/N .. N/N` embed events.
   5. `match`: Queries vector index for top catalog matches per passage within +-5 BPM, emits per-passage `1/N .. N/N` match events.
-  6. `identify`: First matches timestamps against comment tracklists (LLM parsed). For unidentified passages, calls `IFingerprinter.identify_async` (Shazam) under a 15s timeout with circuit breaker protection; emits per-passage `1/N .. N/N` identify events. Fast CLAP default runs instantly when `use_shazam=False`.
-  7. `persist`: Clamps any boundary exceeding duration before creating `DJSet`, saves entity and LanceDB set embedding, auto-snowballs discovered artist names into high-priority seeds, and cleans up temporary set audio unless `keep_audio=True`.
+  6. `identify`: First matches timestamps against comment tracklists (LLM parsed). For unidentified passages, executes multi-probe Shazam (`shazam_probes: int = 3`) sampling up to 3 candidate interior probe offsets (50% center, 30% early, 70% late) with early exit upon successful identification; wrapped under a 15s timeout with circuit breaker protection; emits per-passage `1/N .. N/N` identify events. Fast CLAP default runs instantly when `use_shazam=False`.
+  7. `post-process & persist`: Runs `_merge_duplicate_passages()` to merge consecutive passages sharing identical exact IDs into single contiguous musical passages; clamps any boundary exceeding duration before creating `DJSet`, saves entity and LanceDB set embedding, auto-snowballs discovered artist names into high-priority seeds, and cleans up temporary set audio unless `keep_audio=True`.
 
 #### `BuildSeedList`
 - **Dependencies**: `ISeedDiscovery | None`, `ISeedRepository`, `ILLMService | None`
@@ -602,6 +647,22 @@ async def count(self) -> int
 - **Dependencies**: `ITrackRepository`, `IAudioDecoder`, `IFeatureExtractor`, `IAudioEmbedder`, `Executor | None`, `cpu_workers=4`, `queue_maxsize=64`, `chunk_size=32`
 - **Entry**: `async execute(*, limit=500, batch_size=16, max_failures=3, reindex=False, progress=None) -> IndexResult`
 - **Flow**: Bounded producer-consumer. Producers download+decode previews via `decode_url(sample_rate=48000, channels=1)` -> enqueue to bounded `asyncio.Queue`. Consumer drains queue -> runs `extract()` on `ProcessPoolExecutor` -> accumulates batch -> calls `embed_batch()` via `asyncio.to_thread` -> `upsert_many` hydrated tracks. PCM released immediately per batch.
+
+#### `ImportLocalLibrary`
+- **Dependencies**: `ILocalLibraryScanner`, `IAudioDecoder`, `IFeatureExtractor`, `IAudioEmbedder`, `ITrackRepository`, `ISeedRepository`, `Executor | None`, `cpu_workers=4`
+- **Entry**: `async execute(folder_path, recursive=True, batch_size=16, reindex=False, seed_artists=True, progress=None) -> ImportLocalLibraryResult`
+- **Flow**: Recursively scans folder via `ffprobe` tag extraction -> skips already indexed tracks unless `reindex=True` -> extracts 30s centered core window (40%-45% duration) -> extracts BPM and Camelot key via process pool -> micro-batches CLAP embeddings -> upserts into `tracks` and LanceDB -> optionally seeds discovered artists with high electronic priority.
+
+#### `ManageCatalog`
+- **Dependencies**: `ITrackRepository`, `ISeedRepository`, `IBlacklistRepository`
+- **Entry**:
+  - `delete_track(track_id, *, blacklist=False, reason=None) -> DeleteTrackResult`
+  - `delete_artist(artist_name, *, blacklist=False, reason=None) -> DeleteArtistResult`
+  - `blacklist_artist(artist_name, *, reason=None) -> BlacklistEntry`
+  - `blacklist_track(artist, title, *, reason=None) -> BlacklistEntry`
+  - `list_blacklist(kind=None) -> Sequence[BlacklistEntry]`
+  - `remove_from_blacklist(entry_id) -> bool`
+- **Flow**: Strict Safe Deletion: Removes records from SQLite (`tracks`, `seed_artists`) and LanceDB (`track_vectors`), but **NEVER touches or deletes audio files on disk** (guaranteed safe for `local_path`). If `blacklist=True`, writes normalized deduplication entry to `blacklist` table so future iTunes crawls or local library scans automatically ignore that artist/track.
 
 #### `VibeSearch`
 - **Dependencies**: `ITrackRepository`, `IAudioEmbedder`
@@ -648,9 +709,24 @@ async def count(self) -> int
 | `index_failures` | `INTEGER NOT NULL DEFAULT 0` | |
 | `source` | `TEXT NOT NULL DEFAULT 'itunes'` | |
 | `external_id`, `isrc` | `TEXT` | |
+| `local_path` | `TEXT` | Path to local audio file (if source='local') |
 | `created_at` / `updated_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
 
 **Indexes**: `idx_tracks_external_id` (source, external_id), `idx_tracks_bpm`, `idx_tracks_genre`, `idx_tracks_heard`.
+
+#### Table `blacklist`
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `INTEGER` | PK AUTOINCREMENT |
+| `kind` | `TEXT NOT NULL` | CHECK IN ('artist', 'track') |
+| `normalized_key` | `TEXT NOT NULL` | UNIQUE |
+| `display_name` | `TEXT NOT NULL` | |
+| `artist_name` | `TEXT` | |
+| `track_title` | `TEXT` | |
+| `reason` | `TEXT` | |
+| `created_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
+
+**Indexes**: `idx_blacklist_kind` (kind), `idx_blacklist_created_at` (created_at DESC).
 
 #### Table `dj_sets`
 | Column | Type | Constraints |
@@ -689,6 +765,7 @@ async def count(self) -> int
 - `track_vectors`: CLAP embeddings for catalog tracks (512-dim, float16).
 - `set_vectors`: Mean embeddings for analyzed DJ sets.
 **Search**: `cosine` distance. IVF-PQ automatic indexing when table exceeds 10,000 vectors.
+**Batch Deletion**: `delete_ids(track_ids)` deletes vectors in bounded 500-item chunks using SQL filter predicates (`id IN (...)`), guarded by table existence checks.
 
 ### 3.3 Remote Providers & Ingestion
 
@@ -715,9 +792,10 @@ async def count(self) -> int
 ### 3.4 ML Engine
 
 #### `SetSegmenter` (`data/ml/set_segmenter.py`)
+- Accepts optional `embedder: IAudioEmbedder | None = None`.
 - Streams 16 kHz audio without loading full set into RAM.
-- Extracts STFT onset flux, chroma, and MFCC pooled novelty curves.
-- Checkerboard filter detects musical transition boundaries.
+- **Semantic + Acoustic Novelty**: When embedder is present, extracts semantic novelty curves by sliding 10s audio buffers across the set, computing cosine distance between adjacent CLAP embeddings, merged with STFT onset flux, chroma, and MFCC pooled novelty curves.
+- Checkerboard filter detects musical transition boundaries with automatic acoustic fallback.
 - **Strict Passage Clamping**: Intermediate boundaries are rounded `< total_duration_seconds`. Terminal pieces strictly clamp `p_end = min(round(piece_end, 3), total_duration_seconds)`, guaranteeing no passage ever exceeds `total_duration_seconds`.
 
 #### `ClapAudioEmbedder` (`data/ml/clap_embedder.py`)
@@ -737,12 +815,12 @@ async def count(self) -> int
 
 Single Composition Root wired in `Container.start()`:
 1. `SQLiteClient` & `LanceDBClient`
-2. `SQLiteSeedRepository`, `HybridTrackRepository`, `SQLiteSetRepository`
+2. `SQLiteSeedRepository`, `HybridTrackRepository`, `SQLiteSetRepository`, `SQLiteBlacklistRepository`
 3. `Shared HTTP Client` (httpx)
-4. `ITunesProvider`, `DeezerSeedCrawler`, `MultiLLMClient`
+4. `ITunesProvider`, `DeezerSeedCrawler`, `MultiLLMClient`, `LocalLibraryScanner`
 5. `FFmpegAudioDecoder`, `LibrosaFeatureExtractor`, `ClapAudioEmbedder`, `HardwareProbe`
-6. `SetSegmenter`, `YtDlpSetDownloader`, `ShazamFingerprinter`
-7. All 8 Use Cases: `BuildSeedList`, `DigSimilarTracks`, `FetchCatalogMetadata`, `IndexCatalog`, `AnalyzeDJSet`, `FindSimilarForSet`, `CrawlITunesSeeds`, `VibeSearch`
+6. `SetSegmenter(embedder=clap_embedder)`, `YtDlpSetDownloader`, `ShazamFingerprinter`
+7. All 10 Use Cases: `BuildSeedList`, `DigSimilarTracks`, `FetchCatalogMetadata`, `IndexCatalog`, `AnalyzeDJSet`, `FindSimilarForSet`, `CrawlITunesSeeds`, `ImportLocalLibrary`, `ManageCatalog`, `VibeSearch`
 
 ### 4.2 CLI Commands (`presentation/cli/commands.py`)
 
@@ -753,32 +831,49 @@ All outputs enforce ASCII-only strings for Windows console compatibility.
 - `dig seed-itunes`: Crawl iTunes keywords, labels, or compilations.
 - `dig fetch-metadata`: Ingest tracks from pending seeds (18 req/min ceiling).
 - `dig index`: Batch decode, analyze, and embed catalog tracks.
+- `dig import-local <folder>`: Scan local folders, middle-window decode, embed, and seed artists.
 - `dig list-tracks`: View indexed catalog tracks.
 - `dig dig <track_id>`: Audio similarity search with BPM and harmonic key filtering.
-- `dig analyze-set <source>`: Full DJ set analysis with live progress across all stages.
+- `dig analyze-set <source>`: Full DJ set analysis with multi-probe Shazam (`--shazam-probes 1..3`) and live progress.
 - `dig show-set <set_id>`: View tracklist, passage matches, or set similarity.
 - `dig list-sets`: List analyzed sets and ID counts.
 - `dig mark-heard <track_id>`: Mark track as heard for `--exclude-heard` filtering.
-- `dig stats`: Database and vector index counts.
+- `dig stats`: Rich seed, track, local vs iTunes breakdown, and top genres summary.
+- `dig delete-track <track_id>`: Delete track from DB/vector index without touching audio on disk; optional `--blacklist`.
+- `dig delete-artist <artist_name>`: Delete artist, their tracks, and seeds without touching audio on disk; optional `--blacklist`.
+- `dig blacklist-list`: List blacklisted artists and tracks.
+- `dig blacklist-remove <entry_id>`: Remove an entry from the blacklist.
 
 ### 4.3 Web API & GUI (`presentation/api/` & `frontend/`)
 
 - **FastAPI Backend** (`presentation/api/app.py`):
-  - REST endpoints for catalog, sets, hardware probe, and jobs.
+  - REST endpoints for catalog, sets, hardware probe, jobs, analytics, artists, and blacklist.
   - Server-Sent Events (SSE) streaming on `/api/jobs/stream`.
   - Static file hosting for `frontend/`.
+- **Catalog Management & Analytics Endpoints** (`presentation/api/routes/catalog.py`):
+  - `GET /api/catalog/analytics`: Overall counts, genres, BPM distribution, Camelot keys, sources.
+  - `GET /api/catalog/artists`: Searchable, paginated artists summary with track counts and samples.
+  - `GET /api/catalog/artists/{name}/tracks`: Tracks for an artist (for drawer accordion).
+  - `DELETE /api/catalog/tracks/{id}`: Safe track deletion; optional `blacklist` and `reason`.
+  - `DELETE /api/catalog/artists/{name}`: Safe artist deletion; optional `blacklist` and `reason`.
+  - `GET /api/catalog/blacklist`, `POST /api/catalog/blacklist`, `DELETE /api/catalog/blacklist/{id}`: Blacklist CRUD.
 - **JobManager** (`presentation/api/job_manager.py`):
   - Strictly serial execution (1 background job at a time).
-  - Supported jobs: `index`, `seed-crawl`, `seed-llm`, `seed-itunes`, `fetch-metadata`, `analyze-set`.
+  - Supported jobs: `index`, `import-local`, `seed-crawl`, `seed-llm`, `seed-itunes`, `fetch-metadata`, `analyze-set`.
   - Live progress broadcasting (stage, processed, total, failed, speed, memory).
   - Turbo indexing mode for high-throughput batching.
 - **Frontend Architecture** (`frontend/`):
   - 100% vanilla ES modules, no build tools, zero external dependencies or CDNs.
   - Views:
     - `run`: Interactive form for launching any job, real-time progress bar, live speed in `tracks/s` or `passages/s`, VRAM/RAM metrics, and scrollable `#job-log` event stream.
-    - `dig`: Interactive track similarity engine with HTML5 audio preview player and Camelot wheel visualizer.
-    - `sets`: DJ set analysis viewer, passage-by-passage timeline, Shazam/comment match badges, and track digging.
-    - `stats`: Seed and track catalog breakdown.
+    - `dig`: Interactive track similarity engine with HTML5 audio preview player and Camelot wheel visualizer; track rows include quick delete action button with confirmation & blacklist toggle.
+    - `sets`: DJ set analysis viewer, passage-by-passage timeline, Shazam/comment match badges, track digging, and quick deletion actions.
+    - `stats`: Complete Library Overview & Manager:
+      - KPI summary cards (Total Tracks, Embedded %, Total Artists, Local Files, Active Blacklist).
+      - Visual distribution bars for Top Genres, BPM Buckets, and Camelot Harmonics.
+      - Artists Directory: live search filter, sort dropdown (most tracks, most embedded, A-Z), pagination, inline expandable tracks drawer with direct playback and per-track delete.
+      - Artist Action Menu: Delete artist with optional blacklist checkbox.
+      - Blacklist Management tab: filter by artist/track, add new blacklist entry modal, unblock button.
 
 ---
 

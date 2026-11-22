@@ -6,15 +6,28 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
+from domain.entities.analytics import (
+    ArtistSummary,
+    BpmBucketStat,
+    CatalogAnalytics,
+    GenreStat,
+    KeyStat,
+    SourceStat,
+)
 from domain.entities.dj_set import TrackMatch
 from domain.entities.search import SearchFilter
 from domain.entities.track import Track
-from domain.interfaces.repositories import ITrackRepository
+from domain.interfaces.repositories import IBlacklistRepository, ITrackRepository
 from domain.value_objects.audio_features import EmbeddingVector
 
 from ..datasources.local.lancedb_client import LanceDBClient
 from ..datasources.local.sqlite_client import SQLiteClient
 from ..mappers.track_mapper import row_to_track, track_to_row, track_to_vector_row
+from ..normalization import (
+    normalize_artist_key,
+    normalize_text,
+    normalize_track_key,
+)
 
 _UPSERT_SQL = """
 INSERT INTO tracks (
@@ -50,13 +63,34 @@ ON CONFLICT(id) DO UPDATE SET
 class HybridTrackRepository(ITrackRepository):
     """Coordinate relational metadata with the disk-backed vector index."""
 
-    def __init__(self, sqlite: SQLiteClient, vectors: LanceDBClient) -> None:
+    def __init__(
+        self,
+        sqlite: SQLiteClient,
+        vectors: LanceDBClient,
+        blacklist: IBlacklistRepository | None = None,
+    ) -> None:
         self._sqlite = sqlite
         self._vectors = vectors
+        self._blacklist = blacklist
 
     async def upsert_many(self, tracks: Sequence[Track]) -> int:
         if not tracks:
             return 0
+
+        if self._blacklist is not None:
+            blocked_artists = await self._blacklist.get_blocked_artist_keys()
+            blocked_tracks = await self._blacklist.get_blocked_track_keys()
+            if blocked_artists or blocked_tracks:
+                filtered_tracks: list[Track] = []
+                for track in tracks:
+                    norm_artist = normalize_artist_key(track.artist)
+                    norm_track = normalize_track_key(track.artist, track.title)
+                    if norm_artist in blocked_artists or norm_track in blocked_tracks:
+                        continue
+                    filtered_tracks.append(track)
+                tracks = tuple(filtered_tracks)
+                if not tracks:
+                    return 0
 
         vector_tracks: list[Track] = []
         async with self._sqlite.transaction() as connection:
@@ -177,9 +211,7 @@ class HybridTrackRepository(ITrackRepository):
         )
         return tuple(row_to_track(row) for row in rows)
 
-    async def search_tracks(
-        self, query: str, limit: int = 30
-    ) -> Sequence[Track]:
+    async def search_tracks(self, query: str, limit: int = 30) -> Sequence[Track]:
         if limit <= 0:
             return ()
         needle = query.strip()
@@ -320,6 +352,259 @@ class HybridTrackRepository(ITrackRepository):
             """
         )
         return cleared
+
+    async def delete_by_ids(self, track_ids: Sequence[str]) -> int:
+        """Delete tracks from SQLite and LanceDB by their IDs.
+
+        Never deletes user audio files on disk (only DB rows).
+        """
+        if not track_ids:
+            return 0
+        total_deleted = 0
+        batch_size = 500
+        for i in range(0, len(track_ids), batch_size):
+            chunk = track_ids[i : i + batch_size]
+            placeholders = ", ".join("?" for _ in chunk)
+            cursor = await self._sqlite.execute(
+                f"DELETE FROM tracks WHERE id IN ({placeholders})",
+                tuple(chunk),
+            )
+            total_deleted += cursor.rowcount or 0
+        await self._vectors.delete_ids(track_ids)
+        return total_deleted
+
+    async def delete_by_artist(self, artist_name: str) -> tuple[int, tuple[str, ...]]:
+        """Delete all tracks by artist name, returning (count_deleted, deleted_ids)."""
+        norm_artist = normalize_text(artist_name)
+        pattern = f"{norm_artist}|%"
+        rows = await self._sqlite.fetchall(
+            "SELECT id FROM tracks WHERE artist = ? COLLATE NOCASE OR normalized_key LIKE ?",
+            (artist_name, pattern),
+        )
+        if not rows:
+            return (0, ())
+        track_ids = tuple(str(row["id"]) for row in rows)
+        count = await self.delete_by_ids(track_ids)
+        return (count, track_ids)
+
+    async def list_by_artist(
+        self, artist_name: str, *, limit: int = 200, offset: int = 0
+    ) -> Sequence[Track]:
+        """List tracks by artist name."""
+        if limit <= 0:
+            return ()
+        norm_artist = normalize_text(artist_name)
+        pattern = f"{norm_artist}|%"
+        rows = await self._sqlite.fetchall(
+            """
+            SELECT * FROM tracks
+            WHERE artist = ? COLLATE NOCASE OR normalized_key LIKE ?
+            ORDER BY release_year DESC, title COLLATE NOCASE
+            LIMIT ? OFFSET ?
+            """,
+            (artist_name, pattern, limit, offset),
+        )
+        return tuple(row_to_track(row) for row in rows)
+
+    async def list_artists_summary(
+        self,
+        *,
+        query: str | None = None,
+        genre: str | None = None,
+        source: str | None = None,
+        sort: str = "tracks_desc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        """List artists summary with counts and genres, returning (artists, total_count)."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if query and query.strip():
+            clauses.append("artist LIKE ?")
+            params.append(f"%{query.strip()}%")
+        if genre and genre.strip():
+            clauses.append("LOWER(genre) = LOWER(?)")
+            params.append(genre.strip())
+        if source and source.strip():
+            clauses.append("source = ?")
+            params.append(source.strip())
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+        count_sql = f"SELECT COUNT(DISTINCT artist) AS total FROM tracks {where}"
+        count_row = await self._sqlite.fetchone(count_sql, tuple(params))
+        total_artists = int(count_row["total"]) if count_row is not None else 0
+        if total_artists == 0 or limit <= 0:
+            return ((), total_artists)
+
+        if sort == "artist_asc":
+            order_by = "artist COLLATE NOCASE ASC"
+        elif sort == "embedded_desc":
+            order_by = (
+                "embedded_count DESC, track_count DESC, artist COLLATE NOCASE ASC"
+            )
+        else:  # "tracks_desc"
+            order_by = (
+                "track_count DESC, embedded_count DESC, artist COLLATE NOCASE ASC"
+            )
+
+        summary_sql = f"""
+        SELECT
+            artist,
+            COUNT(*) AS track_count,
+            SUM(is_embedded) AS embedded_count,
+            GROUP_CONCAT(DISTINCT genre) AS genres_concat,
+            GROUP_CONCAT(DISTINCT source) AS sources_concat,
+            MIN(id) AS sample_id,
+            MIN(title) AS sample_title
+        FROM tracks
+        {where}
+        GROUP BY artist
+        ORDER BY {order_by}
+        LIMIT ? OFFSET ?
+        """
+        fetch_params = list(params)
+        fetch_params.extend([limit, offset])
+        rows = await self._sqlite.fetchall(summary_sql, tuple(fetch_params))
+
+        summaries: list[ArtistSummary] = []
+        for row in rows:
+            genres_raw = row["genres_concat"] or ""
+            genres = tuple(g for g in genres_raw.split(",") if g)
+            sources_raw = row["sources_concat"] or ""
+            sources = tuple(s for s in sources_raw.split(",") if s)
+            summaries.append(
+                ArtistSummary(
+                    artist=str(row["artist"]),
+                    track_count=int(row["track_count"] or 0),
+                    embedded_count=int(row["embedded_count"] or 0),
+                    genres=genres,
+                    sources=sources,
+                    sample_track_id=str(row["sample_id"]) if row["sample_id"] else None,
+                    sample_track_title=str(row["sample_title"])
+                    if row["sample_title"]
+                    else None,
+                )
+            )
+        return (tuple(summaries), total_artists)
+
+    async def get_catalog_analytics(self) -> CatalogAnalytics:
+        """Return high-level analytics and distributions across the catalog."""
+        row = await self._sqlite.fetchone(
+            """
+            SELECT
+                COUNT(*) AS total_tracks,
+                SUM(is_embedded) AS total_embedded,
+                COUNT(DISTINCT artist) AS total_artists,
+                SUM(CASE WHEN source = 'local' THEN 1 ELSE 0 END) AS total_local,
+                SUM(CASE WHEN source = 'itunes' THEN 1 ELSE 0 END) AS total_itunes
+            FROM tracks
+            """
+        )
+        total_tracks = int(row["total_tracks"] or 0) if row else 0
+        total_embedded = int(row["total_embedded"] or 0) if row else 0
+        total_artists = int(row["total_artists"] or 0) if row else 0
+        total_local = int(row["total_local"] or 0) if row else 0
+        total_itunes = int(row["total_itunes"] or 0) if row else 0
+
+        genre_rows = await self._sqlite.fetchall(
+            """
+            SELECT genre, COUNT(*) AS track_count, SUM(is_embedded) AS embedded_count
+            FROM tracks
+            WHERE genre IS NOT NULL AND TRIM(genre) != ''
+            GROUP BY genre
+            ORDER BY track_count DESC
+            LIMIT 20
+            """
+        )
+        genres = tuple(
+            GenreStat(
+                genre=str(r["genre"]),
+                track_count=int(r["track_count"] or 0),
+                embedded_count=int(r["embedded_count"] or 0),
+            )
+            for r in genre_rows
+        )
+
+        bpm_rows = await self._sqlite.fetchall(
+            """
+            SELECT
+                CASE
+                    WHEN bpm IS NULL THEN 'Unknown'
+                    WHEN bpm < 120 THEN '< 120'
+                    WHEN bpm >= 120 AND bpm < 125 THEN '120-124'
+                    WHEN bpm >= 125 AND bpm < 130 THEN '125-129'
+                    WHEN bpm >= 130 AND bpm < 135 THEN '130-134'
+                    WHEN bpm >= 135 AND bpm < 140 THEN '135-139'
+                    ELSE '140+'
+                END AS bucket_label,
+                COUNT(*) AS track_count
+            FROM tracks
+            GROUP BY bucket_label
+            """
+        )
+        bpm_map = {str(r["bucket_label"]): int(r["track_count"] or 0) for r in bpm_rows}
+        bucket_order = [
+            "< 120",
+            "120-124",
+            "125-129",
+            "130-134",
+            "135-139",
+            "140+",
+            "Unknown",
+        ]
+        bpm_buckets = tuple(
+            BpmBucketStat(label=lbl, track_count=bpm_map.get(lbl, 0))
+            for lbl in bucket_order
+            if lbl in bpm_map or total_tracks > 0
+        )
+
+        source_rows = await self._sqlite.fetchall(
+            """
+            SELECT source, COUNT(*) AS track_count, SUM(is_embedded) AS embedded_count
+            FROM tracks
+            GROUP BY source
+            ORDER BY track_count DESC
+            """
+        )
+        sources = tuple(
+            SourceStat(
+                source=str(r["source"]),
+                track_count=int(r["track_count"] or 0),
+                embedded_count=int(r["embedded_count"] or 0),
+            )
+            for r in source_rows
+        )
+
+        key_rows = await self._sqlite.fetchall(
+            """
+            SELECT camelot_key, COUNT(*) AS track_count
+            FROM tracks
+            WHERE camelot_key IS NOT NULL AND TRIM(camelot_key) != ''
+            GROUP BY camelot_key
+            ORDER BY track_count DESC
+            LIMIT 24
+            """
+        )
+        top_keys = tuple(
+            KeyStat(
+                camelot_key=str(r["camelot_key"]),
+                track_count=int(r["track_count"] or 0),
+            )
+            for r in key_rows
+        )
+
+        return CatalogAnalytics(
+            total_tracks=total_tracks,
+            total_embedded=total_embedded,
+            total_artists=total_artists,
+            total_local=total_local,
+            total_itunes=total_itunes,
+            genres=genres,
+            bpm_buckets=bpm_buckets,
+            sources=sources,
+            top_keys=top_keys,
+        )
 
     @staticmethod
     async def _find_existing_id(connection: Any, row: dict[str, Any]) -> str | None:

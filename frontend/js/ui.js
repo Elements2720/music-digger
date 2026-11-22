@@ -92,6 +92,13 @@ export function trackRow(
   const dig = el("button", { class: "dig-btn", type: "button", text: "DIG >" });
   dig.addEventListener("click", () => emit("dig:track", track));
 
+  const del = el("button", {
+    class: "icon-btn delete-btn",
+    type: "button",
+    title: "Delete from catalog",
+    text: "✕",
+  });
+
   const main = el("div", { class: "track-main" }, [
     artwork(track.artwork_url),
     el("div", { class: "picker-copy" }, [
@@ -100,7 +107,7 @@ export function trackRow(
     ]),
   ]);
 
-  return el("div", { class: "track-row" }, [
+  const row = el("div", { class: "track-row", "data-track-id": track.id }, [
     el("div", { class: "track-rank", text: rank === null ? "•" : String(rank) }),
     main,
     chips(track, { exact }),
@@ -108,8 +115,31 @@ export function trackRow(
       class: "track-score",
       text: similarity === null ? "" : `${Number(similarity).toFixed(1)}%`,
     }),
-    el("div", { class: "track-actions" }, [play, heard, dig]),
+    el("div", { class: "track-actions" }, [play, heard, dig, del]),
   ]);
+
+  del.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const confirmed = window.confirm(
+      `Delete "${track.artist} - ${track.title}" from catalog?`
+    );
+    if (!confirmed) return;
+    const alsoBlacklist = window.confirm(
+      `Also BLACKLIST "${track.artist} - ${track.title}" to prevent re-importing?`
+    );
+    del.disabled = true;
+    try {
+      await api.deleteTrack(track.id, alsoBlacklist);
+      emit("toast", `Deleted track${alsoBlacklist ? " (blacklisted)" : ""}`);
+      emit("track:deleted", { trackId: track.id });
+      row.remove();
+    } catch (err) {
+      emit("toast", err.message);
+      del.disabled = false;
+    }
+  });
+
+  return row;
 }
 
 export function renderMatches(container, matches, emptyText) {

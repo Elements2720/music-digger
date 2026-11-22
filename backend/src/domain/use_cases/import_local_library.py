@@ -181,7 +181,9 @@ class ImportLocalLibrary:
                     )
                     batch.append((track, features, buffer))
                 except Exception as exc:  # noqa: BLE001
-                    LOGGER.warning("Processing local track %s failed: %s", track.id, exc)
+                    LOGGER.warning(
+                        "Processing local track %s failed: %s", track.id, exc
+                    )
                     failed_count += 1
                     if progress is not None:
                         progress(

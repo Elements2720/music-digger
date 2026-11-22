@@ -12,9 +12,13 @@ from domain.entities.search import SearchFilter
 from domain.use_cases import TrackNotEmbeddedError, TrackNotFoundError
 
 from ..schemas import (
+    BlacklistCreateRequest,
     HeardRequest,
     ResetEmbeddingsRequest,
     VibeSearchRequest,
+    artist_summary_payload,
+    blacklist_entry_payload,
+    catalog_analytics_payload,
     match_payload,
     track_payload,
 )
@@ -160,7 +164,7 @@ async def reset_embeddings(
     """Drop every stored embedding after an explicit confirmation."""
     if not payload.confirm:
         raise HTTPException(
-            status_code=400, detail="send {\"confirm\": true} to drop embeddings"
+            status_code=400, detail='send {"confirm": true} to drop embeddings'
         )
     cleared = await container.track_repository.reset_embeddings()
     return {"cleared": cleared}
@@ -179,13 +183,161 @@ async def get_track_audio(
         )
     file_path = Path(track.local_path)
     if not file_path.is_file():
-        raise HTTPException(
-            status_code=404, detail="Audio file does not exist on disk"
-        )
+        raise HTTPException(status_code=404, detail="Audio file does not exist on disk")
     return FileResponse(
         path=file_path,
         filename=file_path.name,
     )
+
+
+@router.get("/catalog/analytics")
+async def get_catalog_analytics(
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Catalog distributions and KPI statistics."""
+    analytics = await container.track_repository.get_catalog_analytics()
+    return catalog_analytics_payload(analytics)
+
+
+@router.get("/catalog/artists")
+async def get_artists_summary(
+    q: str | None = Query(None),
+    genre: str | None = Query(None),
+    source: str | None = Query(None),
+    sort: str = Query("tracks_desc"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Search and browse aggregated artist summaries."""
+    summaries, total = await container.track_repository.list_artists_summary(
+        query=q,
+        genre=genre,
+        source=source,
+        sort=sort,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "artists": [artist_summary_payload(s) for s in summaries],
+        "total": total,
+    }
+
+
+@router.get("/catalog/artists/{artist_name}/tracks")
+async def get_artist_tracks(
+    artist_name: str,
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """List catalog tracks for a specific artist."""
+    tracks = await container.track_repository.list_by_artist(
+        artist_name, limit=limit, offset=offset
+    )
+    heard = await container.track_repository.get_heard_ids()
+    return {
+        "artist": artist_name,
+        "tracks": [track_payload(t, heard=heard) for t in tracks],
+    }
+
+
+@router.delete("/catalog/tracks/{track_id}")
+async def delete_track(
+    track_id: str,
+    blacklist: bool = Query(False),
+    reason: str | None = Query(None),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Delete a track from the catalog, optionally blacklisting it.
+
+    Never deletes user audio files on disk (only DB rows).
+    """
+    result = await container.manage_catalog.delete_track(
+        track_id, blacklist=blacklist, reason=reason
+    )
+    return {
+        "success": result.deleted,
+        "track_id": track_id,
+        "blacklisted": result.blacklisted,
+    }
+
+
+@router.delete("/catalog/artists/{artist_name}")
+async def delete_artist(
+    artist_name: str,
+    blacklist: bool = Query(False),
+    reason: str | None = Query(None),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Delete all tracks and seeds for an artist, optionally blacklisting them.
+
+    Never deletes user audio files on disk (only DB rows).
+    """
+    result = await container.manage_catalog.delete_artist(
+        artist_name, blacklist=blacklist, reason=reason
+    )
+    return {
+        "success": True,
+        "artist": artist_name,
+        "tracks_deleted": result.tracks_deleted,
+        "seed_removed": result.seed_removed,
+        "blacklisted": result.blacklisted,
+    }
+
+
+@router.get("/catalog/blacklist")
+async def get_blacklist(
+    kind: str | None = Query(None),
+    q: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """List blocked artists and tracks."""
+    entries = await container.manage_catalog.list_blacklist(
+        kind=kind, query=q, limit=limit, offset=offset
+    )
+    total = await container.manage_catalog.count_blacklist(kind=kind)
+    return {
+        "entries": [blacklist_entry_payload(e) for e in entries],
+        "total": total,
+    }
+
+
+@router.post("/catalog/blacklist")
+async def add_blacklist(
+    payload: BlacklistCreateRequest,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Add an artist or track to the blacklist."""
+    if payload.kind == "track":
+        if not payload.track_title:
+            raise HTTPException(
+                status_code=400, detail="track_title is required when kind='track'"
+            )
+        entry = await container.manage_catalog.add_blacklist_track(
+            payload.name, payload.track_title, reason=payload.reason
+        )
+    else:
+        entry = await container.manage_catalog.add_blacklist_artist(
+            payload.name, reason=payload.reason
+        )
+    return blacklist_entry_payload(entry)
+
+
+@router.delete("/catalog/blacklist/{entry_id}")
+async def remove_blacklist(
+    entry_id: int,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Remove an entry from the blacklist by ID."""
+    removed = await container.manage_catalog.remove_blacklist_entry(entry_id)
+    if not removed:
+        raise HTTPException(
+            status_code=404, detail=f"Blacklist entry {entry_id} not found"
+        )
+    return {"success": True, "id": entry_id}
 
 
 __all__ = ["router"]

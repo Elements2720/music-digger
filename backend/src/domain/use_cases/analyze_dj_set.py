@@ -138,6 +138,7 @@ class AnalyzeDJSet:
         use_shazam: bool = True,
         use_comments: bool = True,
         keep_audio: bool = False,
+        shazam_probes: int = 3,
         progress: Callable[[AnalyzeEvent], None] | None = None,
     ) -> DJSet:
         """Analyze ``source`` and return the persisted :class:`DJSet`."""
@@ -186,8 +187,10 @@ class AnalyzeDJSet:
                     passages,
                     use_shazam=use_shazam,
                     use_comments=use_comments,
+                    shazam_probes=shazam_probes,
                     progress=progress,
                 )
+                passages = self._merge_duplicate_passages(passages, duration)
             finally:
                 if own_executor:
                     executor.shutdown(wait=True)
@@ -203,11 +206,27 @@ class AnalyzeDJSet:
 
     # --------------------------------------------------------- core windows
 
-    def _core_window(self, passage_range: TimeRange) -> TimeRange:
-        """Clean 30 s window centered in the passage (crossfades skipped)."""
+    def _safe_interior(self, passage_range: TimeRange) -> TimeRange:
+        """Return the transition-safe interior of the passage, skipping boundary mixes."""
         span = passage_range.duration_seconds
+        if span >= 90.0:
+            shrink = 25.0
+        elif span >= 45.0:
+            shrink = 10.0
+        else:
+            shrink = 0.0
+        start = passage_range.start_seconds + shrink
+        end = passage_range.end_seconds - shrink
+        if end <= start:
+            return passage_range
+        return TimeRange(start, end)
+
+    def _core_window(self, passage_range: TimeRange) -> TimeRange:
+        """Clean 30 s window centered in the safe interior (crossfades skipped)."""
+        safe = self._safe_interior(passage_range)
+        span = safe.duration_seconds
         window = min(self._core_window_seconds, span)
-        middle = passage_range.start_seconds + span / 2.0
+        middle = safe.start_seconds + span / 2.0
         start = middle - window / 2.0
         return TimeRange(start, start + window)
 
@@ -317,7 +336,9 @@ class AnalyzeDJSet:
             if matches:
                 passages[index] = replace(passage, closest_matches=matches)
                 top = matches[0]
-                detail = f": top {top.track.display_name} ({top.similarity_percent:.0f}%)"
+                detail = (
+                    f": top {top.track.display_name} ({top.similarity_percent:.0f}%)"
+                )
             else:
                 detail = ": no close match"
             self._notify(
@@ -353,6 +374,7 @@ class AnalyzeDJSet:
         *,
         use_shazam: bool,
         use_comments: bool,
+        shazam_probes: int = 3,
         progress: Callable[[AnalyzeEvent], None] | None,
     ) -> list[Passage]:
         """Fill exact-id fields from comments first, then Shazam for the rest."""
@@ -385,7 +407,7 @@ class AnalyzeDJSet:
                     msg = f"Shazam {idx}/{total_passages}: skipped (circuit open)"
                 else:
                     shazam_result = await self._shazam_passage(
-                        downloaded, identified_passage
+                        downloaded, identified_passage, probes=shazam_probes
                     )
                     if shazam_result.exact_id_match:
                         identified_passage = shazam_result
@@ -439,36 +461,102 @@ class AnalyzeDJSet:
         )
 
     async def _shazam_passage(
-        self, downloaded: DownloadedSet, passage: Passage
+        self,
+        downloaded: DownloadedSet,
+        passage: Passage,
+        *,
+        probes: int = 3,
     ) -> Passage:
         assert self._fingerprinter is not None
-        span = passage.time_range.duration_seconds
-        middle = passage.time_range.start_seconds + span / 2.0
+        safe = self._safe_interior(passage.time_range)
+        span = safe.duration_seconds
+
+        if probes <= 1:
+            positions = (0.50,)
+        elif probes == 2:
+            positions = (0.50, 0.30)
+        else:
+            positions = (0.50, 0.30, 0.70)
+
         window = min(self._snippet_seconds, span)
-        try:
-            snippet = await self._audio_decoder.decode_segment(
-                downloaded.audio_path,
-                TimeRange(middle - window / 2.0, middle + window / 2.0),
-                sample_rate=16_000,
-                channels=1,
+
+        for pos in positions:
+            if getattr(self._fingerprinter, "is_circuit_open", False):
+                break
+            center = safe.start_seconds + span * pos
+            start = max(0.0, center - window / 2.0)
+            end = start + window
+            if downloaded.duration_seconds is not None:
+                end = min(end, downloaded.duration_seconds)
+
+            try:
+                snippet = await self._audio_decoder.decode_segment(
+                    downloaded.audio_path,
+                    TimeRange(start, end),
+                    sample_rate=16_000,
+                    channels=1,
+                )
+                reference = await self._fingerprinter.identify_async(snippet)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - fingerprinting is best-effort
+                LOGGER.warning(
+                    "Shazam identification failed for %s: %s", passage.time_range, exc
+                )
+                continue
+
+            if reference is not None:
+                return replace(
+                    passage,
+                    exact_id_match=True,
+                    exact_id_title=reference.title,
+                    exact_id_artist=reference.artist,
+                    exact_id_source="shazam",
+                )
+
+        return passage
+
+    def _merge_duplicate_passages(
+        self, passages: list[Passage], total_duration_seconds: float | None = None
+    ) -> list[Passage]:
+        """Merge consecutive identical exact-ID matches into a single contiguous passage."""
+        if len(passages) <= 1:
+            return passages
+
+        merged: list[Passage] = []
+        current = passages[0]
+
+        for nxt in passages[1:]:
+            is_same_exact = (
+                current.exact_id_match
+                and nxt.exact_id_match
+                and current.exact_id_title is not None
+                and nxt.exact_id_title is not None
+                and current.exact_id_title.casefold() == nxt.exact_id_title.casefold()
+                and (
+                    (current.exact_id_artist or "").casefold()
+                    == (nxt.exact_id_artist or "").casefold()
+                )
             )
-            reference = await self._fingerprinter.identify_async(snippet)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - fingerprinting is best-effort
-            LOGGER.warning(
-                "Shazam identification failed for %s: %s", passage.time_range, exc
-            )
-            return passage
-        if reference is None:
-            return passage
-        return replace(
-            passage,
-            exact_id_match=True,
-            exact_id_title=reference.title,
-            exact_id_artist=reference.artist,
-            exact_id_source="shazam",
-        )
+
+            if is_same_exact:
+                end_sec = nxt.time_range.end_seconds
+                if total_duration_seconds is not None:
+                    end_sec = min(end_sec, total_duration_seconds)
+                new_range = TimeRange(current.time_range.start_seconds, end_sec)
+                current = replace(
+                    current,
+                    time_range=new_range,
+                    bpm=current.bpm or nxt.bpm,
+                    key=current.key or nxt.key,
+                    closest_matches=current.closest_matches or nxt.closest_matches,
+                )
+            else:
+                merged.append(current)
+                current = nxt
+
+        merged.append(current)
+        return merged
 
     # ------------------------------------------------------------- persist
 

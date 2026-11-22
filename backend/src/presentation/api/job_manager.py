@@ -114,9 +114,7 @@ class JobManager:
         job = JobState(kind=kind, params=config)
         self._job = job
         self._started_monotonic = time.monotonic()
-        self._task = asyncio.create_task(
-            self._run(job, config), name=f"dig-job:{kind}"
-        )
+        self._task = asyncio.create_task(self._run(job, config), name=f"dig-job:{kind}")
         LOGGER.info("job %s started with %s", kind, config)
         return job.snapshot()
 
@@ -145,9 +143,7 @@ class JobManager:
 
     async def stream(self, request: Any) -> AsyncIterator[str]:
         """Yield SSE frames: state snapshot, progress events, heartbeats."""
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
-            maxsize=_QUEUE_MAXSIZE
-        )
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
         self._subscribers.add(queue)
         try:
             yield _sse({"type": "state", "job": self.snapshot()})
@@ -358,9 +354,7 @@ class JobManager:
             fingerprinter.reset_circuit_breaker()
         downloader = container.set_downloader
         settings = container.settings
-        cookies_file = (
-            Path(config["cookies_file"]) if config["cookies_file"] else None
-        )
+        cookies_file = Path(config["cookies_file"]) if config["cookies_file"] else None
         downloader.set_cookie_overrides(
             cookies_file=cookies_file,
             cookies_from_browser=config["cookies_from_browser"],
@@ -370,11 +364,7 @@ class JobManager:
             def on_progress(event: Any) -> None:
                 elapsed = max(time.monotonic() - self._started_monotonic, 1e-6)
                 completed = getattr(event, "completed", 0)
-                speed = (
-                    round(completed / elapsed, 2)
-                    if completed > 0
-                    else None
-                )
+                speed = round(completed / elapsed, 2) if completed > 0 else None
                 self._progress(
                     job,
                     stage=event.stage,
@@ -392,6 +382,7 @@ class JobManager:
                 use_shazam=config["shazam"],
                 use_comments=config["comments"],
                 keep_audio=config["keep_audio"],
+                shazam_probes=config.get("shazam_probes", 3),
                 progress=on_progress,
             )
             job.result = {"set": set_summary_payload(dj_set)}
@@ -537,9 +528,7 @@ class JobManager:
     @staticmethod
     def _validate_seed_crawl(params: dict[str, Any]) -> dict[str, Any]:
         return {
-            "electronic_limit": _as_int(
-                params, "electronic_limit", 1000, minimum=0
-            ),
+            "electronic_limit": _as_int(params, "electronic_limit", 1000, minimum=0),
             "general_limit": _as_int(params, "general_limit", 300, minimum=0),
             "max_depth": _as_int(params, "max_depth", 2, minimum=0, maximum=5),
             "use_local_seeds": _as_bool(params, "use_local_seeds", False),
@@ -633,6 +622,7 @@ class JobManager:
         return {
             "source": source.strip(),
             "shazam": _as_bool(params, "shazam", True),
+            "shazam_probes": _as_int(params, "shazam_probes", 3, minimum=1, maximum=5),
             "comments": _as_bool(params, "comments", True),
             "keep_audio": _as_bool(params, "keep_audio", False),
             "cookies_file": cookies_file.strip() if cookies_file else None,

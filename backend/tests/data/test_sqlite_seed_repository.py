@@ -173,3 +173,44 @@ async def test_list_by_source(repository: SQLiteSeedRepository) -> None:
     assert [a.name for a in local_artists] == ["Artist 1", "Artist 2"]
     assert await repository.list_by_source("nonexistent") == ()
 
+
+async def test_delete_by_name(repository: SQLiteSeedRepository) -> None:
+    await repository.upsert_many(
+        [
+            SeedArtist("Stephan Bodzin", 0.9, "electronic"),
+            SeedArtist("Tale of Us", 0.8, "electronic"),
+        ]
+    )
+    assert await repository.count() == 2
+    assert await repository.delete_by_name("stephan bodzin")
+    assert await repository.count() == 1
+    assert await repository.get_by_name("Stephan Bodzin") is None
+    assert not await repository.delete_by_name("Nonexistent Artist")
+
+
+async def test_blacklist_filters_upsert_and_discovery(
+    sqlite_client: SQLiteClient,
+) -> None:
+    from data.repositories.blacklist_repository import SQLiteBlacklistRepository
+    from domain.entities.track import BlacklistEntry
+
+    bl_repo = SQLiteBlacklistRepository(sqlite_client)
+    await bl_repo.add(
+        BlacklistEntry(
+            id=None,
+            kind="artist",
+            normalized_key="blocked dj",
+            display_name="Blocked DJ",
+        )
+    )
+
+    repo_with_bl = SQLiteSeedRepository(sqlite_client, blacklist=bl_repo)
+    written = await repo_with_bl.upsert_many(
+        [
+            SeedArtist("Blocked DJ", 0.9, "electronic"),
+            SeedArtist("Good DJ", 0.8, "electronic"),
+        ]
+    )
+    assert written == 1
+    assert await repo_with_bl.get_by_name("Blocked DJ") is None
+    assert await repo_with_bl.get_by_name("Good DJ") is not None

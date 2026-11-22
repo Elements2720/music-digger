@@ -65,7 +65,9 @@ class LocalLibraryScanner(ILocalLibraryScanner):
 
         iterator = root.rglob("*") if recursive else root.glob("*")
         audio_files = sorted(
-            p for p in iterator if p.is_file() and p.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
+            p
+            for p in iterator
+            if p.is_file() and p.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
         )
 
         tracks: list[Track] = []

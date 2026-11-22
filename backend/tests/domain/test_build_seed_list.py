@@ -97,9 +97,7 @@ async def test_build_seed_list_progress_events() -> None:
     assert events[1] == CrawlProgress(
         stage="electronic", name="Seed 2", depth=1, found=2
     )
-    assert events[2] == CrawlProgress(
-        stage="writing", name="", depth=None, found=2
-    )
+    assert events[2] == CrawlProgress(stage="writing", name="", depth=None, found=2)
 
 
 async def test_build_seed_list_default_progress_is_none() -> None:
@@ -122,9 +120,21 @@ async def test_build_seed_list_uses_local_library_seeds() -> None:
     repo = FakeSeedRepository()
     await repo.upsert_many(
         [
-            SeedArtist(name="Local 1", priority_score=1.0, category="electronic", source="local-library"),
-            SeedArtist(name="Local 2", priority_score=1.0, category="electronic", source="local-library"),
-            SeedArtist(name="Other", priority_score=0.5, category="electronic", source="deezer"),
+            SeedArtist(
+                name="Local 1",
+                priority_score=1.0,
+                category="electronic",
+                source="local-library",
+            ),
+            SeedArtist(
+                name="Local 2",
+                priority_score=1.0,
+                category="electronic",
+                source="local-library",
+            ),
+            SeedArtist(
+                name="Other", priority_score=0.5, category="electronic", source="deezer"
+            ),
         ]
     )
     discovery = FakeDiscovery([])
@@ -138,4 +148,3 @@ async def test_build_seed_list_uses_local_library_seeds() -> None:
     )
 
     assert discovery.received_seed_artists == ("Local 1", "Local 2")
-

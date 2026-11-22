@@ -32,6 +32,7 @@ from .import_local_library import (
     ImportLocalResult,
 )
 from .index_catalog import IndexCatalog, IndexProgress, IndexResult
+from .manage_catalog import DeleteArtistResult, DeleteTrackResult, ManageCatalog
 from .vibe_search import VibeSearch
 
 __all__ = [
@@ -43,6 +44,8 @@ __all__ = [
     "CrawlITunesResult",
     "CrawlITunesSeeds",
     "CrawlProgress",
+    "DeleteArtistResult",
+    "DeleteTrackResult",
     "DigLookupError",
     "DigResult",
     "DigSimilarTracks",
@@ -55,6 +58,7 @@ __all__ = [
     "IndexCatalog",
     "IndexProgress",
     "IndexResult",
+    "ManageCatalog",
     "SetDigError",
     "SetDigResult",
     "SetNotEmbeddedError",

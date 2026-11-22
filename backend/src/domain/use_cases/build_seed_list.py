@@ -125,9 +125,7 @@ class BuildSeedList:
             written += await self._seed_repository.upsert_many(llm_generated)
 
         if progress is not None:
-            progress(
-                CrawlProgress(stage="writing", name="", depth=None, found=written)
-            )
+            progress(CrawlProgress(stage="writing", name="", depth=None, found=written))
 
         return BuildSeedListResult(
             discovered=len(discovered),

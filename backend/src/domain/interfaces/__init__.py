@@ -12,12 +12,18 @@ from .catalog import ICatalogProvider, ISeedCrawler, ISeedDiscovery
 from .hardware import IHardwareProbe
 from .llm import ILLMService
 from .local_library import ILocalLibraryScanner
-from .repositories import ISeedRepository, ISetRepository, ITrackRepository
+from .repositories import (
+    IBlacklistRepository,
+    ISeedRepository,
+    ISetRepository,
+    ITrackRepository,
+)
 
 __all__ = [
     "IAudioDecoder",
     "IAudioEmbedder",
     "IAudioSegmenter",
+    "IBlacklistRepository",
     "ICatalogProvider",
     "IFeatureExtractor",
     "IFingerprinter",

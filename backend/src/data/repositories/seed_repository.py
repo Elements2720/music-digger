@@ -10,11 +10,11 @@ from domain.entities.track import (
     SeedArtist,
     SeedStatus,
 )
-from domain.interfaces.repositories import ISeedRepository
+from domain.interfaces.repositories import IBlacklistRepository, ISeedRepository
 
 from ..datasources.local.sqlite_client import SQLiteClient
 from ..mappers.seed_mapper import row_to_seed, seed_to_row
-from ..normalization import normalize_seed_name
+from ..normalization import normalize_artist_key, normalize_seed_name
 
 # No conflict target: either unique constraint may fire (name_normalized or
 # the partial index on deezer_id). On a deezer_id collision the existing row
@@ -52,12 +52,22 @@ ON CONFLICT DO UPDATE SET
 class SQLiteSeedRepository(ISeedRepository):
     """Persist crawl seeds and their priority/status lifecycle."""
 
-    def __init__(self, sqlite: SQLiteClient) -> None:
+    def __init__(
+        self,
+        sqlite: SQLiteClient,
+        blacklist: IBlacklistRepository | None = None,
+    ) -> None:
         self._sqlite = sqlite
+        self._blacklist = blacklist
 
     async def upsert_many(self, seeds: Sequence[SeedArtist]) -> int:
         if not seeds:
             return 0
+        if self._blacklist is not None:
+            blocked = await self._blacklist.get_blocked_artist_keys()
+            seeds = [s for s in seeds if normalize_artist_key(s.name) not in blocked]
+            if not seeds:
+                return 0
         parameters = [
             (
                 row["name"],
@@ -83,6 +93,11 @@ class SQLiteSeedRepository(ISeedRepository):
             raise ValueError("priority_increment must be between 0.0 and 1.0")
         if not seeds:
             return 0
+        if self._blacklist is not None:
+            blocked = await self._blacklist.get_blocked_artist_keys()
+            seeds = [s for s in seeds if normalize_artist_key(s.name) not in blocked]
+            if not seeds:
+                return 0
         parameters = [
             (
                 row["name"],
@@ -176,6 +191,14 @@ class SQLiteSeedRepository(ISeedRepository):
     async def count(self) -> int:
         row = await self._sqlite.fetchone("SELECT COUNT(*) AS total FROM seed_artists")
         return int(row["total"]) if row is not None else 0
+
+    async def delete_by_name(self, name: str) -> bool:
+        norm_name = normalize_seed_name(name)
+        cursor = await self._sqlite.execute(
+            "DELETE FROM seed_artists WHERE name_normalized = ? OR name = ? COLLATE NOCASE",
+            (norm_name, name),
+        )
+        return (cursor.rowcount or 0) > 0
 
     @staticmethod
     def _validate_status(status: str) -> None:

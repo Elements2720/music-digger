@@ -85,9 +85,7 @@ class FakeTrackRepository(ITrackRepository):
     async def find_by_filter(self, search_filter: SearchFilter) -> Sequence[Track]:
         return ()
 
-    async def search_tracks(
-        self, query: str, limit: int = 30
-    ) -> Sequence[Track]:
+    async def search_tracks(self, query: str, limit: int = 30) -> Sequence[Track]:
         needle = query.strip().casefold()
         if not needle or limit <= 0:
             return ()

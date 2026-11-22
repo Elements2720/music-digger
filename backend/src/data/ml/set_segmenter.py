@@ -26,7 +26,8 @@ from typing import Any
 
 import numpy as np
 
-from domain.interfaces.audio_engine import IAudioSegmenter
+from domain.entities.track import AudioBuffer
+from domain.interfaces.audio_engine import IAudioEmbedder, IAudioSegmenter
 from domain.value_objects.audio_features import TimeRange
 
 from ..errors import AudioDecodeError, FFmpegNotFoundError
@@ -118,6 +119,7 @@ class SetSegmenter(IAudioSegmenter):
         max_passage_seconds: float = MAX_PASSAGE_SECONDS,
         candidate_passage_seconds: Sequence[float] = CANDIDATE_PASSAGE_SECONDS,
         stream_factory: StreamFactory | None = None,
+        embedder: IAudioEmbedder | None = None,
     ) -> None:
         if sample_rate < 1:
             raise ValueError("sample_rate must be positive")
@@ -133,6 +135,7 @@ class SetSegmenter(IAudioSegmenter):
         self._max_passage = max_passage_seconds
         self._candidates = tuple(candidate_passage_seconds)
         self._stream_factory = stream_factory or default_stream_factory(ffmpeg_bin)
+        self._embedder = embedder
 
     # ------------------------------------------------------------------ API
 
@@ -166,6 +169,24 @@ class SetSegmenter(IAudioSegmenter):
         """Detect ordered, non-overlapping passages in ``path``."""
         if total_duration_seconds <= 0:
             raise ValueError("total_duration_seconds must be positive")
+
+        if self._embedder is not None:
+            try:
+                features, feature_times = self._semantic_stream_features(
+                    path, total_duration_seconds
+                )
+                if len(features) >= 4:
+                    boundaries = self._pick_semantic_boundaries(
+                        features, feature_times, total_duration_seconds
+                    )
+                    if boundaries:
+                        return self._build_passages(boundaries, total_duration_seconds)
+            except Exception:
+                LOGGER.warning(
+                    "Semantic segmentation failed; falling back to acoustic path",
+                    exc_info=True,
+                )
+
         features, feature_times = self._stream_features(path, total_duration_seconds)
         if len(features) == 0:
             return (TimeRange(0.0, total_duration_seconds),)
@@ -174,6 +195,116 @@ class SetSegmenter(IAudioSegmenter):
             self._novelty_curve(features), feature_times, total_duration_seconds
         )
         return self._build_passages(boundaries, total_duration_seconds)
+
+    def _semantic_stream_features(
+        self, path: Path, total_duration_seconds: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Stream 48 kHz mono PCM, slice into 10s windows every 15s, and micro-batch embed."""
+        if self._embedder is None:
+            return np.zeros((0, 0), dtype=np.float32), np.zeros(0)
+
+        window_sec = 10.0
+        hop_sec = 15.0
+        sample_rate = 48_000
+        window_samples = int(window_sec * sample_rate)
+        bytes_per_sample = 4
+        window_bytes = window_samples * bytes_per_sample
+        hop_bytes = int(hop_sec * sample_rate) * bytes_per_sample
+
+        args = [
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(path),
+            "-vn",
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-ac",
+            "1",
+            "-ar",
+            str(sample_rate),
+            "pipe:1",
+        ]
+
+        buffer = bytearray()
+        buffers_to_embed: list[AudioBuffer] = []
+        frame_times_list: list[float] = []
+        current_time = 0.0
+
+        for chunk in self._stream_factory(args):
+            buffer.extend(chunk)
+            while len(buffer) >= window_bytes:
+                pcm_chunk = bytes(buffer[:window_bytes])
+                buffers_to_embed.append(
+                    AudioBuffer(
+                        pcm_bytes=pcm_chunk,
+                        sample_rate=sample_rate,
+                    )
+                )
+                frame_times_list.append(current_time)
+                current_time += hop_sec
+                del buffer[:hop_bytes]
+
+        if not buffers_to_embed:
+            return np.zeros((0, 0), dtype=np.float32), np.zeros(0)
+
+        batch_size = 16
+        embedded_vectors: list[np.ndarray] = []
+        for i in range(0, len(buffers_to_embed), batch_size):
+            batch = buffers_to_embed[i : i + batch_size]
+            vecs = self._embedder.embed_batch(batch)
+            for v in vecs:
+                embedded_vectors.append(np.asarray(v.values, dtype=np.float32))
+
+        features = np.vstack(embedded_vectors)
+        norms = np.linalg.norm(features, axis=1, keepdims=True)
+        norms[norms == 0.0] = 1.0
+        features = features / norms
+        times = np.asarray(frame_times_list, dtype=np.float64)
+        return features, times
+
+    def _semantic_novelty(self, features: np.ndarray, l_frames: int = 4) -> np.ndarray:
+        n_frames = features.shape[0]
+        if n_frames < 2 * l_frames:
+            return np.zeros(n_frames, dtype=np.float32)
+        sim = features @ features.T
+        novelty = np.zeros(n_frames, dtype=np.float32)
+        for i in range(l_frames, n_frames - l_frames):
+            past = sim[i - l_frames : i, i - l_frames : i]
+            future = sim[i : i + l_frames, i : i + l_frames]
+            cross = sim[i - l_frames : i, i : i + l_frames]
+            novelty[i] = float((np.mean(past) + np.mean(future)) / 2.0 - np.mean(cross))
+        return novelty
+
+    def _pick_semantic_boundaries(
+        self,
+        features: np.ndarray,
+        feature_times: np.ndarray,
+        total_duration_seconds: float,
+    ) -> list[float]:
+        novelty = self._semantic_novelty(features, l_frames=4)
+        if novelty.size < 3 or float(novelty.std()) < 1e-9:
+            return []
+        threshold = float(novelty.mean() + 1.5 * novelty.std())
+        min_gap_sec = self._min_passage
+        candidates = [
+            i
+            for i in range(1, novelty.size - 1)
+            if novelty[i] >= novelty[i - 1]
+            and novelty[i] >= novelty[i + 1]
+            and novelty[i] >= threshold
+        ]
+        candidates.sort(key=lambda i: novelty[i], reverse=True)
+        selected_times: list[float] = []
+        for i in candidates:
+            t = float(feature_times[i])
+            if all(abs(t - prev) >= min_gap_sec for prev in selected_times):
+                selected_times.append(t)
+        selected_times.sort()
+        return [t for t in selected_times if 0.0 < t < total_duration_seconds]
 
     # -------------------------------------------------------------- features
 

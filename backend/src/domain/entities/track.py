@@ -247,3 +247,43 @@ class TrackVibe:
             "description",
             require_str(self.description, "description", allow_empty=True),
         )
+
+
+BlacklistKind = Literal["artist", "track"]
+
+
+@dataclass(frozen=True, slots=True)
+class BlacklistEntry:
+    """An artist or track blocked from crawling, indexing, or catalog display."""
+
+    id: int | None
+    kind: BlacklistKind
+    normalized_key: str
+    display_name: str
+    artist_name: str | None = None
+    track_title: str | None = None
+    reason: str | None = None
+    created_at: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.id is not None:
+            object.__setattr__(self, "id", require_int(self.id, "id"))
+        if self.kind not in ("artist", "track"):
+            raise ValueError(f"kind must be 'artist' or 'track', got {self.kind!r}")
+        object.__setattr__(self, "kind", self.kind)
+        object.__setattr__(
+            self, "normalized_key", require_str(self.normalized_key, "normalized_key")
+        )
+        object.__setattr__(
+            self, "display_name", require_str(self.display_name, "display_name")
+        )
+        object.__setattr__(
+            self, "artist_name", optional_str(self.artist_name, "artist_name")
+        )
+        object.__setattr__(
+            self, "track_title", optional_str(self.track_title, "track_title")
+        )
+        object.__setattr__(self, "reason", optional_str(self.reason, "reason"))
+        object.__setattr__(
+            self, "created_at", optional_str(self.created_at, "created_at")
+        )

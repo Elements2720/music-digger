@@ -221,10 +221,109 @@
     <section class="tab-panel" id="tab-stats">
       <div class="panel">
         <div class="panel-head">
-          <h2>Library</h2>
+          <h2>Library Overview</h2>
           <button class="btn tiny ghost" id="stats-refresh" type="button">REFRESH</button>
         </div>
         <div class="cards" id="stats-cards"><div class="empty">Loading…</div></div>
+
+        <!-- Distributions grid: Genres, BPM, Keys -->
+        <div class="analytics-grid" id="analytics-grid">
+          <div class="analytics-box">
+            <h3>Top Genres</h3>
+            <div class="bar-chart" id="chart-genres"></div>
+          </div>
+          <div class="analytics-box">
+            <h3>BPM Distribution</h3>
+            <div class="bar-chart" id="chart-bpm"></div>
+          </div>
+          <div class="analytics-box">
+            <h3>Top Camelot Keys</h3>
+            <div class="key-pills" id="chart-keys"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Artists Explorer & Manager -->
+      <div class="panel" id="panel-artists">
+        <div class="panel-head">
+          <h2>Artists Explorer</h2>
+          <div class="filter-row">
+            <input class="input" id="artists-search" type="search" placeholder="Search artists…">
+            <select class="input" id="artists-source-filter">
+              <option value="">All Sources</option>
+              <option value="local">Local Library</option>
+              <option value="itunes">iTunes</option>
+            </select>
+            <select class="input" id="artists-sort">
+              <option value="tracks_desc">Most Tracks</option>
+              <option value="embedded_desc">Most Embedded</option>
+              <option value="artist_asc">Artist (A-Z)</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-container" id="artists-table-container">
+          <table class="data-table" id="artists-table">
+            <thead>
+              <tr>
+                <th>Artist</th>
+                <th>Tracks</th>
+                <th>Embedded</th>
+                <th>Genres</th>
+                <th>Sources</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="artists-tbody">
+              <tr><td colspan="6" class="empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="artists-pagination">
+          <button class="btn tiny ghost" id="artists-prev" type="button">← PREV</button>
+          <span class="page-info" id="artists-page-info">Page 1</span>
+          <button class="btn tiny ghost" id="artists-next" type="button">NEXT →</button>
+        </div>
+
+        <!-- Inline Drawer for Artist Tracks -->
+        <div class="artist-tracks-drawer hidden" id="artist-tracks-drawer">
+          <div class="drawer-head">
+            <h3 id="drawer-artist-name">—</h3>
+            <button class="btn tiny ghost" id="drawer-close" type="button">✕ CLOSE</button>
+          </div>
+          <div class="list" id="drawer-tracks-list"></div>
+        </div>
+      </div>
+
+      <!-- Blacklist Manager -->
+      <div class="panel" id="panel-blacklist">
+        <div class="panel-head">
+          <h2>Blacklist Manager</h2>
+          <div class="filter-row">
+            <select class="input" id="blacklist-kind-filter">
+              <option value="">All Types</option>
+              <option value="artist">Artists Only</option>
+              <option value="track">Tracks Only</option>
+            </select>
+            <input class="input" id="blacklist-search" type="search" placeholder="Filter blacklist…">
+            <button class="btn tiny primary" id="blacklist-add-btn" type="button">+ ADD BLOCK</button>
+          </div>
+        </div>
+        <div class="table-container">
+          <table class="data-table" id="blacklist-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Display Name</th>
+                <th>Normalized Key</th>
+                <th>Reason</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="blacklist-tbody">
+              <tr><td colspan="5" class="empty">No blacklisted items.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="panel">

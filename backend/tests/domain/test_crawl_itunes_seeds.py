@@ -136,7 +136,9 @@ async def test_crawl_itunes_seeds_progress_and_metrics() -> None:
         tracks_per_term=50,
         expand_compilations=True,
         save_tracks=True,
-        progress=lambda term, idx, total, found: events.append((term, idx, total, found)),
+        progress=lambda term, idx, total, found: events.append(
+            (term, idx, total, found)
+        ),
     )
 
     assert result.terms_processed == 2
@@ -166,7 +168,9 @@ async def test_crawl_itunes_seeds_isolates_failed_terms() -> None:
     events: list[tuple[str, int, int, int]] = []
     result = await use_case.execute(
         terms=["broken_term", "good_term"],
-        progress=lambda term, idx, total, found: events.append((term, idx, total, found)),
+        progress=lambda term, idx, total, found: events.append(
+            (term, idx, total, found)
+        ),
     )
 
     assert result.terms_processed == 1

@@ -239,4 +239,3 @@ async def test_discover_emits_progress_events(fake_clock: FakeClock) -> None:
     assert general_events[0].name == "Pop"
     founds = [e.found for e in events]
     assert founds == sorted(founds)
-

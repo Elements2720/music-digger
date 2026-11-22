@@ -61,6 +61,32 @@ export const api = {
       params: { view, ...filters },
     }),
 
+  catalogAnalytics: () => request("/api/catalog/analytics"),
+  artistsSummary: (params = {}) =>
+    request("/api/catalog/artists", { params }),
+  artistTracks: (artistName, params = {}) =>
+    request(`/api/catalog/artists/${encodeURIComponent(artistName)}/tracks`, {
+      params,
+    }),
+  deleteTrack: (trackId, blacklist = false, reason = null) =>
+    request(`/api/catalog/tracks/${encodeURIComponent(trackId)}`, {
+      method: "DELETE",
+      params: { blacklist, reason },
+    }),
+  deleteArtist: (artistName, blacklist = false, reason = null) =>
+    request(`/api/catalog/artists/${encodeURIComponent(artistName)}`, {
+      method: "DELETE",
+      params: { blacklist, reason },
+    }),
+  blacklist: (params = {}) =>
+    request("/api/catalog/blacklist", { params }),
+  addBlacklist: (payload) =>
+    request("/api/catalog/blacklist", { method: "POST", body: payload }),
+  removeBlacklist: (entryId) =>
+    request(`/api/catalog/blacklist/${encodeURIComponent(entryId)}`, {
+      method: "DELETE",
+    }),
+
   currentJob: () => request("/api/jobs/current"),
   startJob: (kind, params) =>
     request("/api/jobs", { method: "POST", body: { kind, params } }),

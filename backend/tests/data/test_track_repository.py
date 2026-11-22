@@ -448,3 +448,131 @@ async def test_upsert_and_get_local_track(repository: HybridTrackRepository) -> 
     )
     assert embedded_ids == frozenset({"local:abc123456789"})
 
+
+async def test_delete_by_ids_removes_from_sqlite_and_lancedb(
+    repository: HybridTrackRepository,
+) -> None:
+    t1 = _track(
+        "itunes:del1", title="Track 1", artist="Artist A", embedding=_embedding()
+    )
+    t2 = _track(
+        "itunes:del2", title="Track 2", artist="Artist B", embedding=_embedding()
+    )
+    await repository.upsert_many([t1, t2])
+    assert await repository.count() == 2
+    assert await repository.count_embedded() == 2
+
+    deleted = await repository.delete_by_ids(["itunes:del1"])
+    assert deleted == 1
+    assert await repository.count() == 1
+    assert await repository.get_by_id("itunes:del1") is None
+    assert await repository.get_by_id("itunes:del2") is not None
+    assert await repository.count_embedded() == 1
+
+
+async def test_delete_by_artist_and_list_by_artist(
+    repository: HybridTrackRepository,
+) -> None:
+    t1 = _track("itunes:a1", title="Solaris", artist="Artbat")
+    t2 = _track("itunes:a2", title="Horizon", artist="Artbat")
+    t3 = _track("itunes:a3", title="Rave", artist="Sam Paganini")
+    await repository.upsert_many([t1, t2, t3])
+
+    artbat_tracks = await repository.list_by_artist("Artbat")
+    assert len(artbat_tracks) == 2
+
+    count, deleted_ids = await repository.delete_by_artist("Artbat")
+    assert count == 2
+    assert set(deleted_ids) == {"itunes:a1", "itunes:a2"}
+    assert await repository.count() == 1
+    assert len(await repository.list_by_artist("Artbat")) == 0
+
+
+async def test_list_artists_summary_and_catalog_analytics(
+    repository: HybridTrackRepository,
+) -> None:
+    t1 = _track(
+        "t1",
+        title="S1",
+        artist="Artist A",
+        genre="Techno",
+        bpm=128.0,
+        key="8A",
+        embedding=_embedding(),
+    )
+    t2 = _track(
+        "t2", title="S2", artist="Artist A", genre="Techno", bpm=130.0, key="8A"
+    )
+    t3 = _track(
+        "t3",
+        title="S3",
+        artist="Artist B",
+        genre="House",
+        bpm=124.0,
+        key="9A",
+        embedding=_embedding(),
+    )
+    await repository.upsert_many([t1, t2, t3])
+
+    summaries, total = await repository.list_artists_summary()
+    assert total == 2
+    assert len(summaries) == 2
+    assert summaries[0].artist == "Artist A"
+    assert summaries[0].track_count == 2
+    assert summaries[0].embedded_count == 1
+    assert "Techno" in summaries[0].genres
+
+    filtered, total_f = await repository.list_artists_summary(genre="House")
+    assert total_f == 1
+    assert filtered[0].artist == "Artist B"
+
+    analytics = await repository.get_catalog_analytics()
+    assert analytics.total_tracks == 3
+    assert analytics.total_embedded == 2
+    assert analytics.total_artists == 2
+    assert len(analytics.genres) >= 2
+    assert len(analytics.bpm_buckets) > 0
+
+
+async def test_track_repo_blacklist_filters_upsert(tmp_path) -> None:
+    from data.repositories.blacklist_repository import SQLiteBlacklistRepository
+    from domain.entities.track import BlacklistEntry
+
+    sqlite = SQLiteClient(tmp_path / "app_bl.db")
+    vectors = LanceDBClient(tmp_path / "lancedb_bl", vector_dimension=8)
+    await sqlite.connect()
+    await vectors.connect()
+
+    try:
+        bl = SQLiteBlacklistRepository(sqlite)
+        await bl.add(
+            BlacklistEntry(
+                id=None,
+                kind="artist",
+                normalized_key="blocked artist",
+                display_name="Blocked Artist",
+            )
+        )
+        await bl.add(
+            BlacklistEntry(
+                id=None,
+                kind="track",
+                normalized_key="good artist|blocked track",
+                display_name="Good Artist - Blocked Track",
+            )
+        )
+
+        repo = HybridTrackRepository(sqlite, vectors, blacklist=bl)
+        tracks = [
+            _track("b1", title="T1", artist="Blocked Artist"),
+            _track("b2", title="Blocked Track", artist="Good Artist"),
+            _track("ok", title="Allowed Track", artist="Good Artist"),
+        ]
+        saved = await repo.upsert_many(tracks)
+        assert saved == 1
+        assert await repo.get_by_id("ok") is not None
+        assert await repo.get_by_id("b1") is None
+        assert await repo.get_by_id("b2") is None
+    finally:
+        await vectors.close()
+        await sqlite.close()

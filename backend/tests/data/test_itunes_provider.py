@@ -110,8 +110,6 @@ async def test_search_filters_duration_preview_and_genre(
     finally:
         await provider.aclose()
 
-
-
     assert [track.external_id for track in tracks] == ["1", "7", "8"]
     assert all(track.preview_url for track in tracks)
     assert all(track.duration_seconds is not None for track in tracks)
@@ -141,7 +139,6 @@ async def test_search_dedups_by_track_id_and_normalized_key(
     finally:
         await provider.aclose()
 
-
     assert [track.external_id for track in tracks] == ["1", "3"]
 
 
@@ -167,8 +164,6 @@ async def test_search_snowballs_collaborators_into_pending_seeds(
         await provider.search_tracks("Solomun")
     finally:
         await provider.aclose()
-
-
 
     discovered = {seed.name for seed in seed_repository.discovery_calls}
     assert "Miss Monique" in discovered
@@ -205,7 +200,6 @@ async def test_metadata_requests_are_serialized_to_18_per_minute(
     finally:
         await provider.aclose()
 
-
     assert fake_clock.sleeps == [pytest.approx(60 / 18, rel=1e-6)]
 
 
@@ -231,7 +225,6 @@ async def test_provider_backs_off_on_429_and_retries(
     finally:
         await provider.aclose()
 
-
     assert len(requests) == 2
     assert fake_clock.sleeps == [2.0]
     assert tracks[0].external_id == "1"
@@ -256,8 +249,6 @@ async def test_provider_raises_after_repeated_rate_limits(
         await provider.aclose()
 
 
-
-
 async def test_lookup_track_returns_filtered_track(
     fake_clock: FakeClock,
     seed_repository: InMemorySeedRepository,
@@ -273,7 +264,6 @@ async def test_lookup_track_returns_filtered_track(
         missing = await provider.lookup_track("999")
     finally:
         await provider.aclose()
-
 
     assert track is not None and track.external_id == "42"
     assert missing is None
@@ -305,7 +295,6 @@ async def test_fetch_preview_downloads_bytes(
         missing = await provider.fetch_preview(Track(id="x", title="t", artist="a"))
     finally:
         await provider.aclose()
-
 
     assert payload == b"\x00\x01\x02"
     assert missing is None
@@ -412,7 +401,9 @@ async def test_crawl_keyword_va_compilation_expansion(
         seed_repository=seed_repository,
     )
     try:
-        tracks = await provider.crawl_keyword("techno", limit=100, expand_compilations=True)
+        tracks = await provider.crawl_keyword(
+            "techno", limit=100, expand_compilations=True
+        )
     finally:
         await provider.aclose()
 
@@ -440,7 +431,9 @@ async def test_crawl_keyword_filters_preview_duration_and_genre(
         seed_repository=seed_repository,
     )
     try:
-        tracks = await provider.crawl_keyword("techno", limit=50, expand_compilations=False)
+        tracks = await provider.crawl_keyword(
+            "techno", limit=50, expand_compilations=False
+        )
     finally:
         await provider.aclose()
 

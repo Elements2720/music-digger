@@ -527,9 +527,167 @@ select { cursor: pointer; }
 }
 .stat-value { font-family: var(--mono); font-size: 24px; color: var(--text); font-variant-numeric: tabular-nums; }
 .stat-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; color: var(--text-faint); text-transform: uppercase; }
+.stat-extra { font-size: 11px; margin-top: 4px; }
 .panel.danger { border-color: rgba(255, 95, 95, 0.28); }
 .panel.danger h2 { color: var(--bad); }
 code { font-family: var(--mono); color: var(--accent); }
+
+/* Visual Breakdown Analytics Grid */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 16px;
+}
+.analytics-box {
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.analytics-box h3 {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin: 0 0 12px 0;
+}
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chart-bar-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 40px;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+.chart-bar-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.chart-bar-track {
+  height: 8px;
+  background: var(--surface-3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.chart-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 300ms ease;
+}
+.chart-bar-fill.bpm-fill {
+  background: #38bdf8;
+}
+.chart-bar-val {
+  text-align: right;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.key-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.key-pill {
+  background: var(--surface-3);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+/* Tables & Explorer */
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.table-container {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+.data-table th {
+  padding: 8px 12px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: middle;
+}
+.data-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+.artist-name-cell {
+  color: var(--text);
+}
+.badges-cell {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.actions-cell {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.artist-tracks-drawer {
+  margin-top: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 8px;
+}
+.drawer-head h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+}
+.delete-btn {
+  color: var(--bad);
+}
+.delete-btn:hover {
+  background: rgba(255, 95, 95, 0.15);
+}
+
 
 /* ------------------------------------------------------------------ player */
 

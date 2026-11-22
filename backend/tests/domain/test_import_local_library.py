@@ -172,7 +172,9 @@ class FakeSeedRepo(ISeedRepository):
     async def list_by_status(self, *args: Any, **kwargs: Any) -> Any:
         return ()
 
-    async def list_by_source(self, source: str, limit: int = 100) -> Sequence[SeedArtist]:
+    async def list_by_source(
+        self, source: str, limit: int = 100
+    ) -> Sequence[SeedArtist]:
         return [s for s in self.recorded_discoveries if s.source == source][:limit]
 
     async def update_status(self, *args: Any, **kwargs: Any) -> None:

@@ -72,7 +72,7 @@ async def test_embeds_the_text_and_returns_repository_matches() -> None:
 
     assert tuple(result) == expected
     assert embedder.queries == ["dark hypnotic techno"], "the query is stripped"
-    (embedding, search_filter), = repository.calls
+    ((embedding, search_filter),) = repository.calls
     assert embedding.values == (0.6, 0.8)
     assert search_filter == SearchFilter(), "defaults are used when no filter is given"
 

@@ -54,9 +54,7 @@ async def test_search_is_case_insensitive_and_marks_heard(
 
 
 async def test_search_limit_is_capped_at_thirty(client: httpx.AsyncClient) -> None:
-    response = await client.get(
-        "/api/tracks/search", params={"q": "a", "limit": 31}
-    )
+    response = await client.get("/api/tracks/search", params={"q": "a", "limit": 31})
     assert response.status_code == 422
 
 
@@ -103,15 +101,11 @@ async def test_vibe_search_blank_query_is_422(client: httpx.AsyncClient) -> None
 
 
 async def test_heard_toggle_works_both_ways(client: httpx.AsyncClient) -> None:
-    mark = await client.patch(
-        "/api/tracks/itunes:1/heard", json={"heard": True}
-    )
+    mark = await client.patch("/api/tracks/itunes:1/heard", json={"heard": True})
     assert mark.status_code == 200
     assert mark.json() == {"id": "itunes:1", "is_heard": True}
 
-    unmark = await client.patch(
-        "/api/tracks/itunes:1/heard", json={"heard": False}
-    )
+    unmark = await client.patch("/api/tracks/itunes:1/heard", json={"heard": False})
     assert unmark.status_code == 200
     assert unmark.json() == {"id": "itunes:1", "is_heard": False}
 
@@ -122,9 +116,7 @@ async def test_heard_toggle_works_both_ways(client: httpx.AsyncClient) -> None:
 async def test_heard_toggle_unknown_track_is_404(
     client: httpx.AsyncClient,
 ) -> None:
-    response = await client.patch(
-        "/api/tracks/missing/heard", json={"heard": True}
-    )
+    response = await client.patch("/api/tracks/missing/heard", json={"heard": True})
     assert response.status_code == 404
 
 
@@ -134,9 +126,7 @@ async def test_reset_embeddings_requires_confirmation(
     refused = await client.post("/api/reset-embeddings", json={})
     assert refused.status_code == 400
 
-    accepted = await client.post(
-        "/api/reset-embeddings", json={"confirm": True}
-    )
+    accepted = await client.post("/api/reset-embeddings", json={"confirm": True})
     assert accepted.status_code == 200
     assert accepted.json() == {"cleared": 2}
 
@@ -175,9 +165,7 @@ async def test_set_similar_sets_view_excludes_itself() -> None:
         )
     )
     transport = httpx.ASGITransport(app=create_app(container=container))
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/api/sets/set:1", params={"view": "sets"})
     assert response.status_code == 200
     similar = response.json()["sets"]
@@ -232,6 +220,7 @@ async def test_get_track_audio_endpoint_and_preview_url(
     )
     # Add local_path to track
     from dataclasses import replace
+
     local_track = replace(local_track, local_path=str(audio_file), source="local")
 
     container = make_container(tracks=[local_track])
@@ -280,3 +269,75 @@ async def test_import_local_job_params_validation_and_start(
     assert good.json()["job"]["kind"] == "import-local"
 
 
+async def test_catalog_analytics_endpoint(client: httpx.AsyncClient) -> None:
+    res = await client.get("/api/catalog/analytics")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total_tracks"] == 3
+    assert body["total_artists"] >= 1
+    assert "genres" in body
+    assert "bpm_buckets" in body
+
+
+async def test_catalog_artists_and_tracks_endpoints(client: httpx.AsyncClient) -> None:
+    res = await client.get("/api/catalog/artists")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 3
+    assert len(body["artists"]) == 3
+
+    artist_res = await client.get("/api/catalog/artists/Solomun/tracks")
+    assert artist_res.status_code == 200
+    artist_body = artist_res.json()
+    assert artist_body["artist"] == "Solomun"
+    assert len(artist_body["tracks"]) == 1
+
+
+async def test_delete_track_endpoint(client: httpx.AsyncClient) -> None:
+    res = await client.delete(
+        "/api/catalog/tracks/itunes:1",
+        params={"blacklist": "true", "reason": "Too slow"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["success"] is True
+    assert body["blacklisted"] is True
+
+
+async def test_delete_artist_endpoint(client: httpx.AsyncClient) -> None:
+    res = await client.delete(
+        "/api/catalog/artists/ARTBAT", params={"blacklist": "true"}
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["success"] is True
+    assert body["artist"] == "ARTBAT"
+    assert body["blacklisted"] is True
+
+
+async def test_blacklist_crud_endpoints(client: httpx.AsyncClient) -> None:
+    # Add artist
+    add_artist_res = await client.post(
+        "/api/catalog/blacklist",
+        json={"kind": "artist", "name": "Boring DJ", "reason": "Not energetic"},
+    )
+    assert add_artist_res.status_code == 200
+    entry_id = add_artist_res.json()["id"]
+    assert add_artist_res.json()["normalized_key"] == "boring dj"
+
+    # Add track
+    add_track_res = await client.post(
+        "/api/catalog/blacklist",
+        json={"kind": "track", "name": "Boring DJ", "track_title": "Sleep Song"},
+    )
+    assert add_track_res.status_code == 200
+
+    # List
+    list_res = await client.get("/api/catalog/blacklist")
+    assert list_res.status_code == 200
+    assert list_res.json()["total"] >= 2
+
+    # Delete
+    del_res = await client.delete(f"/api/catalog/blacklist/{entry_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["success"] is True

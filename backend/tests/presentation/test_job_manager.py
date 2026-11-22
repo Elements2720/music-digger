@@ -406,5 +406,3 @@ async def test_seed_crawl_with_local_seeds() -> None:
     assert call["use_local_seeds"] is True
     assert call["electronic_limit"] == 500
     assert call["general_limit"] == 100
-
-

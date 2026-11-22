@@ -427,9 +427,7 @@ async def test_shazam_failure_increments_failed_count_in_progress(tmp_path) -> N
         async def identify_async(self, audio: AudioBuffer) -> TrackReference | None:
             return None
 
-    use_case, _ = _use_case(
-        tmp_path, downloaded, fingerprinter=FailingFingerprinter()
-    )
+    use_case, _ = _use_case(tmp_path, downloaded, fingerprinter=FailingFingerprinter())
 
     events: list[AnalyzeEvent] = []
     await use_case.execute(
@@ -470,3 +468,107 @@ async def test_analyze_dj_set_resets_circuit_breaker_on_execute(tmp_path) -> Non
     )
 
     assert fingerprinter.reset_called is True
+
+
+def test_safe_interior_scaling(tmp_path: Path) -> None:
+    downloaded = _downloaded(tmp_path)
+    use_case, _ = _use_case(tmp_path, downloaded)
+
+    # >= 90s: shrinks by 25s
+    r1 = TimeRange(0.0, 120.0)
+    safe1 = use_case._safe_interior(r1)
+    assert safe1.start_seconds == 25.0
+    assert safe1.end_seconds == 95.0
+
+    # 45s <= span < 90s: shrinks by 10s
+    r2 = TimeRange(10.0, 70.0)
+    safe2 = use_case._safe_interior(r2)
+    assert safe2.start_seconds == 20.0
+    assert safe2.end_seconds == 60.0
+
+    # < 45s: unchanged
+    r3 = TimeRange(0.0, 30.0)
+    safe3 = use_case._safe_interior(r3)
+    assert safe3.start_seconds == 0.0
+    assert safe3.end_seconds == 30.0
+
+
+def test_merge_duplicate_passages(tmp_path: Path) -> None:
+    from domain.entities.dj_set import Passage
+
+    downloaded = _downloaded(tmp_path)
+    use_case, _ = _use_case(tmp_path, downloaded)
+
+    p1 = Passage(
+        time_range=TimeRange(0.0, 120.0),
+        exact_id_match=True,
+        exact_id_title="Song A",
+        exact_id_artist="Artist 1",
+        exact_id_source="shazam",
+    )
+    p2 = Passage(
+        time_range=TimeRange(120.0, 240.0),
+        exact_id_match=True,
+        exact_id_title="Song A",
+        exact_id_artist="Artist 1",
+        exact_id_source="shazam",
+    )
+    p3 = Passage(
+        time_range=TimeRange(240.0, 360.0),
+        exact_id_match=True,
+        exact_id_title="Song B",
+        exact_id_artist="Artist 2",
+        exact_id_source="shazam",
+    )
+
+    merged = use_case._merge_duplicate_passages(
+        [p1, p2, p3], total_duration_seconds=360.0
+    )
+    assert len(merged) == 2
+    assert merged[0].time_range.start_seconds == 0.0
+    assert merged[0].time_range.end_seconds == 240.0
+    assert merged[0].exact_id_title == "Song A"
+    assert merged[1].time_range.start_seconds == 240.0
+    assert merged[1].time_range.end_seconds == 360.0
+    assert merged[1].exact_id_title == "Song B"
+
+
+async def test_multi_probe_shazam_early_exit_and_fallback(tmp_path: Path) -> None:
+    downloaded = _downloaded(tmp_path)
+
+    probe_starts: list[float] = []
+
+    class MultiProbeFingerprinter:
+        async def identify_async(self, audio: AudioBuffer) -> TrackReference | None:
+            start = struct.unpack("<f", audio.pcm_bytes[:4])[0]
+            probe_starts.append(start)
+            # Center of [0..300s] safe interior [25..275s] is 150s.
+            # Fail at center (150s), succeed at probe 2 (30% -> ~100s)
+            if start < 120.0:
+                return TrackReference(
+                    artist="Second Probe Artist", title="Second Probe Title"
+                )
+            return None
+
+    fingerprinter = MultiProbeFingerprinter()
+    use_case, _ = _use_case(
+        tmp_path,
+        downloaded,
+        fingerprinter=fingerprinter,
+        ranges=(TimeRange(0.0, 300.0),),
+    )
+
+    dj_set = await use_case.execute(
+        "https://sound.test/set",
+        destination_dir=tmp_path / "cache",
+        use_comments=False,
+        use_shazam=True,
+        shazam_probes=3,
+    )
+
+    assert len(dj_set.passages) == 1
+    passage = dj_set.passages[0]
+    assert passage.exact_id_match is True
+    assert passage.exact_id_title == "Second Probe Title"
+    # Should have called probe 1 (failed) then probe 2 (succeeded) and exited early without probe 3
+    assert len(probe_starts) == 2

@@ -446,6 +446,13 @@ def analyze_set(
         "--keep-audio",
         help="Keep the downloaded audio in the storage cache after analysis.",
     ),
+    shazam_probes: int = typer.Option(
+        3,
+        "--shazam-probes",
+        min=1,
+        max=5,
+        help="Number of Shazam probe positions per passage (default 3: 50%, 30%, 70% with early exit).",
+    ),
     cookies: Path | None = typer.Option(
         None,
         "--cookies",
@@ -496,6 +503,7 @@ def analyze_set(
                     use_shazam=shazam,
                     use_comments=comments,
                     keep_audio=keep_audio,
+                    shazam_probes=shazam_probes,
                     progress=on_progress,
                 )
 
@@ -1000,7 +1008,7 @@ def fetch_metadata(
 
 @app.command("stats")
 def stats() -> None:
-    """Print seed and track counts."""
+    """Print seed, track, and catalog analytics."""
 
     async def run() -> None:
         async with Container() as container:
@@ -1012,8 +1020,7 @@ def stats() -> None:
             total_seeds = await container.seed_repository.count()
             electronic = await container.seed_repository.count_by_category("electronic")
             general = await container.seed_repository.count_by_category("general")
-            total_tracks = await container.track_repository.count()
-            embedded = await container.track_repository.count_embedded()
+            analytics = await container.track_repository.get_catalog_analytics()
 
             table = Table(title="DigDeeper Local stats")
             table.add_column("Metric")
@@ -1024,9 +1031,158 @@ def stats() -> None:
             table.add_row("Seeds failed", str(failed))
             table.add_row("Seeds electronic", str(electronic))
             table.add_row("Seeds general", str(general))
-            table.add_row("Tracks total", str(total_tracks))
-            table.add_row("Tracks embedded", str(embedded))
+            table.add_row("Tracks total", str(analytics.total_tracks))
+            table.add_row("Tracks embedded", str(analytics.total_embedded))
+            table.add_row("Total artists", str(analytics.total_artists))
+            table.add_row("Local tracks", str(analytics.total_local))
+            table.add_row("iTunes tracks", str(analytics.total_itunes))
             console.print(table)
+
+            if analytics.genres:
+                genre_table = Table(title="Top Genres")
+                genre_table.add_column("Genre")
+                genre_table.add_column("Tracks", justify="right")
+                genre_table.add_column("Embedded", justify="right")
+                for g in analytics.genres[:8]:
+                    genre_table.add_row(
+                        g.genre, str(g.track_count), str(g.embedded_count)
+                    )
+                console.print(genre_table)
+
+    _run(run())
+
+
+@app.command("delete-track")
+def delete_track(
+    track_id: str = typer.Argument(..., help="Track id to delete from the catalog."),
+    blacklist: bool = typer.Option(
+        False,
+        "--blacklist/--no-blacklist",
+        help="Also add to blacklist to prevent re-import.",
+    ),
+    reason: str | None = typer.Option(
+        None, "--reason", help="Optional blacklist reason."
+    ),
+) -> None:
+    """Delete a track from the catalog, optionally blacklisting it.
+
+    Never deletes user audio files on disk (only DB rows).
+    """
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.manage_catalog is not None
+            res = await container.manage_catalog.delete_track(
+                track_id, blacklist=blacklist, reason=reason
+            )
+            if not res.deleted:
+                console.print(
+                    f"[yellow]Track {track_id!r} not found or already deleted.[/]"
+                )
+                return
+            msg = f"[green]Deleted track {track_id}[/]"
+            if res.blacklisted:
+                msg += " [cyan](blacklisted)[/]"
+            console.print(msg)
+
+    _run(run())
+
+
+@app.command("delete-artist")
+def delete_artist(
+    artist_name: str = typer.Argument(
+        ..., help="Artist name to delete from the catalog."
+    ),
+    blacklist: bool = typer.Option(
+        False,
+        "--blacklist/--no-blacklist",
+        help="Also add to blacklist to prevent re-crawling.",
+    ),
+    reason: str | None = typer.Option(
+        None, "--reason", help="Optional blacklist reason."
+    ),
+) -> None:
+    """Delete an artist, all their tracks, and their seeds from the catalog.
+
+    Never deletes user audio files on disk (only DB rows).
+    """
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.manage_catalog is not None
+            res = await container.manage_catalog.delete_artist(
+                artist_name, blacklist=blacklist, reason=reason
+            )
+            msg = (
+                f"[green]Deleted artist {artist_name!r}: "
+                f"{res.tracks_deleted} tracks removed, seed removed: {res.seed_removed}[/]"
+            )
+            if res.blacklisted:
+                msg += " [cyan](blacklisted)[/]"
+            console.print(msg)
+
+    _run(run())
+
+
+@app.command("blacklist-list")
+def blacklist_list(
+    kind: str | None = typer.Option(
+        None, "--kind", help="Filter by kind: 'artist' or 'track'."
+    ),
+    query: str | None = typer.Option(
+        None, "--query", "-q", help="Filter by search query."
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, help="Max entries to list."),
+) -> None:
+    """List blacklisted artists and tracks."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.manage_catalog is not None
+            entries = await container.manage_catalog.list_blacklist(
+                kind=kind, query=query, limit=limit
+            )
+            total = await container.manage_catalog.count_blacklist(kind=kind)
+
+        if not entries:
+            console.print("[yellow]No blacklist entries found.[/]")
+            return
+
+        table = Table(title=f"Blacklist ({total} total)")
+        table.add_column("ID", justify="right")
+        table.add_column("Kind")
+        table.add_column("Display Name")
+        table.add_column("Key", style="dim")
+        table.add_column("Reason")
+        table.add_column("Created", style="dim")
+        for e in entries:
+            table.add_row(
+                str(e.id or "-"),
+                e.kind,
+                e.display_name,
+                e.normalized_key,
+                e.reason or "-",
+                e.created_at or "-",
+            )
+        console.print(table)
+
+    _run(run())
+
+
+@app.command("blacklist-remove")
+def blacklist_remove(
+    entry_id: int = typer.Argument(..., help="Blacklist entry ID to remove."),
+) -> None:
+    """Remove an artist or track from the blacklist by ID."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.manage_catalog is not None
+            removed = await container.manage_catalog.remove_blacklist_entry(entry_id)
+            if not removed:
+                console.print(f"[red]Error:[/] Blacklist entry {entry_id} not found.")
+                raise typer.Exit(1)
+            console.print(f"[green]Removed blacklist entry {entry_id}.[/]")
 
     _run(run())
 
@@ -1054,8 +1210,7 @@ def serve(
     from presentation.api import create_app
 
     console.print(
-        f"[green]DigDeeper Local[/] -> [bold]http://{host}:{port}[/] "
-        "(Ctrl+C to stop)"
+        f"[green]DigDeeper Local[/] -> [bold]http://{host}:{port}[/] (Ctrl+C to stop)"
     )
     uvicorn.run(create_app(), host=host, port=port, log_level="info")
 

@@ -11,9 +11,14 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from .._validation import normalize_artist_key
 from ..entities.track import SeedArtist
 from ..interfaces.catalog import ICatalogProvider
-from ..interfaces.repositories import ISeedRepository, ITrackRepository
+from ..interfaces.repositories import (
+    IBlacklistRepository,
+    ISeedRepository,
+    ITrackRepository,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,10 +43,12 @@ class FetchCatalogMetadata:
         seed_repository: ISeedRepository,
         catalog_provider: ICatalogProvider,
         track_repository: ITrackRepository,
+        blacklist_repository: IBlacklistRepository | None = None,
     ) -> None:
         self._seed_repository = seed_repository
         self._catalog_provider = catalog_provider
         self._track_repository = track_repository
+        self._blacklist_repository = blacklist_repository
 
     async def execute(
         self,
@@ -65,12 +72,21 @@ class FetchCatalogMetadata:
             raise ValueError("tracks_per_artist must be positive")
 
         seeds = await self._select_seeds(artists_limit, retry_failed)
+        blocked_artists: frozenset[str] = frozenset()
+        if self._blacklist_repository is not None:
+            blocked_artists = await self._blacklist_repository.get_blocked_artist_keys()
+
         processed = 0
         failed = 0
         tracks_found = 0
         tracks_saved = 0
 
         for index, seed in enumerate(seeds, start=1):
+            if blocked_artists and normalize_artist_key(seed.name) in blocked_artists:
+                LOGGER.info(
+                    "Skipping blacklisted seed %s before provider lookup", seed.name
+                )
+                continue
             if progress is not None:
                 progress(seed, index, len(seeds))
             try:
@@ -102,6 +118,10 @@ class FetchCatalogMetadata:
         artists_limit: int,
         retry_failed: bool,
     ) -> Sequence[SeedArtist]:
+        blocked_artists: frozenset[str] = frozenset()
+        if self._blacklist_repository is not None:
+            blocked_artists = await self._blacklist_repository.get_blocked_artist_keys()
+
         statuses = ("failed", "pending") if retry_failed else ("pending",)
         selected: list[SeedArtist] = []
         seen: set[str] = set()
@@ -109,9 +129,23 @@ class FetchCatalogMetadata:
             remaining = artists_limit - len(selected)
             if remaining <= 0:
                 break
-            batch = await self._seed_repository.list_by_status(status, limit=remaining)
+            fetch_limit = (
+                max(remaining * 5, remaining + len(blocked_artists) * 2)
+                if blocked_artists
+                else remaining
+            )
+            batch = await self._seed_repository.list_by_status(
+                status, limit=fetch_limit
+            )
             for seed in batch:
-                key = seed.name.casefold()
+                if len(selected) >= artists_limit:
+                    break
+                if (
+                    blocked_artists
+                    and normalize_artist_key(seed.name) in blocked_artists
+                ):
+                    continue
+                key = normalize_artist_key(seed.name)
                 if key in seen:
                     continue
                 seen.add(key)

@@ -208,11 +208,22 @@ class LanceDBClient:
 
     async def delete_ids(self, ids: Sequence[str]) -> int:
         """Delete the rows for ``ids``; returns how many were requested."""
-        if not ids or self._table is None:
+        if not ids or self._db is None:
             return 0
-        quoted = ", ".join(self._quote(value) for value in ids)
-        await asyncio.to_thread(self._table.delete, f"id IN ({quoted})")
-        return len(ids)
+        if self._table is None:
+            table_names = await asyncio.to_thread(self._list_tables)
+            if self._table_name not in table_names:
+                return 0
+            self._table = await asyncio.to_thread(self._db.open_table, self._table_name)
+
+        batch_size = 500
+        total_deleted = 0
+        for i in range(0, len(ids), batch_size):
+            chunk = ids[i : i + batch_size]
+            quoted = ", ".join(self._quote(value) for value in chunk)
+            await asyncio.to_thread(self._table.delete, f"id IN ({quoted})")
+            total_deleted += len(chunk)
+        return total_deleted
 
     async def maybe_create_index(self) -> bool:
         """Create an IVF-PQ index once the table exceeds 10,000 rows.

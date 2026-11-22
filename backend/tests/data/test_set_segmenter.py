@@ -199,3 +199,55 @@ def test_build_passages_clamps_final_boundary_strictly() -> None:
         assert passage.end_seconds <= duration
         assert passage.start_seconds < passage.end_seconds
     assert passages[-1].end_seconds <= duration
+
+
+def test_semantic_segmentation_with_embedder() -> None:
+    from domain.entities.track import AudioBuffer
+    from domain.interfaces.audio_engine import IAudioEmbedder
+    from domain.value_objects.audio_features import EmbeddingVector
+
+    class FakeClapEmbedder(IAudioEmbedder):
+        model_id = "fake-clap"
+        embedding_dimension = 512
+
+        def __init__(self) -> None:
+            self.received_buffers: list[AudioBuffer] = []
+
+        def embed(self, audio: AudioBuffer) -> EmbeddingVector:
+            self.received_buffers.append(audio)
+            arr = np.frombuffer(audio.pcm_bytes, dtype=np.float32)
+            first_val = float(arr[0]) if len(arr) else 0.0
+            if first_val == 2.0:
+                return EmbeddingVector(tuple([1.0] + [0.0] * 511))
+            return EmbeddingVector(tuple([0.0, 1.0] + [0.0] * 510))
+
+        def embed_batch(
+            self, batch: Sequence[AudioBuffer]
+        ) -> Sequence[EmbeddingVector]:
+            for buf in batch:
+                assert buf.sample_rate == 48_000, (
+                    f"CLAP embedder requires 48_000 Hz, got {buf.sample_rate}"
+                )
+            return [self.embed(b) for b in batch]
+
+    # 48 kHz mono float32 for 120 seconds (60s tone A, 60s tone B)
+    sample_rate = 48_000
+    n_half = int(60.0 * sample_rate)
+    tone_a = np.full(n_half, fill_value=2.0, dtype=np.float32)
+    tone_b = np.full(n_half, fill_value=3.0, dtype=np.float32)
+    pcm = np.concatenate([tone_a, tone_b]).tobytes()
+
+    embedder = FakeClapEmbedder()
+    segmenter = SetSegmenter(
+        stream_factory=_factory(pcm),
+        embedder=embedder,
+        min_passage_seconds=15.0,
+        max_passage_seconds=120.0,
+    )
+
+    passages = segmenter.detect_passages(Path("fake.m4a"), 120.0)
+    assert len(passages) >= 2
+    assert passages[0].start_seconds == 0.0
+    assert passages[-1].end_seconds <= 120.0
+    assert len(embedder.received_buffers) >= 4
+    assert all(b.sample_rate == 48_000 for b in embedder.received_buffers)

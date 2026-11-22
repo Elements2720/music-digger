@@ -11,9 +11,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
+from ..entities.analytics import ArtistSummary, CatalogAnalytics
 from ..entities.dj_set import DJSet, SetMatch, TrackMatch
 from ..entities.search import SearchFilter
-from ..entities.track import SeedArtist, SeedStatus, Track
+from ..entities.track import BlacklistEntry, SeedArtist, SeedStatus, Track
 from ..value_objects.audio_features import EmbeddingVector
 
 
@@ -53,9 +54,7 @@ class ITrackRepository(ABC):
         """Return metadata-only matches without running a vector query."""
 
     @abstractmethod
-    async def search_tracks(
-        self, query: str, limit: int = 30
-    ) -> Sequence[Track]:
+    async def search_tracks(self, query: str, limit: int = 30) -> Sequence[Track]:
         """Return catalog tracks whose title or artist contains ``query``.
 
         Matching is case-insensitive and bounded by ``limit`` so the UI can
@@ -138,6 +137,47 @@ class ITrackRepository(ABC):
         a fresh ``dig index`` run re-embeds the catalog from scratch. Returns
         the number of tracks that had embeddings.
         """
+
+    async def delete_by_ids(self, track_ids: Sequence[str]) -> int:
+        """Delete tracks by their IDs, returning the count removed."""
+        return 0
+
+    async def delete_by_artist(self, artist_name: str) -> tuple[int, tuple[str, ...]]:
+        """Delete all tracks by artist name, returning (count_deleted, deleted_ids)."""
+        return (0, ())
+
+    async def list_by_artist(
+        self, artist_name: str, *, limit: int = 200, offset: int = 0
+    ) -> Sequence[Track]:
+        """List tracks by artist name."""
+        return ()
+
+    async def list_artists_summary(
+        self,
+        *,
+        query: str | None = None,
+        genre: str | None = None,
+        source: str | None = None,
+        sort: str = "tracks_desc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        """List artists summary with counts and genres, returning (artists, total_count)."""
+        return ((), 0)
+
+    async def get_catalog_analytics(self) -> CatalogAnalytics:
+        """Return high-level analytics and distributions across the catalog."""
+        return CatalogAnalytics(
+            total_tracks=0,
+            total_embedded=0,
+            total_artists=0,
+            total_local=0,
+            total_itunes=0,
+            genres=(),
+            bpm_buckets=(),
+            sources=(),
+            top_keys=(),
+        )
 
 
 class ISetRepository(ABC):
@@ -234,3 +274,54 @@ class ISeedRepository(ABC):
     @abstractmethod
     async def count(self) -> int:
         """Return the total number of seeds."""
+
+    async def delete_by_name(self, name: str) -> bool:
+        """Delete a seed by artist name, returning True if deleted."""
+        return False
+
+
+class IBlacklistRepository(ABC):
+    """Persistence for blocked artists and tracks."""
+
+    @abstractmethod
+    async def add(self, entry: BlacklistEntry) -> BlacklistEntry:
+        """Insert or replace a blacklist entry."""
+
+    @abstractmethod
+    async def remove(self, entry_id: int) -> bool:
+        """Remove a blacklist entry by ID, returning True if deleted."""
+
+    @abstractmethod
+    async def list_all(
+        self,
+        *,
+        kind: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Sequence[BlacklistEntry]:
+        """List blacklist entries with optional filtering by kind and query."""
+
+    @abstractmethod
+    async def count(self, *, kind: str | None = None) -> int:
+        """Return the count of blacklist entries, optionally filtered by kind."""
+
+    @abstractmethod
+    async def get_blocked_artist_keys(self) -> frozenset[str]:
+        """Return all blocked normalized artist keys in memory for fast lookup."""
+
+    @abstractmethod
+    async def get_blocked_track_keys(self) -> frozenset[str]:
+        """Return all blocked normalized track keys ('artist|title') in memory for fast lookup."""
+
+    @abstractmethod
+    async def is_artist_blocked(self, normalized_artist: str) -> bool:
+        """Check whether an artist is blocked."""
+
+    @abstractmethod
+    async def is_track_blocked(self, normalized_track_key: str) -> bool:
+        """Check whether a track key ('artist|title') is blocked."""
+
+    async def get_by_key(self, kind: str, normalized_key: str) -> BlacklistEntry | None:
+        """Fetch a blacklist entry by kind and normalized key."""
+        return None

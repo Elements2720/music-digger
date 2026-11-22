@@ -122,9 +122,7 @@ class FakeTrackRepository(ITrackRepository):
         else:
             self._heard -= {track_id}
 
-    async def search_tracks(
-        self, query: str, limit: int = 30
-    ) -> Sequence[Track]:
+    async def search_tracks(self, query: str, limit: int = 30) -> Sequence[Track]:
         needle = query.strip().casefold()
         if not needle or limit <= 0:
             return ()

@@ -103,6 +103,25 @@ CREATE TABLE IF NOT EXISTS set_passages (
 
 CREATE INDEX IF NOT EXISTS idx_set_passages_set_id
     ON set_passages(set_id, start_sec);
+
+CREATE TABLE IF NOT EXISTS blacklist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL
+        CHECK (kind IN ('artist', 'track')),
+    normalized_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    artist_name TEXT,
+    track_title TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(kind, normalized_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blacklist_kind
+    ON blacklist(kind);
+CREATE INDEX IF NOT EXISTS idx_blacklist_normalized_key
+    ON blacklist(normalized_key);
+
 """
 
 
@@ -148,6 +167,45 @@ async def _migrate(connection: aiosqlite.Connection) -> None:
             if name not in existing:
                 await connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
                 migrated_any = True
+
+    # Ensure blacklist table enforces composite UNIQUE(kind, normalized_key)
+    async with connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='blacklist'"
+    ) as cursor:
+        bl_row = await cursor.fetchone()
+    if bl_row and bl_row[0] and "UNIQUE(kind, normalized_key)" not in bl_row[0]:
+        await connection.execute("PRAGMA foreign_keys = OFF")
+        await connection.execute("""
+            CREATE TABLE blacklist_migrated (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL CHECK (kind IN ('artist', 'track')),
+                normalized_key TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                artist_name TEXT,
+                track_title TEXT,
+                reason TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(kind, normalized_key)
+            )
+        """)
+        await connection.execute("""
+            INSERT OR IGNORE INTO blacklist_migrated (
+                id, kind, normalized_key, display_name, artist_name, track_title, reason, created_at
+            )
+            SELECT id, kind, normalized_key, display_name, artist_name, track_title, reason, created_at
+            FROM blacklist
+        """)
+        await connection.execute("DROP TABLE blacklist")
+        await connection.execute("ALTER TABLE blacklist_migrated RENAME TO blacklist")
+        await connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_blacklist_kind ON blacklist(kind)"
+        )
+        await connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_blacklist_normalized_key ON blacklist(normalized_key)"
+        )
+        await connection.execute("PRAGMA foreign_keys = ON")
+        migrated_any = True
+
     if migrated_any:
         await connection.commit()
 

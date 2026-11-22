@@ -195,8 +195,7 @@ class DJSet:
                 end = passage.time_range.end_seconds
                 if end > duration + tolerance:
                     raise ValueError(
-                        "passage ends after the DJ set duration: "
-                        f"{end} > {duration}"
+                        f"passage ends after the DJ set duration: {end} > {duration}"
                     )
                 if end > duration:
                     start = min(

@@ -56,6 +56,15 @@ class ResetEmbeddingsRequest(BaseModel):
     confirm: bool = False
 
 
+class BlacklistCreateRequest(BaseModel):
+    """Payload to add an artist or track to the blacklist."""
+
+    kind: Literal["artist", "track"] = "artist"
+    name: str = Field(..., min_length=1)
+    track_title: str | None = None
+    reason: str | None = None
+
+
 # ------------------------------------------------------------------ serializers
 
 
@@ -83,9 +92,7 @@ def track_payload(track: Any, *, heard: frozenset[str] = frozenset()) -> dict[st
     }
 
 
-def match_payload(
-    match: Any, *, heard: frozenset[str] = frozenset()
-) -> dict[str, Any]:
+def match_payload(match: Any, *, heard: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Flatten a :class:`~domain.entities.dj_set.TrackMatch`."""
     return {
         "track": track_payload(match.track, heard=heard),
@@ -137,8 +144,7 @@ def set_detail_payload(
     """Set summary plus its passages in playback order."""
     payload = set_summary_payload(dj_set)
     payload["passages"] = [
-        passage_payload(passage, heard=heard)
-        for passage in dj_set.ordered_passages()
+        passage_payload(passage, heard=heard) for passage in dj_set.ordered_passages()
     ]
     return payload
 
@@ -168,4 +174,73 @@ def hardware_payload(info: Any) -> dict[str, Any]:
         "ffmpeg_version": info.ffmpeg_version,
         "gpu_ready": info.gpu_ready,
         "has_ffmpeg": info.has_ffmpeg,
+    }
+
+
+def genre_stat_payload(stat: Any) -> dict[str, Any]:
+    return {
+        "genre": stat.genre,
+        "track_count": stat.track_count,
+        "embedded_count": stat.embedded_count,
+    }
+
+
+def bpm_bucket_stat_payload(stat: Any) -> dict[str, Any]:
+    return {
+        "label": stat.label,
+        "track_count": stat.track_count,
+    }
+
+
+def source_stat_payload(stat: Any) -> dict[str, Any]:
+    return {
+        "source": stat.source,
+        "track_count": stat.track_count,
+        "embedded_count": stat.embedded_count,
+    }
+
+
+def key_stat_payload(stat: Any) -> dict[str, Any]:
+    return {
+        "camelot_key": stat.camelot_key,
+        "track_count": stat.track_count,
+    }
+
+
+def artist_summary_payload(summary: Any) -> dict[str, Any]:
+    return {
+        "artist": summary.artist,
+        "track_count": summary.track_count,
+        "embedded_count": summary.embedded_count,
+        "genres": list(summary.genres),
+        "sources": list(summary.sources),
+        "sample_track_id": summary.sample_track_id,
+        "sample_track_title": summary.sample_track_title,
+    }
+
+
+def catalog_analytics_payload(analytics: Any) -> dict[str, Any]:
+    return {
+        "total_tracks": analytics.total_tracks,
+        "total_embedded": analytics.total_embedded,
+        "total_artists": analytics.total_artists,
+        "total_local": analytics.total_local,
+        "total_itunes": analytics.total_itunes,
+        "genres": [genre_stat_payload(g) for g in analytics.genres],
+        "bpm_buckets": [bpm_bucket_stat_payload(b) for b in analytics.bpm_buckets],
+        "sources": [source_stat_payload(s) for s in analytics.sources],
+        "top_keys": [key_stat_payload(k) for k in analytics.top_keys],
+    }
+
+
+def blacklist_entry_payload(entry: Any) -> dict[str, Any]:
+    return {
+        "id": entry.id,
+        "kind": entry.kind,
+        "normalized_key": entry.normalized_key,
+        "display_name": entry.display_name,
+        "artist_name": entry.artist_name,
+        "track_title": entry.track_title,
+        "reason": entry.reason,
+        "created_at": entry.created_at,
     }

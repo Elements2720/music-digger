@@ -29,6 +29,7 @@ from data.ml.ffmpeg_decoder import FFmpegAudioDecoder
 from data.ml.hardware_probe import HardwareProbe
 from data.ml.librosa_analyzer import LibrosaFeatureExtractor
 from data.ml.set_segmenter import SetSegmenter
+from data.repositories.blacklist_repository import SQLiteBlacklistRepository
 from data.repositories.seed_repository import SQLiteSeedRepository
 from data.repositories.set_repository import HybridSetRepository
 from data.repositories.track_repository import HybridTrackRepository
@@ -41,6 +42,7 @@ from domain.use_cases import (
     FindSimilarForSet,
     ImportLocalLibrary,
     IndexCatalog,
+    ManageCatalog,
     VibeSearch,
 )
 
@@ -209,6 +211,8 @@ class Container:
         self.vectors: LanceDBClient | None = None
         self.seed_repository: SQLiteSeedRepository | None = None
         self.track_repository: HybridTrackRepository | None = None
+        self.blacklist_repository: SQLiteBlacklistRepository | None = None
+        self.manage_catalog: ManageCatalog | None = None
         self.http_client: httpx.AsyncClient | None = None
         self.itunes_provider: ITunesProvider | None = None
         self.deezer_crawler: DeezerSeedCrawler | None = None
@@ -252,8 +256,11 @@ class Container:
         await sqlite.connect()
         vectors = LanceDBClient(settings.lancedb_path)
         await vectors.connect()
-        seed_repository = SQLiteSeedRepository(sqlite)
-        track_repository = HybridTrackRepository(sqlite, vectors)
+        blacklist_repository = SQLiteBlacklistRepository(sqlite)
+        seed_repository = SQLiteSeedRepository(sqlite, blacklist=blacklist_repository)
+        track_repository = HybridTrackRepository(
+            sqlite, vectors, blacklist=blacklist_repository
+        )
 
         http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.itunes_timeout_seconds),
@@ -294,6 +301,7 @@ class Container:
 
         self.sqlite = sqlite
         self.vectors = vectors
+        self.blacklist_repository = blacklist_repository
         self.seed_repository = seed_repository
         self.track_repository = track_repository
         self.http_client = http_client
@@ -318,6 +326,12 @@ class Container:
             seed_repository=seed_repository,
             catalog_provider=itunes_provider,
             track_repository=track_repository,
+            blacklist_repository=blacklist_repository,
+        )
+        self.manage_catalog = ManageCatalog(
+            track_repository=track_repository,
+            seed_repository=seed_repository,
+            blacklist_repository=blacklist_repository,
         )
         self.index_catalog = IndexCatalog(
             track_repository=track_repository,
@@ -363,7 +377,7 @@ class Container:
             cookies_file=settings.ytdlp_cookies_file,
             cookies_from_browser=settings.ytdlp_cookies_from_browser,
         )
-        set_segmenter = SetSegmenter()
+        set_segmenter = SetSegmenter(embedder=clap_embedder)
         shazam_fingerprinter = ShazamFingerprinter()
         self.set_vectors = set_vectors
         self.set_repository = set_repository

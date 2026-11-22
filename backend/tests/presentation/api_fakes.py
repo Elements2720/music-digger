@@ -8,11 +8,28 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
+from domain.entities.analytics import (
+    ArtistSummary,
+    BpmBucketStat,
+    CatalogAnalytics,
+    GenreStat,
+    KeyStat,
+    SourceStat,
+)
 from domain.entities.dj_set import DJSet, Passage, SetMatch, TrackMatch
 from domain.entities.search import SearchFilter
-from domain.entities.track import AudioBuffer, SeedArtist, Track
-from domain.interfaces.repositories import ISetRepository, ITrackRepository
-from domain.use_cases import DigSimilarTracks, FindSimilarForSet, VibeSearch
+from domain.entities.track import AudioBuffer, BlacklistEntry, SeedArtist, Track
+from domain.interfaces.repositories import (
+    IBlacklistRepository,
+    ISetRepository,
+    ITrackRepository,
+)
+from domain.use_cases import (
+    DigSimilarTracks,
+    FindSimilarForSet,
+    ManageCatalog,
+    VibeSearch,
+)
 from domain.value_objects.audio_features import EmbeddingVector, TimeRange
 from domain.value_objects.hardware import HardwareInfo
 
@@ -95,9 +112,7 @@ class FakeTrackRepository(ITrackRepository):
     async def find_by_filter(self, search_filter: SearchFilter) -> Sequence[Track]:
         return ()
 
-    async def search_tracks(
-        self, query: str, limit: int = 30
-    ) -> Sequence[Track]:
+    async def search_tracks(self, query: str, limit: int = 30) -> Sequence[Track]:
         needle = query.strip().casefold()
         if not needle or limit <= 0:
             return ()
@@ -161,6 +176,144 @@ class FakeTrackRepository(ITrackRepository):
                 )
                 cleared += 1
         return cleared
+
+    async def delete_by_ids(self, track_ids: Sequence[str]) -> int:
+        count = 0
+        for tid in track_ids:
+            if tid in self.tracks:
+                del self.tracks[tid]
+                count += 1
+        return count
+
+    async def delete_by_artist(self, artist_name: str) -> tuple[int, tuple[str, ...]]:
+        matching = [
+            tid
+            for tid, t in self.tracks.items()
+            if t.artist.casefold() == artist_name.casefold()
+        ]
+        count = await self.delete_by_ids(matching)
+        return (count, tuple(matching))
+
+    async def list_by_artist(
+        self, artist_name: str, *, limit: int = 200, offset: int = 0
+    ) -> Sequence[Track]:
+        matched = [
+            t
+            for t in self.tracks.values()
+            if t.artist.casefold() == artist_name.casefold()
+        ]
+        return tuple(matched[offset : offset + limit])
+
+    async def list_artists_summary(
+        self,
+        *,
+        query: str | None = None,
+        genre: str | None = None,
+        source: str | None = None,
+        sort: str = "tracks_desc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        by_artist: dict[str, list[Track]] = {}
+        for t in self.tracks.values():
+            by_artist.setdefault(t.artist, []).append(t)
+
+        summaries: list[ArtistSummary] = []
+        for artist, trks in by_artist.items():
+            if query and query.casefold() not in artist.casefold():
+                continue
+            if genre and not any(
+                t.genre and t.genre.casefold() == genre.casefold() for t in trks
+            ):
+                continue
+            if source and not any(t.source == source for t in trks):
+                continue
+            genres = tuple({t.genre for t in trks if t.genre})
+            sources = tuple({t.source for t in trks if t.source})
+            emb_cnt = sum(1 for t in trks if t.embedding is not None)
+            summaries.append(
+                ArtistSummary(
+                    artist=artist,
+                    track_count=len(trks),
+                    embedded_count=emb_cnt,
+                    genres=genres,
+                    sources=sources,
+                    sample_track_id=trks[0].id if trks else None,
+                    sample_track_title=trks[0].title if trks else None,
+                )
+            )
+
+        if sort == "artist_asc":
+            summaries.sort(key=lambda s: s.artist.casefold())
+        elif sort == "embedded_desc":
+            summaries.sort(
+                key=lambda s: (s.embedded_count, s.track_count), reverse=True
+            )
+        else:
+            summaries.sort(
+                key=lambda s: (s.track_count, s.embedded_count), reverse=True
+            )
+
+        return (tuple(summaries[offset : offset + limit]), len(summaries))
+
+    async def get_catalog_analytics(self) -> CatalogAnalytics:
+        genres_map: dict[str, list[Track]] = {}
+        sources_map: dict[str, list[Track]] = {}
+        keys_map: dict[str, int] = {}
+        total_embedded = 0
+        total_local = 0
+        total_itunes = 0
+
+        for t in self.tracks.values():
+            if t.embedding is not None:
+                total_embedded += 1
+            if t.source == "local":
+                total_local += 1
+            elif t.source == "itunes":
+                total_itunes += 1
+            if t.genre:
+                genres_map.setdefault(t.genre, []).append(t)
+            if t.source:
+                sources_map.setdefault(t.source, []).append(t)
+            if t.key:
+                keys_map[t.key.notation] = keys_map.get(t.key.notation, 0) + 1
+
+        genres = tuple(
+            GenreStat(
+                genre=g,
+                track_count=len(trks),
+                embedded_count=sum(1 for tr in trks if tr.embedding is not None),
+            )
+            for g, trks in genres_map.items()
+        )
+        sources = tuple(
+            SourceStat(
+                source=s,
+                track_count=len(trks),
+                embedded_count=sum(1 for tr in trks if tr.embedding is not None),
+            )
+            for s, trks in sources_map.items()
+        )
+        top_keys = tuple(
+            KeyStat(camelot_key=k, track_count=cnt) for k, cnt in keys_map.items()
+        )
+        bpm_buckets = (
+            (BpmBucketStat(label="120-124", track_count=len(self.tracks)),)
+            if self.tracks
+            else ()
+        )
+
+        return CatalogAnalytics(
+            total_tracks=len(self.tracks),
+            total_embedded=total_embedded,
+            total_artists=len({t.artist for t in self.tracks.values()}),
+            total_local=total_local,
+            total_itunes=total_itunes,
+            genres=genres,
+            bpm_buckets=bpm_buckets,
+            sources=sources,
+            top_keys=top_keys,
+        )
 
 
 class FakeSetRepository(ISetRepository):
@@ -228,6 +381,85 @@ class FakeSeedRepository:
         self, source: str, limit: int = 100
     ) -> Sequence[SeedArtist]:
         return ()
+
+    async def delete_by_name(self, name: str) -> bool:
+        return True
+
+
+class FakeBlacklistRepository(IBlacklistRepository):
+    def __init__(self) -> None:
+        self.entries: dict[int, BlacklistEntry] = {}
+        self._next_id = 1
+
+    async def add(self, entry: BlacklistEntry) -> BlacklistEntry:
+        for eid, existing in self.entries.items():
+            if existing.normalized_key == entry.normalized_key:
+                updated = BlacklistEntry(
+                    id=eid,
+                    kind=entry.kind,
+                    normalized_key=entry.normalized_key,
+                    display_name=entry.display_name,
+                    artist_name=entry.artist_name,
+                    track_title=entry.track_title,
+                    reason=entry.reason,
+                    created_at="2026-11-22",
+                )
+                self.entries[eid] = updated
+                return updated
+        eid = self._next_id
+        self._next_id += 1
+        persisted = BlacklistEntry(
+            id=eid,
+            kind=entry.kind,
+            normalized_key=entry.normalized_key,
+            display_name=entry.display_name,
+            artist_name=entry.artist_name,
+            track_title=entry.track_title,
+            reason=entry.reason,
+            created_at="2026-11-22",
+        )
+        self.entries[eid] = persisted
+        return persisted
+
+    async def remove(self, entry_id: int) -> bool:
+        return self.entries.pop(entry_id, None) is not None
+
+    async def list_all(
+        self,
+        *,
+        kind: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Sequence[BlacklistEntry]:
+        result = list(self.entries.values())
+        if kind:
+            result = [e for e in result if e.kind == kind]
+        if query:
+            q = query.casefold()
+            result = [e for e in result if q in e.display_name.casefold()]
+        return tuple(result[offset : offset + limit])
+
+    async def count(self, *, kind: str | None = None) -> int:
+        if kind:
+            return sum(1 for e in self.entries.values() if e.kind == kind)
+        return len(self.entries)
+
+    async def get_blocked_artist_keys(self) -> frozenset[str]:
+        return frozenset(
+            e.normalized_key for e in self.entries.values() if e.kind == "artist"
+        )
+
+    async def get_blocked_track_keys(self) -> frozenset[str]:
+        return frozenset(
+            e.normalized_key for e in self.entries.values() if e.kind == "track"
+        )
+
+    async def is_artist_blocked(self, normalized_artist: str) -> bool:
+        return normalized_artist in await self.get_blocked_artist_keys()
+
+    async def is_track_blocked(self, normalized_track_key: str) -> bool:
+        return normalized_track_key in await self.get_blocked_track_keys()
 
 
 class FakeEmbedder:
@@ -315,15 +547,9 @@ class FakeBuildSeedList:
         progress = kwargs.get("progress")
         if progress is not None:
             progress(
-                SimpleNamespace(
-                    stage="electronic", name="Solomun", depth=0, found=1
-                )
+                SimpleNamespace(stage="electronic", name="Solomun", depth=0, found=1)
             )
-            progress(
-                SimpleNamespace(
-                    stage="writing", name="", depth=None, found=15
-                )
-            )
+            progress(SimpleNamespace(stage="writing", name="", depth=None, found=15))
         return SimpleNamespace(
             discovered=10,
             llm_generated=5,
@@ -412,13 +638,15 @@ class FakeImportLocalLibrary:
         seed_artists: bool = True,
         progress: Any = None,
     ) -> Any:
-        self.calls.append({
-            "folder_path": folder_path,
-            "recursive": recursive,
-            "batch_size": batch_size,
-            "reindex": reindex,
-            "seed_artists": seed_artists,
-        })
+        self.calls.append(
+            {
+                "folder_path": folder_path,
+                "recursive": recursive,
+                "batch_size": batch_size,
+                "reindex": reindex,
+                "seed_artists": seed_artists,
+            }
+        )
         if progress is not None:
             progress(
                 SimpleNamespace(
@@ -510,13 +738,22 @@ def make_container(
         if tracks is not None
         else [
             make_track("itunes:1", title="Night Drive", artist="Solomun"),
-            make_track("itunes:2", title="Sunrise", artist="Tale Of Us", embedding=(0.0, 1.0)),
+            make_track(
+                "itunes:2", title="Sunrise", artist="Tale Of Us", embedding=(0.0, 1.0)
+            ),
             make_track("itunes:3", title="Horizon", artist="ARTBAT", embedding=None),
         ]
     )
     track_repository = FakeTrackRepository(track_list)
     set_list = list(sets) if sets is not None else [make_set()]
     set_repository = FakeSetRepository(set_list, similar_sets)
+    blacklist_repository = FakeBlacklistRepository()
+    seed_repository = FakeSeedRepository()
+    manage_catalog = ManageCatalog(
+        track_repository=track_repository,
+        seed_repository=seed_repository,
+        blacklist_repository=blacklist_repository,
+    )
     embedder = FakeClapEmbedder()
     decoder = FakeDecoder()
     dj_set = set_list[0] if set_list else make_set()
@@ -530,16 +767,16 @@ def make_container(
             ytdlp_cookies_from_browser=None,
         ),
         track_repository=track_repository,
-        seed_repository=FakeSeedRepository(),
+        seed_repository=seed_repository,
+        blacklist_repository=blacklist_repository,
+        manage_catalog=manage_catalog,
         set_repository=set_repository,
         dig_similar_tracks=DigSimilarTracks(track_repository=track_repository),
         find_similar_for_set=FindSimilarForSet(
             track_repository=track_repository,
             set_repository=set_repository,
         ),
-        vibe_search=VibeSearch(
-            embedder=embedder, track_repository=track_repository
-        ),
+        vibe_search=VibeSearch(embedder=embedder, track_repository=track_repository),
         index_catalog=index_catalog or FakeIndexCatalog(),
         build_seed_list=FakeBuildSeedList(),
         crawl_itunes_seeds=FakeCrawlITunesSeeds(),
