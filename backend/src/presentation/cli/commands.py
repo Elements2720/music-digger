@@ -434,7 +434,7 @@ def analyze_set(
         if dj_set.bpm_min is not None and dj_set.bpm_max is not None:
             table.add_row(
                 "BPM range",
-                f"{dj_set.bpm_min.value:g} – {dj_set.bpm_max.value:g}",
+                f"{dj_set.bpm_min.value:g} - {dj_set.bpm_max.value:g}",
             )
         console.print(table)
         console.print(

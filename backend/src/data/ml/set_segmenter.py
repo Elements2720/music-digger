@@ -401,10 +401,13 @@ class SetSegmenter(IAudioSegmenter):
         """Turn boundaries into passages honoring the min/max passage bounds."""
         edges = [0.0]
         for boundary in boundaries:
-            if 0.0 < boundary < total_duration_seconds:
-                edges.append(boundary)
+            r_b = round(boundary, 3)
+            if 0.0 < r_b < total_duration_seconds:
+                edges.append(r_b)
+        # Always use unrounded total_duration_seconds for the terminal edge;
+        # never round upward past total_duration_seconds.
         edges.append(total_duration_seconds)
-        edges = sorted({round(edge, 3) for edge in edges})
+        edges = sorted(set(edges))
 
         # Merge sections shorter than the minimum into their weaker neighbour
         # (greedily into the previous section; the first into the next).
@@ -429,16 +432,29 @@ class SetSegmenter(IAudioSegmenter):
         # Subdivide long flat regions evenly; equal splits of a >max region
         # always stay >= min because max >= 2 * min by construction.
         passages: list[TimeRange] = []
-        for start, end in pairwise(sections):
+        for s_idx, (start, end) in enumerate(pairwise(sections)):
             span = end - start
             if span <= 0:
                 continue
             parts = max(1, math.ceil(span / self._max_passage - 1e-9))
             step = span / parts
+            is_last_section = s_idx == len(sections) - 2
             for part in range(parts):
                 piece_start = start + part * step
                 piece_end = piece_start + step if part < parts - 1 else end
-                passages.append(TimeRange(round(piece_start, 3), round(piece_end, 3)))
+                is_last_piece = is_last_section and (part == parts - 1)
+
+                p_start = round(piece_start, 3)
+                if is_last_piece:
+                    # NEVER round upward past total_duration_seconds
+                    p_end = min(round(piece_end, 3), total_duration_seconds)
+                    if p_end <= p_start:
+                        p_start = round(max(0.0, p_end - 0.001), 3)
+                else:
+                    p_end = min(round(piece_end, 3), total_duration_seconds)
+
+                if p_end > p_start:
+                    passages.append(TimeRange(p_start, p_end))
         return tuple(passages)
 
 

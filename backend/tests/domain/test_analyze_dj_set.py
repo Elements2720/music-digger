@@ -270,8 +270,8 @@ async def test_full_pipeline_identifies_and_persists(tmp_path) -> None:
 
     # Progress traversed every pipeline stage.
     stages = [event.stage for event in events]
-    assert stages[:3] == ["download", "segment", "features"]
-    assert "identify" in stages and "persist" in stages
+    assert stages[:3] == ["download", "segment", "extract"]
+    assert {"extract", "embed", "match", "identify", "persist"} <= set(stages)
 
     # The temporary download was cleaned up.
     assert not downloaded.audio_path.exists()
@@ -362,3 +362,111 @@ async def test_passage_chunking_still_returns_all_passages(tmp_path) -> None:
     assert len(dj_set.passages) == 2
     assert dj_set.passages[0].embedding is not None
     assert dj_set.passages[1].embedding is not None
+
+
+async def test_incremental_per_passage_progress_emits_1_to_n(tmp_path) -> None:
+    downloaded = _downloaded(tmp_path)
+    ranges = (
+        TimeRange(0.0, 200.0),
+        TimeRange(200.0, 400.0),
+        TimeRange(400.0, 600.0),
+    )
+    use_case, _ = _use_case(
+        tmp_path,
+        downloaded,
+        ranges=ranges,
+        fingerprinter=FakeFingerprinter(),
+    )
+
+    events: list[AnalyzeEvent] = []
+    await use_case.execute(
+        "https://sound.test/set",
+        destination_dir=tmp_path / "cache",
+        progress=events.append,
+    )
+
+    for stage in ("extract", "embed", "match", "identify"):
+        stage_events = [e for e in events if e.stage == stage]
+        assert len(stage_events) == 3, f"stage {stage} should emit for every passage"
+        assert [e.completed for e in stage_events] == [1, 2, 3]
+        assert all(e.total == 3 for e in stage_events)
+        assert all(e.message for e in stage_events)
+
+
+async def test_unchecking_shazam_runs_purely_local_and_fast(tmp_path) -> None:
+    downloaded = _downloaded(tmp_path)
+
+    class TrackingFingerprinter:
+        called = False
+
+        async def identify_async(self, audio: AudioBuffer) -> TrackReference | None:
+            self.called = True
+            return None
+
+    fingerprinter = TrackingFingerprinter()
+    use_case, _ = _use_case(tmp_path, downloaded, fingerprinter=fingerprinter)
+
+    events: list[AnalyzeEvent] = []
+    dj_set = await use_case.execute(
+        "https://sound.test/set",
+        destination_dir=tmp_path / "cache",
+        use_shazam=False,
+        progress=events.append,
+    )
+
+    assert not fingerprinter.called, "Shazam must not be called when use_shazam=False"
+    identify_events = [e for e in events if e.stage == "identify"]
+    assert len(identify_events) == len(dj_set.passages)
+    assert all(not p.exact_id_match for p in dj_set.passages)
+
+
+async def test_shazam_failure_increments_failed_count_in_progress(tmp_path) -> None:
+    downloaded = _downloaded(tmp_path)
+
+    class FailingFingerprinter:
+        async def identify_async(self, audio: AudioBuffer) -> TrackReference | None:
+            return None
+
+    use_case, _ = _use_case(
+        tmp_path, downloaded, fingerprinter=FailingFingerprinter()
+    )
+
+    events: list[AnalyzeEvent] = []
+    await use_case.execute(
+        "https://sound.test/set",
+        destination_dir=tmp_path / "cache",
+        use_comments=False,
+        use_shazam=True,
+        progress=events.append,
+    )
+
+    identify_events = [e for e in events if e.stage == "identify"]
+    assert len(identify_events) == 2
+    assert identify_events[0].failed == 1
+    assert identify_events[1].failed == 2
+    assert "no match / timed out" in identify_events[0].message
+
+
+async def test_analyze_dj_set_resets_circuit_breaker_on_execute(tmp_path) -> None:
+    downloaded = _downloaded(tmp_path)
+
+    class BreakerFingerprinter:
+        def __init__(self) -> None:
+            self.reset_called = False
+
+        def reset_circuit_breaker(self) -> None:
+            self.reset_called = True
+
+        async def identify_async(self, audio: AudioBuffer) -> TrackReference | None:
+            return None
+
+    fingerprinter = BreakerFingerprinter()
+    use_case, _ = _use_case(tmp_path, downloaded, fingerprinter=fingerprinter)
+
+    await use_case.execute(
+        "https://sound.test/set",
+        destination_dir=tmp_path / "cache",
+        use_shazam=False,
+    )
+
+    assert fingerprinter.reset_called is True

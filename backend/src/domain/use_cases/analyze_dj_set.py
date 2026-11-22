@@ -75,6 +75,7 @@ class AnalyzeEvent:
     completed: int
     total: int
     message: str = ""
+    failed: int = 0
 
 
 class AnalyzeDJSet:
@@ -140,6 +141,10 @@ class AnalyzeDJSet:
         progress: Callable[[AnalyzeEvent], None] | None = None,
     ) -> DJSet:
         """Analyze ``source`` and return the persisted :class:`DJSet`."""
+        if self._fingerprinter is not None and hasattr(
+            self._fingerprinter, "reset_circuit_breaker"
+        ):
+            self._fingerprinter.reset_circuit_breaker()
         downloaded = await self._set_downloader.fetch_set(
             source, destination_dir, fetch_comments=use_comments
         )
@@ -151,6 +156,11 @@ class AnalyzeDJSet:
                     "the downloaded set has no duration; cannot segment it"
                 )
             duration = downloaded.duration_seconds
+
+            if self._fingerprinter is not None and hasattr(
+                self._fingerprinter, "reset_circuit_breaker"
+            ):
+                self._fingerprinter.reset_circuit_breaker()
 
             ranges = await asyncio.to_thread(
                 self._audio_segmenter.detect_passages,
@@ -211,8 +221,11 @@ class AnalyzeDJSet:
         """Decode/extract/embed in chunks so RAM holds one batch of windows."""
         loop = asyncio.get_running_loop()
         passages: list[Passage] = []
-        completed = 0
-        for chunk_start in range(0, len(ranges), self._embed_batch_size):
+        extract_completed = 0
+        embed_completed = 0
+        total_passages = len(ranges)
+
+        for chunk_start in range(0, total_passages, self._embed_batch_size):
             chunk = list(ranges[chunk_start : chunk_start + self._embed_batch_size])
             buffers = []
             for passage_range in chunk:
@@ -226,45 +239,71 @@ class AnalyzeDJSet:
                     )
                 )
 
-            features = await asyncio.gather(
-                *[
-                    loop.run_in_executor(executor, self._feature_extractor.extract, b)
-                    for b in buffers
-                ],
-                return_exceptions=True,
-            )
+            tasks = [
+                loop.run_in_executor(executor, self._feature_extractor.extract, b)
+                for b in buffers
+            ]
+            features: list[Any] = []
+            for p_range, fut in zip(chunk, tasks):
+                try:
+                    feature = await fut
+                except Exception as exc:  # noqa: BLE001
+                    feature = exc
+                features.append(feature)
+                extract_completed += 1
+                extracted = _coerce_features(feature)
+                bpm_str = f"{extracted.bpm.value:.0f} BPM" if extracted.bpm else "? BPM"
+                key_str = f", {extracted.key.notation}" if extracted.key else ""
+                self._notify(
+                    progress,
+                    "extract",
+                    extract_completed,
+                    total_passages,
+                    f"{_range_label(p_range)} ({bpm_str}{key_str})",
+                )
 
             vectors = await asyncio.to_thread(self._audio_embedder.embed_batch, buffers)
             # PCM is dead the moment embeddings exist.
             buffers.clear()
 
-            for passage_range, feature, vector in zip(chunk, features, vectors):
+            chunk_passages: list[Passage] = []
+            for p_range, feature, vector in zip(chunk, features, vectors):
                 extracted = _coerce_features(feature)
-                passages.append(
-                    Passage(
-                        time_range=passage_range,
-                        bpm=extracted.bpm,
-                        key=extracted.key,
-                        embedding=vector,
-                    )
+                passage = Passage(
+                    time_range=p_range,
+                    bpm=extracted.bpm,
+                    key=extracted.key,
+                    embedding=vector,
                 )
-                completed += 1
+                chunk_passages.append(passage)
+                embed_completed += 1
                 self._notify(
                     progress,
-                    "features",
-                    completed,
-                    len(ranges),
-                    _range_label(passage_range),
+                    "embed",
+                    embed_completed,
+                    total_passages,
+                    _range_label(p_range),
                 )
+
+            passages.extend(chunk_passages)
             await self._attach_closest_matches(
-                passages, start=len(passages) - len(chunk)
+                passages,
+                start=len(passages) - len(chunk_passages),
+                progress=progress,
+                total=total_passages,
             )
         return passages
 
     async def _attach_closest_matches(
-        self, passages: list[Passage], *, start: int
+        self,
+        passages: list[Passage],
+        *,
+        start: int,
+        progress: Callable[[AnalyzeEvent], None] | None = None,
+        total: int | None = None,
     ) -> None:
         """Fill each new passage's top catalog matches within ±5 BPM."""
+        total_count = total or len(passages)
         for index in range(start, len(passages)):
             passage = passages[index]
             matches: tuple[TrackMatch, ...] = ()
@@ -277,6 +316,17 @@ class AnalyzeDJSet:
                     )
             if matches:
                 passages[index] = replace(passage, closest_matches=matches)
+                top = matches[0]
+                detail = f": top {top.track.display_name} ({top.similarity_percent:.0f}%)"
+            else:
+                detail = ": no close match"
+            self._notify(
+                progress,
+                "match",
+                index + 1,
+                total_count,
+                f"{_range_label(passage.time_range)}{detail}",
+            )
 
     async def _find_closest(self, passage: Passage) -> tuple[TrackMatch, ...]:
         assert passage.embedding is not None
@@ -317,35 +367,45 @@ class AnalyzeDJSet:
             except Exception as exc:  # noqa: BLE001 - LLM failure must not kill analysis
                 # An unconfigured or overloaded LLM must never kill an analysis.
                 LOGGER.warning("LLM tracklist extraction skipped: %s", exc)
-        self._notify(
-            progress,
-            "identify",
-            0,
-            len(passages),
-            f"{len(comment_references)} comment references",
-        )
 
+        total_passages = len(passages)
         identified: list[Passage] = []
-        for passage in passages:
+        failed_count = 0
+
+        for idx, passage in enumerate(passages, start=1):
             identified_passage = self._match_comment_reference(
                 passage, comment_references
             )
-            if (
-                use_shazam
-                and self._fingerprinter is not None
-                and not identified_passage.exact_id_match
-            ):
-                identified_passage = await self._shazam_passage(
-                    downloaded, identified_passage
-                )
+            msg = ""
+            if identified_passage.exact_id_match:
+                msg = f"Comments {idx}/{total_passages}: {identified_passage.exact_id_display_name}"
+            elif use_shazam and self._fingerprinter is not None:
+                if getattr(self._fingerprinter, "is_circuit_open", False):
+                    failed_count += 1
+                    msg = f"Shazam {idx}/{total_passages}: skipped (circuit open)"
+                else:
+                    shazam_result = await self._shazam_passage(
+                        downloaded, identified_passage
+                    )
+                    if shazam_result.exact_id_match:
+                        identified_passage = shazam_result
+                        msg = f"Shazam {idx}/{total_passages}: matched {identified_passage.exact_id_display_name}"
+                    else:
+                        failed_count += 1
+                        msg = f"Shazam {idx}/{total_passages}: no match / timed out"
+            else:
+                msg = f"Passage {idx}/{total_passages}: unidentified"
+
             identified.append(identified_passage)
-        self._notify(
-            progress,
-            "identify",
-            len(passages),
-            len(passages),
-            f"{sum(p.exact_id_match for p in identified)} identified",
-        )
+            self._notify(
+                progress,
+                "identify",
+                idx,
+                total_passages,
+                message=msg,
+                failed=failed_count,
+            )
+
         return identified
 
     def _match_comment_reference(
@@ -393,6 +453,8 @@ class AnalyzeDJSet:
                 channels=1,
             )
             reference = await self._fingerprinter.identify_async(snippet)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 - fingerprinting is best-effort
             LOGGER.warning(
                 "Shazam identification failed for %s: %s", passage.time_range, exc
@@ -416,8 +478,19 @@ class AnalyzeDJSet:
         downloaded: DownloadedSet,
         passages: Sequence[Passage],
     ) -> DJSet:
-        bpms = [p.bpm.value for p in passages if p.bpm is not None]
-        embedding = _mean_embedding([p.embedding for p in passages])
+        duration = downloaded.duration_seconds
+        clamped_passages: list[Passage] = []
+        for p in passages:
+            if duration is not None and p.time_range.end_seconds > duration:
+                start = min(p.time_range.start_seconds, max(0.0, duration - 0.001))
+                clamped_passages.append(
+                    replace(p, time_range=TimeRange(start, duration))
+                )
+            else:
+                clamped_passages.append(p)
+
+        bpms = [p.bpm.value for p in clamped_passages if p.bpm is not None]
+        embedding = _mean_embedding([p.embedding for p in clamped_passages])
         return DJSet(
             id=f"set-{hashlib.sha256(source.encode('utf-8')).hexdigest()[:12]}",
             title=downloaded.title,
@@ -428,7 +501,7 @@ class AnalyzeDJSet:
             bpm_min=BPM(min(bpms)) if bpms else None,
             bpm_max=BPM(max(bpms)) if bpms else None,
             embedding=embedding,
-            passages=tuple(passages),
+            passages=tuple(clamped_passages),
         )
 
     async def _snowball(
@@ -463,11 +536,16 @@ class AnalyzeDJSet:
         completed: int,
         total: int,
         message: str = "",
+        failed: int = 0,
     ) -> None:
         if progress is not None:
             progress(
                 AnalyzeEvent(
-                    stage=stage, completed=completed, total=total, message=message
+                    stage=stage,
+                    completed=completed,
+                    total=total,
+                    message=message,
+                    failed=failed,
                 )
             )
 

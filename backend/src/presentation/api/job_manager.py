@@ -350,6 +350,11 @@ class JobManager:
     async def _run_analyze_set(
         self, job: JobState, container: Any, config: dict[str, Any]
     ) -> None:
+        fingerprinter = getattr(container, "shazam_fingerprinter", None)
+        if fingerprinter is not None and hasattr(
+            fingerprinter, "reset_circuit_breaker"
+        ):
+            fingerprinter.reset_circuit_breaker()
         downloader = container.set_downloader
         settings = container.settings
         cookies_file = (
@@ -362,12 +367,21 @@ class JobManager:
         try:
 
             def on_progress(event: Any) -> None:
+                elapsed = max(time.monotonic() - self._started_monotonic, 1e-6)
+                completed = getattr(event, "completed", 0)
+                speed = (
+                    round(completed / elapsed, 2)
+                    if completed > 0
+                    else None
+                )
                 self._progress(
                     job,
                     stage=event.stage,
-                    processed=event.completed,
+                    processed=completed,
+                    failed=getattr(event, "failed", 0),
                     total=event.total or None,
                     message=event.message,
+                    speed=speed,
                     memory=self._memory(container),
                 )
 

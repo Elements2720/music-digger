@@ -46,17 +46,37 @@ class ShazamFingerprinter(IFingerprinter):
         recognizer_factory: RecognizerFactory | None = None,
         max_concurrency: int = MAX_CONCURRENCY,
         jitter_seconds: float = JITTER_SECONDS,
+        timeout_seconds: float = 15.0,
+        max_consecutive_failures: int = 5,
     ) -> None:
         if max_concurrency < 1:
             raise ValueError("max_concurrency must be at least 1")
         if jitter_seconds < 0:
             raise ValueError("jitter_seconds must not be negative")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures must be at least 1")
         self._recognizer_factory = recognizer_factory or self._default_factory
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._jitter_seconds = jitter_seconds
+        self._timeout_seconds = timeout_seconds
+        self._max_consecutive_failures = max_consecutive_failures
         self._recognizer: Any | None = None
+        self._consecutive_failures: int = 0
+        self._circuit_open: bool = False
 
     # ------------------------------------------------------------------ API
+
+    @property
+    def is_circuit_open(self) -> bool:
+        """True when consecutive timeouts/errors have opened the circuit breaker."""
+        return self._circuit_open
+
+    def reset_circuit_breaker(self) -> None:
+        """Reset the consecutive failure count and close the circuit breaker."""
+        self._consecutive_failures = 0
+        self._circuit_open = False
 
     def compute(self, audio: AudioBuffer) -> str:
         """Stable content fingerprint (sha256 of the PCM bytes)."""
@@ -76,8 +96,14 @@ class ShazamFingerprinter(IFingerprinter):
 
     async def identify_async(self, audio: AudioBuffer) -> TrackReference | None:
         """Recognize one snippet; ``None`` means "no confident match"."""
+        if self._circuit_open:
+            LOGGER.warning("Shazam circuit breaker open; skipping recognition call")
+            return None
+
         try:
             recognizer = self._ensure_recognizer()
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 - missing shazamio degrades to None
             LOGGER.warning("Shazam recognizer unavailable: %s", exc)
             return None
@@ -87,10 +113,44 @@ class ShazamFingerprinter(IFingerprinter):
             if self._jitter_seconds:
                 await asyncio.sleep(random.uniform(0.05, self._jitter_seconds))
             try:
-                result = await self._recognize(recognizer, wav_bytes)
-            except Exception as exc:  # noqa: BLE001 - one bad snippet must not fail the set
-                LOGGER.debug("Shazam recognition failed: %s", exc)
+                result = await asyncio.wait_for(
+                    self._recognize(recognizer, wav_bytes),
+                    timeout=self._timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except TimeoutError:
+                self._consecutive_failures += 1
+                LOGGER.warning(
+                    "Shazam recognition timed out after %.1fs (failure %d/%d)",
+                    self._timeout_seconds,
+                    self._consecutive_failures,
+                    self._max_consecutive_failures,
+                )
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    self._circuit_open = True
+                    LOGGER.warning(
+                        "Shazam circuit breaker opened after %d consecutive failures; skipping subsequent calls",
+                        self._consecutive_failures,
+                    )
                 return None
+            except Exception as exc:  # noqa: BLE001 - one bad snippet must not fail the set
+                self._consecutive_failures += 1
+                LOGGER.debug(
+                    "Shazam recognition failed (failure %d/%d): %s",
+                    self._consecutive_failures,
+                    self._max_consecutive_failures,
+                    exc,
+                )
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    self._circuit_open = True
+                    LOGGER.warning(
+                        "Shazam circuit breaker opened after %d consecutive failures; skipping subsequent calls",
+                        self._consecutive_failures,
+                    )
+                return None
+
+        self._consecutive_failures = 0
         return self._reference_from_result(result)
 
     # ------------------------------------------------------------ internals

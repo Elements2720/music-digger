@@ -159,6 +159,39 @@ def test_dj_set_rejects_passages_past_duration() -> None:
         )
 
 
+def test_dj_set_clamps_passages_within_tolerance() -> None:
+    # 60.01 is within 0.05s tolerance of 60.0: auto-clamps to 60.0
+    dj_set = DJSet(
+        id="set-1",
+        title="Set",
+        passages=(Passage(TimeRange(0.0, 60.01)),),
+        duration_seconds=60.0,
+    )
+    assert len(dj_set.passages) == 1
+    assert dj_set.passages[0].time_range.end_seconds == 60.0
+
+
+def test_dj_set_rejects_passages_beyond_tolerance() -> None:
+    # 60.1 is beyond 0.05s tolerance of 60.0: raises ValueError
+    with pytest.raises(ValueError, match="after the DJ set duration"):
+        DJSet(
+            id="set-1",
+            title="Set",
+            passages=(Passage(TimeRange(0.0, 60.1)),),
+            duration_seconds=60.0,
+        )
+
+
+def test_dj_set_with_passage_clamps_within_tolerance() -> None:
+    dj_set = DJSet(
+        id="set-1",
+        title="Set",
+        duration_seconds=60.0,
+    )
+    updated = dj_set.with_passage(Passage(TimeRange(0.0, 60.02)))
+    assert updated.passages[0].time_range.end_seconds == 60.0
+
+
 def test_dj_set_rejects_bad_values() -> None:
     with pytest.raises(ValueError, match="id"):
         DJSet(id=" ", title="Set")

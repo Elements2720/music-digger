@@ -193,6 +193,54 @@ async def test_analyze_set_cookie_overrides_are_scoped_and_restored() -> None:
     assert snapshot["result"]["set"]["id"] == "set:1"
 
 
+async def test_analyze_set_progress_emits_speed_and_failed() -> None:
+    container = make_container()
+    manager = make_manager(container)
+    stream = manager.stream(FakeRequest())
+    await stream.__anext__()  # initial state
+
+    await manager.start(
+        "analyze-set",
+        {"source": "https://youtube.test/watch?v=1"},
+    )
+    events = []
+    async for frame in stream:
+        event = parse_frame(frame)
+        if event is not None:
+            events.append(event)
+
+    assert [event["type"] for event in events][-1] == "done"
+    progress = [event for event in events if event["type"] == "progress"]
+    assert progress
+    p = progress[0]
+    assert "speed" in p
+    assert p["job"]["stage"] == "analyze"
+    assert p["job"]["processed"] == 1
+    assert p["job"]["total"] == 2
+    assert p["job"]["failed"] == 0
+
+
+async def test_analyze_set_resets_circuit_breaker_on_start() -> None:
+    class FakeShazamWithBreaker:
+        def __init__(self) -> None:
+            self.reset_called = False
+
+        def reset_circuit_breaker(self) -> None:
+            self.reset_called = True
+
+    shazam = FakeShazamWithBreaker()
+    container = make_container()
+    container.shazam_fingerprinter = shazam
+    manager = make_manager(container)
+
+    await manager.start(
+        "analyze-set",
+        {"source": "https://youtube.test/watch?v=1"},
+    )
+    await manager.wait()
+    assert shazam.reset_called is True
+
+
 async def test_seed_llm_job_reports_seed_counts() -> None:
     container = make_container()
     manager = make_manager(container)

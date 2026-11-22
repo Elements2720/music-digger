@@ -1,6 +1,6 @@
-# DigDeeper Local — Codebase Context (Phase 3)
+# DigDeeper Local — Codebase Context (Phase 3 & 4 + GUI)
 
-> **Generated**: 2026-11-21 · **Purpose**: Exhaustive technical handoff for an AI architect to understand the entire current implementation without reading every file.
+> **Generated**: 2026-11-22 · **Purpose**: Exhaustive technical handoff for an AI architect to understand the entire current implementation without reading every file.
 
 ---
 
@@ -12,14 +12,14 @@
 backend/
   pyproject.toml
   src/
-    container.py                                  # Composition Root
+    container.py                                  # Composition Root (wires SQLite, LanceDB, ML, Repositories, Use Cases)
     domain/
       _validation.py                              # Pure validation helpers (stdlib only)
       __init__.py
       entities/
         __init__.py
         track.py                                  # Track, SeedArtist, AudioBuffer, TrackReference, TrackVibe
-        dj_set.py                                 # TrackMatch, Passage, DJSet
+        dj_set.py                                 # TrackMatch, Passage, DJSet, DownloadedSet, SetMatch
         search.py                                 # SearchFilter
       value_objects/
         __init__.py
@@ -28,16 +28,20 @@ backend/
       interfaces/
         __init__.py
         audio_engine.py                           # IAudioDecoder, IFeatureExtractor, IAudioEmbedder, IAudioSegmenter, IFingerprinter, ISetDownloader
-        catalog.py                                # ICatalogProvider, ISeedDiscovery, ISeedCrawler
+        catalog.py                                # ICatalogProvider (search, lookup, crawl_keyword), ISeedDiscovery, ISeedCrawler
         hardware.py                               # IHardwareProbe
         llm.py                                    # ILLMService
         repositories.py                           # ITrackRepository, ISetRepository, ISeedRepository
       use_cases/
         __init__.py
-        build_seed_list.py                        # BuildSeedList
-        dig_similar_tracks.py                     # DigSimilarTracks
-        fetch_catalog_metadata.py                 # FetchCatalogMetadata
-        index_catalog.py                          # IndexCatalog
+        analyze_dj_set.py                         # AnalyzeDJSet (Phase 4: end-to-end DJ set pipeline, live progress)
+        build_seed_list.py                        # BuildSeedList (Deezer BFS + LLM seed generation, CrawlProgress)
+        crawl_itunes_seeds.py                     # CrawlITunesSeeds (Phase B: iTunes techno/label keyword crawler)
+        dig_similar_tracks.py                     # DigSimilarTracks (track-to-track similarity, harmonic/BPM filter)
+        fetch_catalog_metadata.py                 # FetchCatalogMetadata (iTunes artist metadata harvester)
+        find_similar_for_set.py                   # FindSimilarForSet (set-to-set & passage-to-track similarity)
+        index_catalog.py                          # IndexCatalog (streaming audio decode, librosa analysis, CLAP embed)
+        vibe_search.py                            # VibeSearch (natural language query -> CLAP text embedding)
     data/
       __init__.py
       errors.py                                   # DataLayerError hierarchy
@@ -46,99 +50,146 @@ backend/
         __init__.py
         local/
           __init__.py
-          sqlite_client.py                        # SQLiteClient + SCHEMA DDL
-          lancedb_client.py                       # LanceDBClient + VectorMatch
+          sqlite_client.py                        # SQLiteClient + Schema DDL (tracks, seed_artists, dj_sets, set_passages)
+          lancedb_client.py                       # LanceDBClient + VectorMatch (disk-backed IVF-PQ cosine index)
         remote/
           __init__.py
-          artist_parser.py                        # parse_collaborators()
-          deezer_seed_crawler.py                  # DeezerSeedCrawler (ISeedDiscovery + ISeedCrawler)
-          itunes_provider.py                      # ITunesProvider (ICatalogProvider)
+          artist_parser.py                        # parse_collaborators() (remix/feature artist extractor)
+          deezer_seed_crawler.py                  # DeezerSeedCrawler (BFS discovery with live CrawlProgress)
+          itunes_provider.py                      # ITunesProvider (18 req/min token bucket, crawl_keyword, snowballing)
           rate_limiter.py                         # AsyncTokenBucket, exponential_backoff, retry_after_seconds
+          shazam_client.py                        # ShazamFingerprinter (15s timeout, circuit breaker, CancelledError propagation)
+          ytdlp_downloader.py                     # YtDlpSetDownloader (yt-dlp set streaming, browser cookies, comments)
       llm/
         __init__.py
-        multi_llm_client.py                       # MultiLLMClient (ILLMService)
-      ml/
-        __init__.py
-        clap_embedder.py                          # ClapAudioEmbedder (IAudioEmbedder)
-        ffmpeg_decoder.py                         # FFmpegAudioDecoder (IAudioDecoder)
-        hardware_probe.py                         # HardwareProbe (IHardwareProbe)
-        librosa_analyzer.py                       # LibrosaFeatureExtractor (IFeatureExtractor) + analyze_pcm
+        multi_llm_client.py                       # MultiLLMClient (ILLMService: OpenAI-compatible local LLM client)
       mappers/
         __init__.py
         seed_mapper.py                            # seed_to_row / row_to_seed
+        set_mapper.py                             # set_to_row / row_to_set / passage_to_row / row_to_passage
         track_mapper.py                           # track_to_row / row_to_track / track_to_vector_row
+      ml/
+        __init__.py
+        clap_embedder.py                          # ClapAudioEmbedder (laion/clap-htsat-unfused 512-dim, FP16 CUDA/CPU)
+        ffmpeg_decoder.py                         # FFmpegAudioDecoder (f32le 48kHz mono pipes, RAM-only, no disk writes)
+        hardware_probe.py                         # HardwareProbe (CUDA/VRAM/RAM/FFmpeg probe)
+        librosa_analyzer.py                       # LibrosaFeatureExtractor (BPM tempo folding, CQT Camelot key detection)
+        set_segmenter.py                          # SetSegmenter (checkerboard novelty curve, strictly clamped passage boundaries)
       repositories/
         __init__.py
         seed_repository.py                        # SQLiteSeedRepository (ISeedRepository)
-        track_repository.py                       # HybridTrackRepository (ITrackRepository)
+        set_repository.py                         # SQLiteSetRepository (ISetRepository: SQLite + LanceDB set vectors)
+        track_repository.py                       # HybridTrackRepository (ITrackRepository: SQLite metadata + LanceDB vectors)
     presentation/
       __init__.py
       cli/
         __init__.py
         __main__.py                               # python -m presentation.cli
-        commands.py                               # Typer `dig` app
+        commands.py                               # Typer `dig` CLI (ASCII only, rich progress)
       api/
-        __init__.py                               # (placeholder for later phase)
-        routers/__init__.py
-        schemas/__init__.py
+        __init__.py
+        app.py                                    # FastAPI application factory & static file mounting
+        job_manager.py                            # JobManager (single-job concurrency, SSE streaming, turbo mode, telemetry)
+        schemas.py                                # Pydantic schemas, JobKind literal
+        routes/
+          __init__.py
+          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig)
+          hardware.py                             # /api/hardware endpoints (GPU, VRAM, RAM, FFmpeg probe)
+          jobs.py                                 # /api/jobs endpoints (start, cancel, snapshot, SSE stream)
+          sets.py                                 # /api/sets endpoints (DJ set analysis, passage queries, similar sets)
   tests/
     domain/
-      test_domain_purity.py                       # AST import scan
-      test_bpm.py
-      test_camelot_key.py
-      test_time_range.py
-      test_embedding_vector.py
+      test_domain_purity.py                       # AST import scan: enforces stdlib-only imports in domain/
+      test_analyze_dj_set.py                      # Phase 4 use case unit tests (per-passage progress, fast CLAP default)
       test_audio_features.py
-      test_track_entities.py
-      test_dj_set_entities.py
-      test_search_filter.py
+      test_bpm.py
+      test_build_seed_list.py                     # Seed list building + CrawlProgress tests
+      test_camelot_key.py
+      test_crawl_itunes_seeds.py                  # iTunes techno keyword crawler tests
       test_dig_similar_tracks.py
+      test_dj_set_entities.py                     # DJ set entity tests + 0.05s tolerance auto-clamp tests
+      test_embedding_vector.py
+      test_find_similar_for_set.py
       test_index_catalog.py
       test_interfaces.py
+      test_search_filter.py
+      test_set_entities.py
+      test_time_range.py
+      test_track_entities.py
       test_use_cases.py
+      test_vibe_search.py
     data/
       conftest.py
-      fakes.py                                    # Shared test doubles
+      fakes.py                                    # Shared test doubles (FakeClock, MockTransport)
       test_artist_parser.py
       test_clap_embedder.py
       test_deezer_crawler.py
       test_ffmpeg_decoder.py
       test_hardware_probe.py
-      test_itunes_provider.py
+      test_itunes_provider.py                     # iTunes provider tests (18 req/min, crawl_keyword, token bucket)
       test_librosa_analyzer.py
       test_llm_client.py
       test_rate_limiter.py
+      test_set_repository.py
+      test_set_segmenter.py                       # Segmenter tests (boundary detection, non-integer duration clamp)
+      test_shazam_client.py                       # Shazam tests (timeout, circuit breaker, CancelledError propagation)
       test_sqlite_seed_repository.py
       test_track_repository.py
+      test_ytdlp_downloader.py
+    presentation/
+      api_fakes.py                                # Duck-typed container & fake services for API testing
+      test_api_routes.py                          # FastAPI endpoint integration tests
+      test_job_manager.py                         # JobManager execution, SSE streaming, turbo mode, speed/telemetry
+
+frontend/
+  index.html                                      # SPA single-page shell
+  css/
+    style.css                                     # Minimalist dark theme, responsive grid, progress tracks, #job-log
+  js/
+    api.js                                        # Fetch API client & SSE event source subscription
+    format.js                                     # Number/BPM/Camelot/Time formatting utilities
+    main.js                                       # Router & view switcher
+    player.js                                     # Audio preview player controller
+    state.js                                      # Lightweight global reactive state
+    ui.js                                         # DOM construction helpers
+    views/
+      dig.js                                      # Dig view (track-to-track similarity, audio preview, harmonic filter)
+      run.js                                      # Run view (job configuration, live progress, speed, recent messages log)
+      sets.js                                     # Sets view (analyzed DJ set browser, tracklist, passage timeline)
+      stats.js                                    # Stats view (catalog & seed analytics)
 ```
 
 ### 1.2 Python Version & Key Dependencies
 
 | Item | Spec |
 |---|---|
-| **Python** | `>= 3.11` |
+| **Python** | `>= 3.11` (tested on `3.13`) |
 | **Build** | `setuptools >= 68`, `package-dir = {"" = "src"}` |
 | **Entry point** | `dig = presentation.cli.commands:main` |
 | **torch source** | CUDA wheels from `https://download.pytorch.org/whl/cu124` via `[tool.uv.sources]` |
 
 **Runtime dependencies**:
 
-| Package | Version |
-|---|---|
-| `aiosqlite` | >= 0.22.1 |
-| `httpx` | >= 0.28.1 |
-| `lancedb` | >= 0.41.0 |
-| `librosa` | >= 0.11.0 |
-| `numpy` | >= 1.26 |
-| `pyarrow` | >= 26.0.1 |
-| `pylance` | >= 14.0.3 |
-| `python-dotenv` | >= 1.2.4 |
-| `rich` | >= 15.0.0 |
-| `torch` | >= 2.6.0 (CUDA 12.4 wheels) |
-| `transformers` | >= 4.45 |
-| `typer` | >= 0.29.2 |
+| Package | Version | Purpose |
+|---|---|---|
+| `aiosqlite` | >= 0.22.1 | Async SQLite driver |
+| `fastapi` | >= 0.115.0 | Web API framework |
+| `httpx` | >= 0.28.1 | Async HTTP client with HTTP/2 and MockTransport support |
+| `lancedb` | >= 0.41.0 | Disk-backed vector database |
+| `librosa` | >= 0.11.0 | Audio feature analysis (BPM tempo folding, CQT Camelot key) |
+| `numpy` | >= 1.26 | Numerical array manipulation |
+| `pyarrow` | >= 26.0.1 | Columnar data representation for LanceDB |
+| `pylance` | >= 14.0.3 | LanceDB query engine |
+| `python-dotenv` | >= 1.2.4 | Environment variable loader |
+| `rich` | >= 15.0.0 | Terminal formatting and progress bars |
+| `shazamio` | >= 0.8.0 | Public Shazam endpoint client for exact-ID fingerprinting |
+| `torch` | >= 2.6.0 | PyTorch CUDA 12.4 runtime |
+| `transformers` | >= 4.45 | Hugging Face CLAP model loader (`laion/clap-htsat-unfused`) |
+| `typer` | >= 0.29.2 | CLI framework |
+| `uvicorn` | >= 0.32.0 | ASGI web server |
+| `yt-dlp` | >= 2024.12.0 | Audio streaming and set download from YouTube/SoundCloud/Mixcloud |
 
-**Dev dependencies**: `pytest >= 8.0, < 9`, `pytest-asyncio >= 1.5.0`
+**Dev dependencies**: `pytest >= 8.0, < 9`, `pytest-asyncio >= 1.5.0`, `ruff`
 
 **pytest config**: `pythonpath = ["src"]`, `testpaths = ["tests"]`, `asyncio_mode = "auto"`, `asyncio_default_fixture_loop_scope = "function"`, `addopts = ["-ra", "--strict-markers", "--strict-config"]`
 
@@ -146,34 +197,39 @@ backend/
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEVICE` | `cuda` | torch device |
+| `DEVICE` | `cuda` | torch device (`cuda` or `cpu`) |
 | `DEVICE_FP16` | `true` | Enable FP16 inference |
 | `STORAGE_DIR` | `./storage` | Relative to repo root |
 | `LOG_LEVEL` | `INFO` | Python logging level |
+| `HOST` | `127.0.0.1` | Web GUI host |
+| `PORT` | `8123` | Web GUI port |
 | `LLM_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI-compatible endpoint |
 | `LLM_API_KEY` | `local` | Bearer token |
 | `LLM_FAST_MODEL` | `qwen2.5:7b-instruct` | Model for seed/vibe/tracklist |
 | `LLM_AUDIO_MODEL` | `qwen2-audio:7b` | (Future) audio model |
-| `CLAP_MODEL_ID` | `laion/clap-htsat-unfused` | HuggingFace model id (do NOT use `laion/larger_clap_music` — untrained audio tower) |
+| `CLAP_MODEL_ID` | `laion/clap-htsat-unfused` | HuggingFace model id (512-dim) |
 | `CLAP_BATCH_SIZE` | `16` | Micro-batch size (clamped to 32) |
-| `CLAP_MAX_VRAM_GB` | `4.0` | VRAM budget |
+| `CLAP_MAX_VRAM_GB` | `4.0` | VRAM budget (GTX 1660 Super target) |
 | `ANALYSIS_MAX_WORKERS` | `4` | ProcessPoolExecutor workers (ceiling 6) |
 | `PREVIEW_SECONDS` | `30` | Preview length |
-| `TARGET_SAMPLE_RATE` | `48000` | PCM sample rate |
+| `TARGET_SAMPLE_RATE` | `48000` | PCM sample rate for CLAP |
 | `PREVIEW_CONCURRENCY` | `16` | Download semaphore (ceiling 16) |
 | `PREVIEW_TIMEOUT_SECONDS` | `30` | HTTP download timeout |
 | `FFMPEG_TIMEOUT_SECONDS` | `60` | Per-subprocess timeout |
 | `INDEX_QUEUE_MAXSIZE` | `64` | asyncio.Queue bound between decode and embed |
-| `ITUNES_RATE_LIMIT_PER_MINUTE` | `18` | Hard ceiling ≤ 18 |
+| `ITUNES_RATE_LIMIT_PER_MINUTE` | `18` | Hard ceiling <= 18 |
 | `ITUNES_COUNTRY` | `US` | Storefront |
 | `ITUNES_TIMEOUT_SECONDS` | `30` | HTTP timeout |
-| `DEEZER_RATE_LIMIT_PER_SEC` | `8` | Hard ceiling ≤ 8 |
+| `DEEZER_RATE_LIMIT_PER_SEC` | `8` | Hard ceiling <= 8 |
 | `DEEZER_TIMEOUT_SECONDS` | `30` | HTTP timeout |
 | `SEED_CRAWL_MAX_DEPTH` | `2` | BFS depth for related artists |
 | `CATALOG_ELECTRONIC_RATIO` | `0.75` | Target 75 / 25 split |
 | `LLM_TIMEOUT_SECONDS` | `120` | Chat-completions timeout |
 | `SQLITE_PATH` | `./storage/app.db` | Database file |
 | `LANCEDB_PATH` | `./storage/lancedb` | Vector directory |
+| `SET_CACHE_DIR` | `./storage/cache/sets` | DJ set temporary audio storage |
+| `YTDLP_COOKIES_FILE` | `None` | Path to Netscape cookies.txt |
+| `YTDLP_COOKIES_FROM_BROWSER` | `None` | Browser profile for cookies (firefox, chrome, edge...) |
 
 ---
 
@@ -183,67 +239,67 @@ backend/
 
 | Function | Signature | Behavior |
 |---|---|---|
-| `require_str` | `(value, field, *, allow_empty=False) → str` | Strip, reject non-str / empty |
-| `optional_str` | `(value \| None, field) → str \| None` | None pass-through, else require_str |
-| `require_float` | `(value, field) → float` | Reject bool/non-numeric/non-finite |
-| `require_int` | `(value, field) → int` | Reject bool |
-| `require_bool` | `(value, field) → bool` | Strict bool |
-| `freeze_tuple` | `(value, field, expected_type=None) → tuple[T, ...]` | Freeze iterable, optional type check |
+| `require_str` | `(value, field, *, allow_empty=False) -> str` | Strip, reject non-str / empty |
+| `optional_str` | `(value | None, field) -> str | None` | None pass-through, else require_str |
+| `require_float` | `(value, field) -> float` | Reject bool/non-numeric/non-finite |
+| `require_int` | `(value, field) -> int` | Reject bool |
+| `require_bool` | `(value, field) -> bool` | Strict bool |
+| `freeze_tuple` | `(value, field, expected_type=None) -> tuple[T, ...]` | Freeze iterable, optional type check |
 
 ### 2.2 Value Objects (`domain/value_objects/`)
 
 #### `BPM` (frozen, slotted, ordered)
 | Field | Type | Constraint |
 |---|---|---|
-| `value` | `float` | 40.0 ≤ value ≤ 220.0 |
+| `value` | `float` | 40.0 <= value <= 220.0 |
 
-Methods: `bpm` (property alias), `is_close_to(other, tolerance=1.0) → bool`
+Methods: `bpm` (property alias), `is_close_to(other, tolerance=1.0) -> bool`
 
 #### `CamelotKey` (frozen, slotted)
 | Field | Type | Constraint |
 |---|---|---|
 | `notation` | `str` | Regex `^[1-9]|1[0-2][AB]$`, uppercased + stripped |
 
-Properties: `number → int`, `letter → str`, `value → str`, `key → str`
-Methods: `is_harmonic_compatible(other) → bool` — same key, same number (relative major/minor), ±1 on same side with 12↔1 wrap.
+Properties: `number -> int`, `letter -> str`, `value -> str`, `key -> str`
+Methods: `is_harmonic_compatible(other) -> bool` — same key, same number (relative major/minor), +-1 on same side with 12<->1 wrap.
 
 #### `TimeRange` (frozen, slotted, ordered)
 | Field | Type | Constraint |
 |---|---|---|
-| `start_seconds` | `float` | ≥ 0 |
+| `start_seconds` | `float` | >= 0 |
 | `end_seconds` | `float` | > start_seconds |
 
-Properties: `duration_seconds`. Methods: `contains(seconds) → bool`, `overlaps(other) → bool`
+Properties: `duration_seconds`. Methods: `contains(seconds) -> bool`, `overlaps(other) -> bool`
 
 #### `EmbeddingVector` (frozen, slotted)
 | Field | Type | Constraint |
 |---|---|---|
 | `values` | `tuple[float, ...]` | Non-empty, all finite |
-| `dimension` | `int \| None` | Inferred from values if omitted; must match if supplied |
+| `dimension` | `int | None` | Inferred from values if omitted; must match if supplied |
 
-Methods: `from_sequence(cls, values, *, expected_dimension=None)`, `validate_dimension(expected)`, `cosine_similarity(other) → float` (pure-Python `[-1.0, 1.0]`), `__len__`
+Methods: `from_sequence(cls, values, *, expected_dimension=None)`, `validate_dimension(expected)`, `cosine_similarity(other) -> float` (pure-Python `[-1.0, 1.0]`), `__len__`
 
 #### `AudioFeatures` (frozen, slotted)
 | Field | Type |
 |---|---|
-| `bpm` | `BPM \| None` |
-| `key` | `CamelotKey \| None` |
+| `bpm` | `BPM | None` |
+| `key` | `CamelotKey | None` |
 
 #### `HardwareInfo` (frozen, slotted)
 | Field | Type |
 |---|---|
-| `torch_version` | `str \| None` |
+| `torch_version` | `str | None` |
 | `cuda_available` | `bool` (default False) |
-| `cuda_version` | `str \| None` |
-| `gpu_name` | `str \| None` |
-| `vram_total_mb` | `int \| None` |
-| `vram_free_mb` | `int \| None` |
-| `ram_total_mb` | `int \| None` |
-| `ram_free_mb` | `int \| None` |
-| `ffmpeg_path` | `str \| None` |
-| `ffmpeg_version` | `str \| None` |
+| `cuda_version` | `str | None` |
+| `gpu_name` | `str | None` |
+| `vram_total_mb` | `int | None` |
+| `vram_free_mb` | `int | None` |
+| `ram_total_mb` | `int | None` |
+| `ram_free_mb` | `int | None` |
+| `ffmpeg_path` | `str | None` |
+| `ffmpeg_version` | `str | None` |
 
-Properties: `has_ffmpeg`, `gpu_ready`. Methods: `vram_summary() → str`, `ram_summary() → str`
+Properties: `has_ffmpeg`, `gpu_ready`. Methods: `vram_summary() -> str`, `ram_summary() -> str`
 
 ### 2.3 Entities (`domain/entities/`)
 
@@ -253,33 +309,33 @@ Properties: `has_ffmpeg`, `gpu_ready`. Methods: `vram_summary() → str`, `ram_s
 | `id` | `str` | *required* |
 | `title` | `str` | *required* |
 | `artist` | `str` | *required* |
-| `duration_seconds` | `float \| None` | `None` |
-| `bpm` | `BPM \| None` | `None` (auto-wraps raw float) |
-| `key` | `CamelotKey \| None` | `None` (auto-wraps raw string) |
-| `genre` | `str \| None` | `None` |
-| `release_year` | `int \| None` | `None` (1900–2100) |
-| `isrc` | `str \| None` | `None` |
-| `preview_url` | `str \| None` | `None` |
-| `artwork_url` | `str \| None` | `None` |
-| `album` | `str \| None` | `None` |
-| `store_url` | `str \| None` | `None` |
+| `duration_seconds` | `float | None` | `None` |
+| `bpm` | `BPM | None` | `None` (auto-wraps raw float) |
+| `key` | `CamelotKey | None` | `None` (auto-wraps raw string) |
+| `genre` | `str | None` | `None` |
+| `release_year` | `int | None` | `None` (1900-2100) |
+| `isrc` | `str | None` | `None` |
+| `preview_url` | `str | None` | `None` |
+| `artwork_url` | `str | None` | `None` |
+| `album` | `str | None` | `None` |
+| `store_url` | `str | None` | `None` |
 | `source` | `str` | `"unknown"` |
-| `external_id` | `str \| None` | `None` |
-| `embedding` | `EmbeddingVector \| None` | `None` |
+| `external_id` | `str | None` | `None` |
+| `embedding` | `EmbeddingVector | None` | `None` |
 
-Properties: `track_id`, `duration`, `display_name`. Methods: `with_embedding(EmbeddingVector) → Track`
+Properties: `track_id`, `duration`, `display_name`. Methods: `with_embedding(EmbeddingVector) -> Track`
 
 #### `SeedArtist` (frozen, slotted)
 | Field | Type | Default |
 |---|---|---|
 | `name` | `str` | *required* |
-| `priority_score` | `float` | *required* (0.0–1.0) |
+| `priority_score` | `float` | *required* (0.0-1.0) |
 | `category` | `Literal["electronic", "general"]` | *required* |
 | `status` | `Literal["pending", "fetched", "failed"]` | `"pending"` |
 | `source` | `str` | `"llm"` |
-| `external_id` | `str \| None` | `None` |
+| `external_id` | `str | None` | `None` |
 
-Properties: `is_pending`. Methods: `with_status(status) → SeedArtist`
+Properties: `is_pending`. Methods: `with_status(status) -> SeedArtist`
 
 #### `AudioBuffer` (frozen, slotted)
 | Field | Type | Constraint |
@@ -294,15 +350,15 @@ Properties: `size_bytes`
 |---|---|---|
 | `artist` | `str` | *required* |
 | `title` | `str` | *required* |
-| `timestamp` | `TimeRange \| None` | `None` |
-| `confidence` | `float` | `1.0` (0.0–1.0) |
+| `timestamp` | `TimeRange | None` | `None` |
+| `confidence` | `float` | `1.0` (0.0-1.0) |
 
 #### `TrackVibe` (frozen, slotted)
 | Field | Type | Default |
 |---|---|---|
 | `tags` | `tuple[str, ...]` | *required* (deduplicated case-fold) |
 | `mood` | `str` | *required* |
-| `energy` | `float` | *required* (0.0–1.0) |
+| `energy` | `float` | *required* (0.0-1.0) |
 | `description` | `str` | `""` |
 
 #### `TrackMatch` (frozen, slotted)
@@ -312,41 +368,77 @@ Properties: `size_bytes`
 | `similarity_score` | `float` | *required* (-1.0 to 1.0) |
 | `is_exact_id` | `bool` | `False` |
 
-Property: `similarity_percent → int` — `max(0, min(1, score)) * 100`, rounded.
+Property: `similarity_percent -> float` — `round(max(0.0, min(1.0, score)) * 100, 1)`, keeping one decimal place so near-perfect cosine matches do not collapse to identical scores.
 
 #### `Passage` (frozen, slotted)
 | Field | Type | Default |
 |---|---|---|
 | `time_range` | `TimeRange` | *required* |
-| `bpm` | `BPM \| None` | `None` |
-| `key` | `CamelotKey \| None` | `None` |
+| `bpm` | `BPM | None` | `None` |
+| `key` | `CamelotKey | None` | `None` |
 | `exact_id_match` | `bool` | `False` |
-| `closest_matches` | `tuple[TrackMatch, ...]` | `()` (auto-sorted descending) |
+| `closest_matches` | `tuple[TrackMatch, ...]` | `()` (auto-sorted descending by similarity) |
+| `exact_id_title` | `str | None` | `None` |
+| `exact_id_artist` | `str | None` | `None` |
+| `exact_id_source` | `Literal["shazam", "comments"] | None` | `None` |
+| `embedding` | `EmbeddingVector | None` | `None` |
 
-Properties: `best_match`, `exact_match`
+Properties: `best_match`, `exact_match`, `exact_id_display_name`. Methods: `with_embedding(EmbeddingVector) -> Passage`
 
 #### `DJSet` (frozen, slotted)
 | Field | Type | Default |
 |---|---|---|
 | `id` | `str` | *required* |
 | `title` | `str` | *required* |
-| `source_url` | `str \| None` | `None` |
+| `source_url` | `str | None` | `None` |
 | `passages` | `tuple[Passage, ...]` | `()` |
-| `duration_seconds` | `float \| None` | `None` (validates passages fit within) |
+| `duration_seconds` | `float | None` | `None` |
+| `artist` | `str | None` | `None` |
+| `thumbnail_url` | `str | None` | `None` |
+| `bpm_min` | `BPM | None` | `None` |
+| `bpm_max` | `BPM | None` | `None` |
+| `embedding` | `EmbeddingVector | None` | `None` (L2-normalized mean passage vector) |
 
-Properties: `set_id`, `passage_count`. Methods: `ordered_passages()`, `passage_at(seconds)`, `with_passage(Passage)`
+**Invariant & Tolerance**: In `__post_init__`, validates passage boundaries against `duration_seconds` with a `0.05s` floating-point tolerance. If `duration < end <= duration + 0.05`, the passage is automatically clamped to `TimeRange(start, duration)`. If `end > duration + 0.05`, `ValueError` is raised.
+
+Properties: `set_id`, `passage_count`. Methods: `ordered_passages()`, `passage_at(seconds)`, `with_passage(Passage)`, `with_embedding(EmbeddingVector)`.
+
+#### `DownloadedSet` (frozen, slotted)
+| Field | Type | Default |
+|---|---|---|
+| `audio_path` | `Path` | *required* |
+| `title` | `str` | *required* |
+| `duration_seconds` | `float | None` | `None` |
+| `source_url` | `str | None` | `None` |
+| `artist` | `str | None` | `None` |
+| `thumbnail_url` | `str | None` | `None` |
+| `description` | `str` | `""` |
+| `comments` | `tuple[str, ...]` | `()` |
+| `is_temporary` | `bool` | `True` |
+
+#### `SetMatch` (frozen, slotted)
+| Field | Type | Default |
+|---|---|---|
+| `dj_set` | `DJSet` | *required* |
+| `similarity_score` | `float` | *required* (-1.0 to 1.0) |
+
+Property: `similarity_percent -> float`
 
 #### `SearchFilter` (frozen, slotted)
 | Field | Type | Default |
 |---|---|---|
-| `bpm_min` | `float \| None` | `None` |
-| `bpm_max` | `float \| None` | `None` |
+| `bpm_min` | `float | None` | `None` |
+| `bpm_max` | `float | None` | `None` |
 | `camelot_keys` | `tuple[CamelotKey, ...]` | `()` (deduplicated) |
 | `exclude_heard` | `bool` | `False` |
-| `genre_filter` | `str \| None` | `None` |
-| `limit` | `int` | `50` (1–500) |
+| `genre_filter` | `str | None` | `None` |
+| `limit` | `int` | `50` (1-500) |
 
-Methods: `matches(track, heard_ids=frozenset()) → bool` — applies all constraints.
+Methods: `matches(track, heard_ids=frozenset()) -> bool`
+
+#### Event Dataclasses (frozen, slotted)
+- `CrawlProgress`: `stage: str`, `name: str`, `depth: int | None`, `found: int`
+- `AnalyzeEvent`: `stage: str`, `completed: int`, `total: int`, `message: str = ""`, `failed: int = 0`
 
 ### 2.4 Interfaces (`domain/interfaces/`)
 
@@ -374,17 +466,22 @@ def embed_text(self, query: str) -> EmbeddingVector  # default raises NotImpleme
 #### `IAudioSegmenter` (ABC)
 ```python
 def plan_segments(self, total_duration_seconds: float, *, window_seconds=30.0, hop_seconds=15.0) -> Sequence[TimeRange]
+def detect_passages(self, path: Path, total_duration_seconds: float) -> Sequence[TimeRange]
 ```
 
 #### `IFingerprinter` (ABC)
 ```python
 def compute(self, audio: AudioBuffer) -> str
 def identify(self, audio: AudioBuffer) -> Track | None
+def identify_async(self, audio: AudioBuffer) -> Coroutine[Any, Any, TrackReference | None]
+def reset_circuit_breaker(self) -> None
 ```
 
 #### `ISetDownloader` (ABC)
 ```python
 async def download(self, url: str, destination: Path) -> Path
+async def fetch_set(self, source: str, destination_dir: Path, *, fetch_comments: bool = True) -> DownloadedSet
+def set_cookie_overrides(self, cookies_file: Path | None = None, cookies_from_browser: str | None = None) -> None
 ```
 
 #### `ICatalogProvider` (ABC)
@@ -394,11 +491,12 @@ async def search_tracks(self, query: str, *, limit=25) -> Sequence[Track]
 async def lookup_track(self, provider_track_id: str) -> Track | None
 async def list_artist_tracks(self, artist_name: str, *, limit=50) -> Sequence[Track]
 async def fetch_preview(self, track: Track) -> bytes | None
+async def crawl_keyword(self, keyword: str, *, limit: int = 200, expand_compilations: bool = True) -> Sequence[Track]
 ```
 
 #### `ISeedDiscovery` (ABC)
 ```python
-async def discover(self, *, electronic_limit=1000, general_limit=300, max_depth=2) -> Sequence[SeedArtist]
+async def discover(self, *, electronic_limit=1000, general_limit=300, max_depth=2, progress=None) -> Sequence[SeedArtist]
 ```
 
 #### `ISeedCrawler` (ABC)
@@ -442,6 +540,7 @@ async def get_by_id(self, set_id: str) -> DJSet | None
 async def list_all(self, limit=20) -> Sequence[DJSet]
 async def delete(self, set_id: str) -> bool
 async def count(self) -> int
+async def find_similar_sets(self, embedding: EmbeddingVector, *, limit=12) -> Sequence[SetMatch]
 ```
 
 #### `ISeedRepository` (ABC)
@@ -458,31 +557,52 @@ async def count(self) -> int
 
 ### 2.5 Use Cases (`domain/use_cases/`)
 
+#### `AnalyzeDJSet`
+- **Dependencies**: `ISetDownloader`, `IAudioSegmenter`, `IAudioDecoder`, `IFeatureExtractor`, `IAudioEmbedder`, `ITrackRepository`, `ISetRepository`, `ISeedRepository`, `IFingerprinter | None`, `ILLMService | None`.
+- **Entry**: `async execute(source, destination_dir=..., use_shazam=True, use_comments=True, keep_audio=False, progress=None) -> DJSet`
+- **Flow**:
+  1. `download`: Streams audio file/URL to temporary disk storage via `ISetDownloader.fetch_set`.
+  2. `segment`: Calls `IAudioSegmenter.detect_passages` to partition the set into coherent musical passages.
+  3. `extract`: Emits per-passage `1/N .. N/N` feature extraction events (BPM & Camelot key) processed via bounded `ProcessPoolExecutor`.
+  4. `embed`: Decodes 30s centered core windows, computes CLAP embeddings in micro-batches (`<= 32`), frees raw PCM immediately, emits per-passage `1/N .. N/N` embed events.
+  5. `match`: Queries vector index for top catalog matches per passage within +-5 BPM, emits per-passage `1/N .. N/N` match events.
+  6. `identify`: First matches timestamps against comment tracklists (LLM parsed). For unidentified passages, calls `IFingerprinter.identify_async` (Shazam) under a 15s timeout with circuit breaker protection; emits per-passage `1/N .. N/N` identify events. Fast CLAP default runs instantly when `use_shazam=False`.
+  7. `persist`: Clamps any boundary exceeding duration before creating `DJSet`, saves entity and LanceDB set embedding, auto-snowballs discovered artist names into high-priority seeds, and cleans up temporary set audio unless `keep_audio=True`.
+
 #### `BuildSeedList`
 - **Dependencies**: `ISeedDiscovery | None`, `ISeedRepository`, `ILLMService | None`
-- **Entry**: `async execute(*, electronic_limit=1000, general_limit=300, max_depth=2, use_deezer=True, llm_genres=(), llm_count=0, exclude_artists=()) → BuildSeedListResult`
-- **Flow**: Optionally runs Deezer BFS discovery → persists via `record_discovery` (priority bump on rediscovery). Optionally asks LLM for seeds → persists via `upsert_many`. Returns counts.
-- **Result**: `BuildSeedListResult(discovered, llm_generated, written, electronic_total, general_total)`
+- **Entry**: `async execute(*, electronic_limit=1000, general_limit=300, max_depth=2, use_deezer=True, llm_genres=(), llm_count=0, exclude_artists=(), progress=None) -> BuildSeedListResult`
+- **Flow**: Optionally runs Deezer BFS discovery with live `CrawlProgress` events -> persists via `record_discovery` (priority bump on rediscovery). Optionally asks LLM for seeds -> persists via `upsert_many`. Emits final `"writing"` progress event.
+
+#### `CrawlITunesSeeds`
+- **Dependencies**: `ICatalogProvider`, `ITrackRepository`, `ISeedRepository`
+- **Entry**: `async execute(*, terms=..., tracks_per_term=200, expand_compilations=True, save_tracks=True, progress=None) -> CrawlITunesResult`
+- **Flow**: Iterates keyword terms (e.g. techno labels, genres, artists) -> calls `crawl_keyword()` -> parses collaborators/remixers -> upserts new seed artists with electronic priority -> optionally persists catalog tracks.
 
 #### `DigSimilarTracks`
 - **Dependencies**: `ITrackRepository`
-- **Entry**: `async execute(track_id, search_filter=None, *, bpm_tolerance=None, harmonic=False) → DigResult`
-- **Flow**: Loads reference by id → validates embedding exists → builds effective filter (intersects BPM tolerance window, expands Camelot keys if harmonic) → over-fetches by 1 from vector index → strips reference id → trims to limit.
-- **Errors**: `TrackNotFoundError`, `TrackNotEmbeddedError`
-- **Result**: `DigResult(reference: Track, matches: tuple[TrackMatch, ...])`
+- **Entry**: `async execute(track_id, search_filter=None, *, bpm_tolerance=None, harmonic=False) -> DigResult`
+- **Flow**: Loads reference by id -> validates embedding exists -> builds effective filter (intersects BPM tolerance window, expands Camelot keys if harmonic) -> over-fetches by 1 from vector index -> strips reference id -> trims to limit.
 
 #### `FetchCatalogMetadata`
 - **Dependencies**: `ISeedRepository`, `ICatalogProvider`, `ITrackRepository`
-- **Entry**: `async execute(*, artists_limit=50, tracks_per_artist=50, retry_failed=False, progress=None) → FetchMetadataResult`
-- **Flow**: Selects pending (optionally failed) seeds by priority → for each calls `list_artist_tracks` → `upsert_many` tracks → marks seed fetched/failed. Resumable: failures don't abort the batch.
-- **Result**: `FetchMetadataResult(artists_processed, artists_failed, artists_skipped, tracks_found, tracks_saved)`
+- **Entry**: `async execute(*, artists_limit=50, tracks_per_artist=50, retry_failed=False, progress=None) -> FetchMetadataResult`
+- **Flow**: Selects pending (optionally failed) seeds by priority -> for each calls `list_artist_tracks` -> `upsert_many` tracks -> marks seed fetched/failed. Resumable.
+
+#### `FindSimilarForSet`
+- **Dependencies**: `ISetRepository`, `ITrackRepository`
+- **Entry**: `async execute(set_id, *, limit=12, passage_limit=5) -> SimilarSetResult`
+- **Flow**: Fetches stored `DJSet` -> queries whole-set vector similarities from LanceDB set index -> queries top track matches for each passage.
 
 #### `IndexCatalog`
 - **Dependencies**: `ITrackRepository`, `IAudioDecoder`, `IFeatureExtractor`, `IAudioEmbedder`, `Executor | None`, `cpu_workers=4`, `queue_maxsize=64`, `chunk_size=32`
-- **Entry**: `async execute(*, limit=500, batch_size=16, max_failures=3, progress=None) → IndexResult`
-- **Flow**: Bounded producer-consumer. Producers download+decode previews via `decode_url(sample_rate=48000, channels=1)` → enqueue to bounded `asyncio.Queue`. Consumer drains queue → runs `extract()` on `ProcessPoolExecutor` → accumulates batch → calls `embed_batch()` via `asyncio.to_thread` → `upsert_many` hydrated tracks. PCM released immediately per batch. Failed tracks marked via `mark_index_failed`. Resumable across runs (skips already-embedded).
-- **Constants**: `_MAX_BATCH_SIZE=32`, `_DEFAULT_QUEUE_MAXSIZE=64`, `_DEFAULT_CHUNK_SIZE=32`
-- **Result**: `IndexResult(processed, failed, embedded_total)`
+- **Entry**: `async execute(*, limit=500, batch_size=16, max_failures=3, reindex=False, progress=None) -> IndexResult`
+- **Flow**: Bounded producer-consumer. Producers download+decode previews via `decode_url(sample_rate=48000, channels=1)` -> enqueue to bounded `asyncio.Queue`. Consumer drains queue -> runs `extract()` on `ProcessPoolExecutor` -> accumulates batch -> calls `embed_batch()` via `asyncio.to_thread` -> `upsert_many` hydrated tracks. PCM released immediately per batch.
+
+#### `VibeSearch`
+- **Dependencies**: `ITrackRepository`, `IAudioEmbedder`
+- **Entry**: `async execute(prompt, *, limit=20, bpm_tolerance=None) -> VibeResult`
+- **Flow**: Converts prompt to vector via `IAudioEmbedder.embed_text` -> queries LanceDB vector index -> applies filter and returns ranked tracks.
 
 ---
 
@@ -492,27 +612,22 @@ async def count(self) -> int
 
 **Connection setup**: WAL mode, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL`. Single `aiosqlite.Connection` guarded by `asyncio.Lock`. Row factory = `aiosqlite.Row`.
 
-**Migration**: Before running the SCHEMA script, `_migrate()` checks `PRAGMA table_info(tracks)` and adds missing columns (`source TEXT NOT NULL DEFAULT 'itunes'`, `external_id TEXT`, `index_failures INTEGER NOT NULL DEFAULT 0`).
-
 #### Table `seed_artists`
-
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | `INTEGER` | PK AUTOINCREMENT |
 | `name` | `TEXT NOT NULL` | |
 | `name_normalized` | `TEXT NOT NULL` | UNIQUE |
 | `deezer_id` | `TEXT` | UNIQUE WHERE NOT NULL |
-| `priority_score` | `REAL NOT NULL DEFAULT 0.0` | CHECK 0.0–1.0 |
+| `priority_score` | `REAL NOT NULL DEFAULT 0.0` | CHECK 0.0-1.0 |
 | `category` | `TEXT NOT NULL` | CHECK IN ('electronic', 'general') |
 | `status` | `TEXT NOT NULL DEFAULT 'pending'` | CHECK IN ('pending', 'fetched', 'failed') |
 | `source` | `TEXT NOT NULL DEFAULT 'unknown'` | |
-| `created_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
-| `updated_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
+| `created_at` / `updated_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
 
 **Indexes**: `idx_seed_artists_deezer_id` (unique, partial WHERE NOT NULL), `idx_seed_artists_status_priority` (status, priority_score DESC).
 
 #### Table `tracks`
-
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | `TEXT` | PK |
@@ -520,51 +635,45 @@ async def count(self) -> int
 | `title` | `TEXT NOT NULL` | |
 | `artist` | `TEXT NOT NULL` | |
 | `normalized_key` | `TEXT NOT NULL` | UNIQUE |
-| `album` | `TEXT` | |
-| `genre` | `TEXT` | |
-| `duration_sec` | `REAL` | |
+| `album`, `genre` | `TEXT` | |
+| `duration_sec`, `bpm` | `REAL` | |
 | `release_year` | `INTEGER` | |
-| `preview_url` | `TEXT` | |
-| `artwork_url` | `TEXT` | |
-| `store_url` | `TEXT` | |
-| `bpm` | `REAL` | |
+| `preview_url`, `artwork_url`, `store_url` | `TEXT` | |
 | `camelot_key` | `TEXT` | |
-| `is_embedded` | `INTEGER NOT NULL DEFAULT 0` | CHECK IN (0, 1) |
-| `is_heard` | `INTEGER NOT NULL DEFAULT 0` | CHECK IN (0, 1) |
+| `is_embedded`, `is_heard` | `INTEGER NOT NULL DEFAULT 0` | CHECK IN (0, 1) |
 | `index_failures` | `INTEGER NOT NULL DEFAULT 0` | |
 | `source` | `TEXT NOT NULL DEFAULT 'itunes'` | |
-| `external_id` | `TEXT` | |
-| `isrc` | `TEXT` | |
-| `created_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
-| `updated_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
+| `external_id`, `isrc` | `TEXT` | |
+| `created_at` / `updated_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
 
-**Indexes**: `idx_tracks_external_id` (source, external_id), `idx_tracks_bpm` (bpm), `idx_tracks_genre` (genre), `idx_tracks_heard` (is_heard).
-
-**Upsert logic**: `ON CONFLICT(id) DO UPDATE SET ...`, notably `is_embedded = MAX(tracks.is_embedded, excluded.is_embedded)` and `is_heard = MAX(tracks.is_heard, excluded.is_heard)` — once heard/embedded, always heard/embedded.
-
-**Deduplication**: Before upsert, `_find_existing_id` checks `normalized_key` or `itunes_track_id` match; if found under a different `id`, the existing id is reused.
+**Indexes**: `idx_tracks_external_id` (source, external_id), `idx_tracks_bpm`, `idx_tracks_genre`, `idx_tracks_heard`.
 
 #### Table `dj_sets`
-
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | `TEXT` | PK |
 | `title` | `TEXT NOT NULL` | |
 | `source_url` | `TEXT` | |
 | `duration_sec` | `REAL` | |
+| `artist` | `TEXT` | |
+| `thumbnail_url` | `TEXT` | |
+| `bpm_min`, `bpm_max` | `REAL` | |
+| `embedding_json` | `TEXT` | L2-normalized mean embedding |
 | `created_at` / `updated_at` | `TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` | |
 
 #### Table `set_passages`
-
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | `INTEGER` | PK AUTOINCREMENT |
-| `set_id` | `TEXT NOT NULL` | FK → dj_sets(id) ON DELETE CASCADE |
-| `start_sec` | `REAL NOT NULL` | |
-| `end_sec` | `REAL NOT NULL` | |
+| `set_id` | `TEXT NOT NULL` | FK -> dj_sets(id) ON DELETE CASCADE |
+| `start_sec`, `end_sec` | `REAL NOT NULL` | |
 | `bpm` | `REAL` | |
 | `camelot_key` | `TEXT` | |
 | `exact_id_match` | `INTEGER NOT NULL DEFAULT 0` | CHECK IN (0, 1) |
+| `exact_id_title` | `TEXT` | |
+| `exact_id_artist` | `TEXT` | |
+| `exact_id_source` | `TEXT` | |
+| `embedding_json` | `TEXT` | |
 | `closest_matches_json` | `TEXT NOT NULL DEFAULT '[]'` | |
 | UNIQUE(set_id, start_sec, end_sec) | | |
 
@@ -572,299 +681,104 @@ async def count(self) -> int
 
 ### 3.2 LanceDB (`lancedb_client.py`)
 
-**Table name**: `track_vectors` (configurable). **Storage**: disk-backed directory at `LANCEDB_PATH`.
+**Tables**:
+- `track_vectors`: CLAP embeddings for catalog tracks (512-dim, float16).
+- `set_vectors`: Mean embeddings for analyzed DJ sets.
+**Search**: `cosine` distance. IVF-PQ automatic indexing when table exceeds 10,000 vectors.
 
-#### Schema (PyArrow)
+### 3.3 Remote Providers & Ingestion
 
-| Column | Arrow Type | Purpose |
-|---|---|---|
-| `id` | `pa.string()` | Matches SQLite `tracks.id` |
-| `bpm` | `pa.float32()` | Copied for filter push-down |
-| `camelot_key` | `pa.string()` | Copied for filter push-down |
-| `genre` | `pa.string()` | Copied for filter push-down |
-| `vector` | `pa.list_(pa.float16(), 512)` | CLAP embedding, **float16**, 512 dims |
+#### `ITunesProvider` (`data/datasources/remote/itunes_provider.py`)
+- Hard ceiling: 18 req/min enforced via `AsyncTokenBucket`.
+- Keyword search: `crawl_keyword(keyword, limit=200, expand_compilations=True)` enables crawling techno labels, clubs, and compilation albums.
+- Collaborator snowballing: `_discover_from_tracks()` extracts remixers/features into `SeedArtist` records.
 
-#### Search
+#### `DeezerSeedCrawler` (`data/datasources/remote/deezer_seed_crawler.py`)
+- BFS discovery starting from curated electronic artists with live `CrawlProgress` callbacks.
 
-- **Distance metric**: `cosine`
-- **Similarity conversion**: `similarity = max(-1.0, min(1.0, 1.0 - _distance))` where `_distance` is cosine distance (0 = identical, 2 = opposite)
-- **Filter push-down**: optional `where` clause built by `HybridTrackRepository._vector_where()` with BPM range, Camelot keys IN-list, genre equality, and heard-id exclusion
-- **Upsert**: `merge_insert("id").when_matched_update_all().when_not_matched_insert_all()` with fallback to delete+add for older LanceDB versions
+#### `YtDlpSetDownloader` (`data/datasources/remote/ytdlp_downloader.py`)
+- Downloads and streams DJ set audio from YouTube/SoundCloud/Mixcloud into temporary files.
+- Supports Netscape cookie files and browser profiles (`--cookies-from-browser`).
+- Extracts video comments and metadata for tracklist parsing.
 
-#### IVF-PQ Index
+#### `ShazamFingerprinter` (`data/datasources/remote/shazam_client.py`)
+- Exact-ID audio fingerprinting using lazy-loaded `shazamio`.
+- Converts raw float32 mono PCM to in-memory 16-bit WAV containers.
+- **Strict 15.0s Timeout**: Each recognize call is wrapped in `asyncio.wait_for(..., timeout=15.0)`.
+- **Circuit Breaker**: After 5 consecutive timeouts or network errors, `is_circuit_open = True` and subsequent calls are skipped cleanly with clear warning logs. Success resets the counter. `reset_circuit_breaker()` provides manual reset.
+- **Immediate Cancellation**: Never catches or swallows `asyncio.CancelledError`, allowing immediate GUI cancellation.
 
-- **Threshold**: created automatically when row count > `INDEX_THRESHOLD = 10,000`
-- **Configuration**: `IvfPq(distance_type="cosine", num_partitions=max(1, min(256, row_count // 1000)), num_sub_vectors=32)` (or 1 when dimension < 64)
-- **Trigger**: called after every `upsert_many`; skips if an index already exists
+### 3.4 ML Engine
 
-### 3.3 Remote Providers
+#### `SetSegmenter` (`data/ml/set_segmenter.py`)
+- Streams 16 kHz audio without loading full set into RAM.
+- Extracts STFT onset flux, chroma, and MFCC pooled novelty curves.
+- Checkerboard filter detects musical transition boundaries.
+- **Strict Passage Clamping**: Intermediate boundaries are rounded `< total_duration_seconds`. Terminal pieces strictly clamp `p_end = min(round(piece_end, 3), total_duration_seconds)`, guaranteeing no passage ever exceeds `total_duration_seconds`.
 
-#### `ITunesProvider` (implements `ICatalogProvider`)
+#### `ClapAudioEmbedder` (`data/ml/clap_embedder.py`)
+- Model: `laion/clap-htsat-unfused` (512-dim).
+- FP16 inference under `torch.inference_mode()` with `torch.amp.autocast("cuda", dtype=float16)`.
+- Bounded micro-batches (`<= 32`), lazy model loading on first inference.
 
-| Param | Value |
-|---|---|
-| **API base** | `https://itunes.apple.com` |
-| **Search endpoint** | `/search?term=...&entity=song&attribute=artistTerm&limit=200&country={CC}` |
-| **Lookup endpoint** | `/lookup?id=...&entity=song&country={CC}` |
-| **Search limit** | `ITUNES_SEARCH_LIMIT = 200` per request |
-| **Rate limit** | Token bucket at `rate_limit_per_minute / 60.0` tokens/sec, capacity 1 (serialized) |
-| **Max retries** | 4 (default), with exponential backoff + `Retry-After` |
-| **Retried statuses** | 403, 429, 5xx |
-| **Response cache** | In-memory dict keyed by `(query.casefold(), country)`, TTL `cache_ttl_seconds=3600` |
-| **Track ID format** | `itunes:{trackId}` |
-
-**Filtering rules** (in `_passes_filters`):
-- Must have `preview_url`
-- Must have `duration_seconds`
-- Duration: 120 ≤ seconds ≤ 900
-- Genre not in `NON_MUSIC_GENRES` (podcasts, comedy, audiobooks, children's music, kids, spoken word)
-
-**Deduplication** (in `_filter_and_dedup`):
-- By `external_id` (iTunes trackId)
-- By `normalize_artist_title(artist, title)` — NFKD case-folded, accent-stripped, punctuation-removed
-
-**Snowball discovery** (`_discover_from_tracks`): Parses collaborators/remixers via `parse_collaborators()`, creates `SeedArtist` entries (source=`itunes-snowball`), persists via `seed_repository.record_discovery()`. Capped at `discovery_limit=100` new seeds per search. Priority: electronic base 0.55, general base 0.35, +0.05 per additional co-occurrence, capped at 0.9.
-
-#### `artist_parser.py` — `parse_collaborators(artist_name, track_title) → tuple[str, ...]`
-
-Extracts names from:
-- Bracket remixes: `(Name Remix)`, `[Name Edit]`, `(Name Bootleg)`
-- Dash remixes: `- Name Remix`
-- Featured: `feat.`, `ft.`, `featuring`, `with` in title
-- Artist separators: `, & ; × + | x`
-
-Filters out generic names (`"remix"`, `"original mix"`, `"various artists"`, etc.) and names < 2 or > 80 chars.
-
-#### `DeezerSeedCrawler` (implements `ISeedDiscovery` + `ISeedCrawler`)
-
-| Param | Value |
-|---|---|
-| **API base** | `https://api.deezer.com` |
-| **Rate limit** | 8 req/sec token bucket (capacity=8, burst allowed) |
-| **Max retries** | 3 |
-| **Retried statuses** | 403, 429, 5xx, Deezer error code 4 |
-
-**Electronic discovery**: BFS from `CORE_ELECTRONIC_ARTISTS` (70 curated names including Solomun, Charlotte de Witte, Boris Brejcha, etc.) via `/artist/{id}/related` (limit=100). Priority decays by depth: `max(0.35, 0.95 - 0.15 * depth)`. Rediscovered artists get +0.05 bump.
-
-**General discovery**: `/chart/{genre_id}/artists` for 5 genres (Pop/132, Hip-Hop/116, Rock/152, Latin/197, Arabic/12), limit=100 each. Priority: `max(0.2, 0.6 - 0.005 * index)`.
-
-**Crawl** (`crawl()` AsyncIterator): For each seed, fetches `/artist/{id}/top?limit=min(100, tracks_per_artist)`, deduplicates by external_id, yields `Track` objects with id=`deezer:{trackId}`.
-
-#### `AsyncTokenBucket` (rate_limiter.py)
-
-- Concurrency-safe (`asyncio.Lock`)
-- `acquire(tokens=1.0)` — refills based on elapsed time, waits on deficit
-- `exponential_backoff(attempt, *, base_seconds=1.0, factor=2.0, max_seconds=60.0)` — deterministic, no jitter
-- `retry_after_seconds(response, default)` — parses `Retry-After` header (numeric or HTTP date)
-
-### 3.4 LLM Client (`multi_llm_client.py`)
-
-**Class**: `MultiLLMClient` implements `ILLMService`
-
-**Endpoint**: `POST {base_url}/chat/completions` (auto-appends if not already in URL)
-
-**Implemented methods**:
-
-| Method | Temperature | response_format | JSON key |
-|---|---|---|---|
-| `generate_seed_artists` | 0.4 | `json_object` | `"artists"` |
-| `extract_tracklist_from_comments` | 0.1 | `json_object` | `"tracks"` |
-| `tag_track_vibe` | 0.3 | `json_object` | root object |
-
-**Request handling**:
-- Sets `model`, `messages`, `temperature`, `stream: false`, optional `response_format`
-- Up to `max_retries=2` with exponential backoff
-- If HTTP 400 and `response_format` was set → retries without it (some local servers reject it)
-- Retries on 429 and 5xx
-
-**JSON parsing fallbacks** (`_parse_json`):
-1. Strip ```json fences via regex
-2. Try `json.loads(cleaned)`
-3. Find first `{` or `[`, find last `}` or `]`, try parsing substring
-4. Raise `LLMError` if all fail
-
-**Content extraction**: `choices[0].message.content` from OpenAI response shape.
-
-### 3.5 ML Engine
-
-#### `FFmpegAudioDecoder` (implements `IAudioDecoder`)
-
-**FFmpeg command** (pipe mode):
-```
-ffmpeg -hide_banner -loglevel error -i pipe:0 -vn -f f32le -acodec pcm_f32le -ac 1 -ar 48000 pipe:1
-```
-
-**Segment mode** (file on disk):
-```
-ffmpeg -hide_banner -loglevel error -ss {start:.3f} -i {path} -t {duration:.3f} -f f32le -acodec pcm_f32le -ac {channels} -ar {sample_rate} pipe:1
-```
-
-| Config | Default |
-|---|---|
-| Sample rate | 48,000 Hz |
-| Channels | 1 (mono) |
-| Format | `f32le` (32-bit float little-endian) |
-| Download concurrency | Semaphore(16) |
-| Download max retries | 2 |
-| FFmpeg timeout | 60 s per subprocess |
-| Max payload | 32 MiB |
-
-**Download**: Via `httpx.AsyncClient.get()` with follow_redirects. 404 → permanent failure. 429/5xx → transient retry with exponential backoff (capped 8s). Payload size validated.
-
-**PCM post-processing**: Trims trailing partial frames (`len(pcm) % (4 * channels)`), raises if empty.
-
-#### `LibrosaFeatureExtractor` (implements `IFeatureExtractor`)
-
-**Entry**: `extract(audio: AudioBuffer) → AudioFeatures` calls module-level `analyze_pcm()`.
-
-**`analyze_pcm(pcm_bytes, sample_rate, *, tempo_low=70, tempo_high=175, min_duration_seconds=3.0)`**:
-
-1. Converts bytes to `np.float32` array
-2. Rejects if fewer than `sample_rate * 3` samples
-3. **BPM detection**:
-   - `librosa.onset.onset_strength(y=samples, sr=sample_rate)`
-   - `librosa.feature.tempo(onset_envelope=..., sr=sample_rate, aggregate=np.median)`
-   - Uses default `hop_length` (librosa default = 512)
-   - `fold_tempo()`: doubles if < 70, halves if > 175, then clamps to [40, 220]
-4. **Key detection** (`_detect_key`):
-   - `librosa.feature.chroma_cqt(y=samples, sr=sample_rate)` — Constant-Q chromagram (not STFT)
-   - Averages over time axis → 12-bin vector
-   - `_detect_key_from_chroma`: correlates (Pearson) all 24 rotations (12 major + 12 minor) against **Krumhansl–Schmuckler profiles**
-   - Best root+mode → mapped via `_MAJOR_CAMELOT` / `_MINOR_CAMELOT` lookup tables to Camelot notation (e.g. C major → 8B, A minor → 8A)
-5. Returns `AudioFeatures(bpm=BPM|None, key=CamelotKey|None)` — individual failures degrade to None
-
-**librosa/numpy imported lazily inside the function** so parent process stays light. The extractor class is picklable for `ProcessPoolExecutor`.
-
-#### `ClapAudioEmbedder` (implements `IAudioEmbedder`)
-
-**Model**: `laion/clap-htsat-unfused` (512-dim). Loaded via `ClapModel.from_pretrained` + `ClapProcessor.from_pretrained`. Do NOT switch back to `laion/larger_clap_music`: its hub checkpoint ships an untrained audio tower (all audio-side biases zero, projection MLP at random-init), collapsing every embedding to ~0.99 similarity.
-
-**Lazy loading**: Model/processor loaded on first `embed()`/`embed_batch()` call, inside a `threading.Lock`. `torch` and `transformers` are imported inside the lock body.
-
-**Device resolution**: Requests CUDA → checks `torch.cuda.is_available()` → falls back to CPU with warning. Test seam: `cuda_available` constructor param.
-
-**`embed_batch(audios)`**:
-1. Converts each `AudioBuffer.pcm_bytes` to `np.float32` array
-2. Validates all sample rates are identical
-3. Under `torch.inference_mode()`, splits into micro-batches of `self._batch_size` (clamped ≤ 32)
-4. Each chunk:
-   - `processor(audio=list(chunk), sampling_rate=..., return_tensors="pt", padding=True)` (falls back to `audios=` kwarg)
-   - Moves inputs to device
-   - If CUDA: `torch.amp.autocast("cuda", dtype=torch.float16)` around `model.get_audio_features(**inputs)`
-   - `_extract_projection()`: handles bare Tensor, `BaseModelOutputWithPooling.pooler_output`, or tuple returns; validates shape `(batch, 512)`
-   - `torch.nn.functional.normalize(features, p=2, dim=-1)` — L2 normalization
-   - Cast to `torch.float16`, move to CPU
-   - Convert to `EmbeddingVector(values=tuple(row), dimension=512)`
-
-**`embed_text(query)`**: Similar flow using `model.get_text_features(**inputs)`.
-
-**`model_factory` test seam**: Constructor accepts an optional factory returning an object with `.model` and `.processor`.
-
-#### `HardwareProbe` (implements `IHardwareProbe`)
-
-Lazy-imports torch, calls `torch.cuda.is_available()`, `torch.cuda.get_device_name(0)`, `torch.cuda.mem_get_info(0)`. FFmpeg: `shutil.which()` + `subprocess.run([path, "-version"])` (cached). RAM: `GlobalMemoryStatusEx` on Windows, `/proc/meminfo` on Linux.
+#### `LibrosaFeatureExtractor` (`data/ml/librosa_analyzer.py`)
+- BPM estimation with octave tempo folding to `[70, 175]`.
+- Constant-Q chromagram correlated against Krumhansl-Schmuckler key profiles to detect Camelot notation (`8A`, `11B`, etc.).
 
 ---
 
-## 4. Wiring & CLI
+## 4. Wiring, Presentation & Web GUI
 
 ### 4.1 Container (`container.py`)
 
-**`Settings.from_env(repo_root=None)`**: Loads `.env` via `python-dotenv`, resolves relative paths from repo root, clamps env values to hard ceilings:
-
-| Setting | Ceiling | Clamp logic |
-|---|---|---|
-| `itunes_rate_limit_per_minute` | 18 | `max(1, min(18, raw))` |
-| `deezer_rate_limit_per_second` | 8.0 | `max(0.1, min(8.0, raw))` |
-| `clap_batch_size` | 32 | `max(1, min(32, raw))` |
-| `cpu_workers` | 6 | `max(1, min(6, raw))` |
-| `preview_concurrency` | 16 | `max(1, min(16, raw))` |
-
-**`Container.start()`** wiring order:
-1. `SQLiteClient(sqlite_path)` → `.connect()`
-2. `LanceDBClient(lancedb_path)` → `.connect()`
-3. `SQLiteSeedRepository(sqlite)`
-4. `HybridTrackRepository(sqlite, vectors)`
-5. `httpx.AsyncClient` (shared by iTunes, Deezer, LLM, decoder)
-6. `ITunesProvider(http_client, seed_repository, country, rate_limit, timeout)`
-7. `DeezerSeedCrawler(http_client, rate_limit_per_second, timeout)`
-8. `MultiLLMClient(base_url, api_key, model, http_client, timeout)`
-9. `FFmpegAudioDecoder(http_client, download_concurrency, timeout, ffmpeg_timeout)`
-10. `LibrosaFeatureExtractor()` (default params)
-11. `ClapAudioEmbedder(model_id, device, batch_size)`
-12. `HardwareProbe()`
-13. Use cases wired with their interface dependencies
-
-**`Container.close()`**: HTTP client → LanceDB → SQLite (reverse order).
-
-Supports `async with Container() as c:` context manager.
+Single Composition Root wired in `Container.start()`:
+1. `SQLiteClient` & `LanceDBClient`
+2. `SQLiteSeedRepository`, `HybridTrackRepository`, `SQLiteSetRepository`
+3. `Shared HTTP Client` (httpx)
+4. `ITunesProvider`, `DeezerSeedCrawler`, `MultiLLMClient`
+5. `FFmpegAudioDecoder`, `LibrosaFeatureExtractor`, `ClapAudioEmbedder`, `HardwareProbe`
+6. `SetSegmenter`, `YtDlpSetDownloader`, `ShazamFingerprinter`
+7. All 8 Use Cases: `BuildSeedList`, `DigSimilarTracks`, `FetchCatalogMetadata`, `IndexCatalog`, `AnalyzeDJSet`, `FindSimilarForSet`, `CrawlITunesSeeds`, `VibeSearch`
 
 ### 4.2 CLI Commands (`presentation/cli/commands.py`)
 
-All commands use `Typer` + `Rich`. Each wraps an async function and runs it via `asyncio.run()`.
+All outputs enforce ASCII-only strings for Windows console compatibility.
+- `dig check-hw`: Verify FFmpeg, CUDA, VRAM, and RAM.
+- `dig seed-crawl`: Deezer BFS discovery with live Rich progress.
+- `dig seed-llm`: Prompt LLM for genre-specific seed artists.
+- `dig seed-itunes`: Crawl iTunes keywords, labels, or compilations.
+- `dig fetch-metadata`: Ingest tracks from pending seeds (18 req/min ceiling).
+- `dig index`: Batch decode, analyze, and embed catalog tracks.
+- `dig list-tracks`: View indexed catalog tracks.
+- `dig dig <track_id>`: Audio similarity search with BPM and harmonic key filtering.
+- `dig analyze-set <source>`: Full DJ set analysis with live progress across all stages.
+- `dig show-set <set_id>`: View tracklist, passage matches, or set similarity.
+- `dig list-sets`: List analyzed sets and ID counts.
+- `dig mark-heard <track_id>`: Mark track as heard for `--exclude-heard` filtering.
+- `dig stats`: Database and vector index counts.
 
-#### `dig check-hw`
-No arguments. Probes hardware and prints a Rich table.
+### 4.3 Web API & GUI (`presentation/api/` & `frontend/`)
 
-#### `dig seed-crawl`
-| Flag | Type | Default |
-|---|---|---|
-| `--electronic-limit` | int (min 0) | 1000 |
-| `--general-limit` | int (min 0) | 300 |
-| `--max-depth` | int (min 0) | 2 |
-
-#### `dig seed-llm`
-| Flag | Type | Default |
-|---|---|---|
-| `--genre` / `-g` | str | *required* |
-| `--count` | int (min 1) | 100 |
-
-Splits `--genre` by commas into a tuple of genre strings.
-
-#### `dig fetch-metadata`
-| Flag | Type | Default |
-|---|---|---|
-| `--artists-limit` | int (min 1) | 50 |
-| `--tracks-per-artist` | int (min 1) | 50 |
-| `--retry-failed` | bool | False |
-
-Shows a live Rich progress bar during fetching.
-
-#### `dig index`
-| Flag | Type | Default |
-|---|---|---|
-| `--limit` | int (min 0) | 500 |
-| `--batch-size` | int (1–32) | 16 |
-| `--retry-failed` | bool | False |
-
-`--limit 0` = no cap (translates to `10**9`). `--retry-failed` sets `max_failures=10**9`. Shows live progress bar with speed (tracks/s), failure count, and RAM/VRAM usage.
-
-#### `dig list-tracks`
-| Flag | Type | Default |
-|---|---|---|
-| `--limit` | int (min 1) | 20 |
-| `--offset` | int (min 0) | 0 |
-
-Shows embedded tracks (ID, Artist, Title, BPM, Key).
-
-#### `dig dig <track_id>`
-| Flag | Type | Default |
-|---|---|---|
-| `track_id` | str (positional) | *required* |
-| `--limit` | int (min 1) | 10 |
-| `--bpm-tolerance` | float \| None | None |
-| `--harmonic` | bool | False |
-| `--genre` | str \| None | None |
-| `--exclude-heard` | bool | False |
-
-Constructs `SearchFilter(limit=limit, genre_filter=genre)` and passes `bpm_tolerance` and `harmonic` to `DigSimilarTracks.execute()`. Shows reference track info and Rich table of matches (Title, Artist, Match %, BPM, Key, Genre).
-
-#### `dig stats`
-No arguments. Prints seed counts (total, pending, fetched, failed, electronic, general) and track counts (total, embedded).
+- **FastAPI Backend** (`presentation/api/app.py`):
+  - REST endpoints for catalog, sets, hardware probe, and jobs.
+  - Server-Sent Events (SSE) streaming on `/api/jobs/stream`.
+  - Static file hosting for `frontend/`.
+- **JobManager** (`presentation/api/job_manager.py`):
+  - Strictly serial execution (1 background job at a time).
+  - Supported jobs: `index`, `seed-crawl`, `seed-llm`, `seed-itunes`, `fetch-metadata`, `analyze-set`.
+  - Live progress broadcasting (stage, processed, total, failed, speed, memory).
+  - Turbo indexing mode for high-throughput batching.
+- **Frontend Architecture** (`frontend/`):
+  - 100% vanilla ES modules, no build tools, zero external dependencies or CDNs.
+  - Views:
+    - `run`: Interactive form for launching any job, real-time progress bar, live speed in `tracks/s` or `passages/s`, VRAM/RAM metrics, and scrollable `#job-log` event stream.
+    - `dig`: Interactive track similarity engine with HTML5 audio preview player and Camelot wheel visualizer.
+    - `sets`: DJ set analysis viewer, passage-by-passage timeline, Shazam/comment match badges, and track digging.
+    - `stats`: Seed and track catalog breakdown.
 
 ---
 
-## 5. Current State & Important Implementation Details
+## 5. Current State & Implementation Details
 
 ### 5.1 Data Error Hierarchy (`data/errors.py`)
 
@@ -877,33 +791,30 @@ DataLayerError
 │   ├── FFmpegNotFoundError
 │   ├── PreviewDownloadError
 │   └── AudioDecodeError
-└── EmbeddingError
+├── EmbeddingError
+├── SetDownloadError
+└── FingerprintError
 ```
 
-### 5.2 Normalization (`data/normalization.py`)
+### 5.2 Critical Bug Fixes & Architectural Hardening
 
-`normalize_text(value)`: NFKD decomposition → strip combining characters → casefold → replace non-word chars with spaces → collapse whitespace. Used for:
-- `normalize_artist_title(artist, title) → "{normalized_artist}|{normalized_title}"` — dedup key for tracks
-- `normalize_seed_name(name) → str` — dedup key for seeds
-
-### 5.3 Repositories
-
-**`HybridTrackRepository`**: Coordinates SQLite (metadata) with LanceDB (vectors). On `upsert_many`, tracks with embeddings are written to both stores. On `get_by_id`, if `is_embedded`, fetches the vector from LanceDB and hydrates the Track. `find_similar` delegates the vector search to LanceDB with filter push-down, then hydrates tracks from SQLite.
-
-**`SQLiteSeedRepository`**: Uses `ON CONFLICT(name_normalized)` for upserts. `record_discovery` bumps priority by `priority_increment` (default 0.05, capped at 1.0) on rediscovery. `list_by_status` orders by `priority_score DESC`.
-
-### 5.4 Known TODOs & Caveats
-
-- **`IAudioSegmenter`, `IFingerprinter`, `ISetDownloader`**: Declared as ABCs in `domain/interfaces/` but have **no concrete implementations yet** — these are Phase 4+ (DJ set analysis).
-- **`ISetRepository`**: ABC declared but **no concrete implementation** — Phase 4+.
-- **`presentation/api/`**: Empty placeholder package (routers + schemas `__init__.py` only).
-- **`LLM_AUDIO_MODEL`**: Defined in `.env.example` but not used anywhere in current code.
-- **`DEVICE_FP16`**: Defined in `.env.example` but not read by container/settings — FP16 is always used when CUDA is available via `torch.amp.autocast`.
-- **`CLAP_MAX_VRAM_GB`**: Defined in `.env.example` but not enforced in code — batch size clamping is the proxy.
-- **`PREVIEW_SECONDS`, `TARGET_SAMPLE_RATE`**: Defined in `.env.example` but hardcoded as `48_000` in `decode_url()` and throughout the pipeline.
-- **Match % display**: The `similarity_percent` property on `TrackMatch` computes `round(max(0, min(1, cosine_similarity)) * 100)`. Since LanceDB uses cosine **distance**, the conversion is `1.0 - _distance`. Cosine distance ranges [0, 2], so similarity = `1 - distance` can be negative (for truly anti-correlated vectors, though rare with CLAP embeddings). Negative scores are clamped to 0 by `similarity_percent`.
-- **BPM in dig output**: Comes from the SQLite `tracks.bpm` column, which is populated during indexing via `librosa.feature.tempo()` → `fold_tempo()`. BPM is `None` for tracks that haven't been indexed, displayed as "—".
-- **Text normalization for dedup**: `normalize_artist_title` uses NFKD + casefold + accent strip + punctuation removal, which means accented characters (e.g., "Âme") collapse correctly.
+1. **Floating-Point Duration Clamping (Bug 1)**:
+   - Sets with float durations (e.g. `7374.262857`) could previously produce a final passage `end_seconds` rounded up to `7374.263`, violating strict set duration bounds.
+   - Fixed with a 3-layer safeguard:
+     - `SetSegmenter._build_passages`: clamps terminal piece `p_end = min(round(piece_end, 3), total_duration_seconds)`.
+     - `DJSet.__post_init__`: allows `0.05s` tolerance and auto-clamps within tolerance.
+     - `AnalyzeDJSet._build_set`: clamps any passage boundary exceeding duration before creating `DJSet`.
+2. **Shazam Timeout & Circuit Breaker (Bug 2)**:
+   - Shazam network calls now run under `asyncio.wait_for(timeout=15.0)`.
+   - A consecutive failure counter triggers a circuit breaker after 5 errors/timeouts, skipping subsequent calls with a warning.
+   - Automatically reset at the start of every `analyze-set` job in `JobManager._run_analyze_set` and `AnalyzeDJSet.execute()` so a tripped breaker from a previous set never persists to new sets.
+   - `asyncio.CancelledError` is never caught, enabling immediate cancellation.
+   - Fast CLAP default: when Shazam is unchecked in GUI or `--no-shazam` is passed, analysis completes without network stalling.
+3. **True Live Per-Passage Progress**:
+   - `AnalyzeDJSet` emits incremental `1/N .. N/N` progress events across all pipeline stages: `extract` (BPM/Key), `embed`, `match` (top track & similarity %), and `identify` (Shazam match or timeout).
+   - `JobManager` calculates speed and transmits events to GUI's `#job-log` panel.
+4. **Domain Purity**:
+   - `backend/src/domain/` imports exclusively from the Python standard library. Enforced via AST scan in `test_domain_purity.py`.
 
 ---
 
@@ -1859,4 +1770,1308 @@ __all__ = [
     "TrackNotEmbeddedError",
     "TrackNotFoundError",
 ]
+```
+
+### 6.5 `backend/src/data/ml/set_segmenter.py`
+
+```python
+"""Transition segmentation for long DJ sets.
+
+Plays the DigDeeper role of splitting a multi-hour recording into musically
+coherent passages. The audio is decoded **once** as a 16 kHz mono stream in
+bounded blocks (a 3 h set peaks at ~40 MB of PCM per block instead of the
+~690 MB a full decode would need), pooled into a tiny ~2 fps feature matrix
+(spectral flux + chroma + MFCC, ≤ ~25 MB even for 3 h), and a Foote-style
+**checkerboard kernel** novelty score is evaluated over candidate passage
+lengths (90-360 s). Peaks in the novelty curve become passage boundaries;
+passages are then normalized to realistic DJ lengths (short ones merged,
+long flat regions subdivided evenly).
+
+All heavy work is synchronous and safe to run through ``asyncio.to_thread``
+from the use case; ffmpeg runs as a subprocess via an injectable stream
+factory so tests can feed synthetic PCM without touching the network.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from collections.abc import Callable, Iterator, Sequence
+from itertools import pairwise
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from domain.interfaces.audio_engine import IAudioSegmenter
+from domain.value_objects.audio_features import TimeRange
+
+from ..errors import AudioDecodeError, FFmpegNotFoundError
+
+LOGGER = logging.getLogger(__name__)
+
+#: Segmentation only needs spectral shape, not pitch fidelity: 16 kHz mono
+#: keeps peak RAM under ~600 MB even for a 3-hour set.
+SEGMENT_SAMPLE_RATE = 16_000
+#: Novelty features per second. ~2 fps is plenty for 90-360 s passages and
+#: keeps the whole-set feature matrix in the low megabytes.
+FEATURE_FPS = 2.0
+#: Audio block decoded at once (streamed through ffmpeg stdout).
+BLOCK_SECONDS = 600.0
+#: Realistic DJ passage bounds: transitions every 1.5-6 minutes.
+MIN_PASSAGE_SECONDS = 90.0
+MAX_PASSAGE_SECONDS = 360.0
+#: Candidate passage lengths for the checkerboard kernel, in seconds.
+CANDIDATE_PASSAGE_SECONDS: tuple[float, ...] = (90.0, 120.0, 180.0, 240.0, 300.0, 360.0)
+#: Blocks are processed with a small lookback so STFT frames spanning block
+#: edges are not double counted or dropped.
+BLOCK_OVERLAP_SECONDS = 4.0
+
+StftHop = 512
+StftNfft = 2048
+PoolGroup = int(SEGMENT_SAMPLE_RATE / StftHop / FEATURE_FPS)  # ~15.6 -> 16 frames
+_FLUX_DIM = 1
+_CHROMA_DIM = 12
+_MFCC_DIM = 13
+
+StreamFactory = Callable[[Sequence[str]], Iterator[bytes]]
+
+
+def default_stream_factory(ffmpeg_bin: str) -> StreamFactory:
+    """Spawn one blocking ffmpeg subprocess and yield its PCM stdout."""
+
+    def factory(args: Sequence[str]) -> Iterator[bytes]:
+        import subprocess
+
+        try:
+            process = subprocess.Popen(
+                [ffmpeg_bin, *args],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise FFmpegNotFoundError(
+                f"ffmpeg binary not found ({ffmpeg_bin!r}); install FFmpeg and "
+                "make sure it is on PATH"
+            ) from exc
+        except OSError as exc:
+            raise AudioDecodeError(f"ffmpeg could not be started: {exc}") from exc
+
+        assert process.stdout is not None
+        try:
+            while True:
+                chunk = process.stdout.read(1_048_576)
+                if not chunk:
+                    break
+                yield chunk
+            returncode = process.wait(timeout=30)
+            if returncode != 0:
+                stderr = process.stderr.read() if process.stderr else b""
+                detail = stderr.decode("utf-8", "replace").strip().splitlines()
+                tail = detail[-1] if detail else "no stderr output"
+                raise AudioDecodeError(f"ffmpeg failed with code {returncode}: {tail}")
+        finally:
+            if process.stderr:
+                process.stderr.close()
+            if process.stdout:
+                process.stdout.close()
+            if process.poll() is None:
+                process.kill()
+
+    return factory
+
+
+class SetSegmenter(IAudioSegmenter):
+    """Stream-based novelty segmentation of a DJ set file on disk."""
+
+    def __init__(
+        self,
+        *,
+        ffmpeg_bin: str = "ffmpeg",
+        sample_rate: int = SEGMENT_SAMPLE_RATE,
+        feature_fps: float = FEATURE_FPS,
+        block_seconds: float = BLOCK_SECONDS,
+        min_passage_seconds: float = MIN_PASSAGE_SECONDS,
+        max_passage_seconds: float = MAX_PASSAGE_SECONDS,
+        candidate_passage_seconds: Sequence[float] = CANDIDATE_PASSAGE_SECONDS,
+        stream_factory: StreamFactory | None = None,
+    ) -> None:
+        if sample_rate < 1:
+            raise ValueError("sample_rate must be positive")
+        if feature_fps <= 0:
+            raise ValueError("feature_fps must be positive")
+        if min_passage_seconds <= 0 or max_passage_seconds < min_passage_seconds:
+            raise ValueError("passage bounds must satisfy 0 < min <= max")
+        self._ffmpeg_bin = ffmpeg_bin
+        self._sample_rate = sample_rate
+        self._feature_fps = feature_fps
+        self._block_seconds = block_seconds
+        self._min_passage = min_passage_seconds
+        self._max_passage = max_passage_seconds
+        self._candidates = tuple(candidate_passage_seconds)
+        self._stream_factory = stream_factory or default_stream_factory(ffmpeg_bin)
+
+    # ------------------------------------------------------------------ API
+
+    def plan_segments(
+        self,
+        total_duration_seconds: float,
+        *,
+        window_seconds: float = 30.0,
+        hop_seconds: float = 15.0,
+    ) -> Sequence[TimeRange]:
+        """Return fixed analysis windows covering the set (interface method)."""
+        if total_duration_seconds <= 0:
+            raise ValueError("total_duration_seconds must be positive")
+        if window_seconds <= 0 or hop_seconds <= 0:
+            raise ValueError("window_seconds and hop_seconds must be positive")
+        windows: list[TimeRange] = []
+        start = 0.0
+        while start < total_duration_seconds - 1e-9:
+            end = min(start + window_seconds, total_duration_seconds)
+            if end - start <= 0:
+                break
+            windows.append(TimeRange(start, end))
+            start += hop_seconds
+        return tuple(windows)
+
+    def detect_passages(
+        self,
+        path: Path,
+        total_duration_seconds: float,
+    ) -> Sequence[TimeRange]:
+        """Detect ordered, non-overlapping passages in ``path``."""
+        if total_duration_seconds <= 0:
+            raise ValueError("total_duration_seconds must be positive")
+        features, feature_times = self._stream_features(path, total_duration_seconds)
+        if len(features) == 0:
+            return (TimeRange(0.0, total_duration_seconds),)
+
+        boundaries = self._pick_boundaries(
+            self._novelty_curve(features), feature_times, total_duration_seconds
+        )
+        return self._build_passages(boundaries, total_duration_seconds)
+
+    # -------------------------------------------------------------- features
+
+    def _ffmpeg_args(self, path: Path) -> list[str]:
+        return [
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(path),
+            "-vn",
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-ac",
+            "1",
+            "-ar",
+            str(self._sample_rate),
+            "pipe:1",
+        ]
+
+    def _stream_features(
+        self, path: Path, total_duration_seconds: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Stream the file through ffmpeg and return pooled features + times.
+
+        Returns ``(features, times)`` where ``features`` has shape
+        ``(frames, dims)`` (L2-normalized rows) and ``times[i]`` is the time of
+        the frame start in seconds.
+        """
+        block_samples = int(self._block_seconds * self._sample_rate)
+        overlap_samples = int(BLOCK_OVERLAP_SECONDS * self._sample_rate)
+
+        feature_blocks: list[np.ndarray] = []
+        time_blocks: list[np.ndarray] = []
+        covered_until = 0.0  # seconds fully processed so far
+        buffer = bytearray()
+        bytes_per_sample = 4
+
+        for chunk in self._stream_factory(self._ffmpeg_args(path)):
+            buffer.extend(chunk)
+            while len(buffer) >= (block_samples + overlap_samples) * bytes_per_sample:
+                block = np.frombuffer(
+                    buffer[: (block_samples + overlap_samples) * bytes_per_sample],
+                    dtype=np.float32,
+                )
+                frames, frame_times = self._block_features(block)
+                if frames.size:
+                    # `frame_times` are block-relative; the +overlap lookahead
+                    # only exists so frames near the block edge are complete.
+                    keep = frame_times < self._block_seconds
+                    feature_blocks.append(frames[keep])
+                    time_blocks.append(frame_times[keep] + covered_until)
+                covered_until += self._block_seconds
+                del buffer[: block_samples * bytes_per_sample]
+
+        if buffer:
+            block = np.frombuffer(buffer, dtype=np.float32)
+            frames, frame_times = self._block_features(block)
+            if frames.size:
+                # The final block was never processed, so keep every frame;
+                # its start is exactly `covered_until` (== samples dropped so
+                # far), which the +offset already accounts for.
+                feature_blocks.append(frames)
+                time_blocks.append(frame_times + covered_until)
+
+        if not feature_blocks:
+            return np.zeros((0, 0), dtype=np.float32), np.zeros(0)
+
+        features = np.concatenate(feature_blocks, axis=0)
+        times = np.concatenate(time_blocks)
+        norms = np.linalg.norm(features, axis=1, keepdims=True)
+        norms[norms == 0.0] = 1.0
+        features = features / norms
+        # A declared duration longer than the actual audio must not leave the
+        # tail uncovered; clamp frame times to the declared duration.
+        return features.astype(np.float32), np.minimum(
+            times, max(total_duration_seconds, 0.0)
+        )
+
+    def _block_features(self, block: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Compute pooled flux+chroma+mfcc features for one PCM block."""
+        import librosa
+
+        samples = np.asarray(block, dtype=np.float32)
+        if samples.size < StftNfft:
+            return np.zeros((0, 0), dtype=np.float32), np.zeros(0)
+
+        common: dict[str, Any] = {
+            "y": samples,
+            "sr": self._sample_rate,
+            "n_fft": StftNfft,
+            "hop_length": StftHop,
+            "center": False,
+        }
+        flux = librosa.onset.onset_strength(
+            y=samples, sr=self._sample_rate, hop_length=StftHop, n_fft=StftNfft
+        )
+        chroma = librosa.feature.chroma_stft(**common)
+        mfcc = librosa.feature.mfcc(**common, n_mfcc=_MFCC_DIM)
+
+        frame_count = min(flux.size, chroma.shape[1], mfcc.shape[1])
+        stacked = np.vstack(
+            [
+                flux[np.newaxis, :frame_count],
+                chroma[:, :frame_count],
+                mfcc[:, :frame_count],
+            ]
+        ).T.astype(np.float32)  # (frame_count, dims)
+
+        # Pool ~16 STFT frames (0.5 s) into one novelty frame (~2 fps).
+        groups = max(1, frame_count // PoolGroup)
+        pooled = stacked[: groups * PoolGroup].reshape(
+            groups, PoolGroup, stacked.shape[1]
+        )
+        features = pooled.mean(axis=1)
+        frame_times = np.arange(groups, dtype=np.float64) * (
+            PoolGroup * StftHop / self._sample_rate
+        )
+        return features, frame_times
+
+    # --------------------------------------------------------------- novelty
+
+    def _novelty_curve(self, features: np.ndarray) -> np.ndarray:
+        """Checkerboard-kernel novelty, maximized over candidate lags.
+
+        For a candidate passage length ``L`` (half-window ``h = L/2`` frames)
+        and boundary position ``t``, the checkerboard score is
+
+            Nov(t) = sum_{i,j} K(i,j) * S(t-h+i, t-h+j)
+
+        with ``+1`` for same-side kernel cells and ``-1`` across the boundary.
+        Expanding the similarity ``S(a, b) = X[a] . X[b]`` by lag collapses the
+        double sum into weighted boxcar sums of the lag correlation ``R(l, t)``,
+        which keeps memory at O(frames) instead of materializing a self-
+        similarity matrix.
+        """
+        total_frames = features.shape[0]
+        novelty = np.full(total_frames, -np.inf, dtype=np.float64)
+        frame_duration = 1.0 / self._feature_fps
+
+        for candidate in self._candidates:
+            half = round(candidate * self._feature_fps / 2.0)
+            if half < 2 or 2 * half > total_frames:
+                continue
+            score = self._checkerboard_scores(features, half)
+            if score.size == 0:
+                continue
+            valid = novelty[half : half + score.size]
+            np.maximum(valid, score, out=valid)
+            novelty[half : half + score.size] = valid
+
+        novelty[~np.isfinite(novelty)] = 0.0
+        # Candidate lags overlap; the max over lags can be noisy at the very
+        # edges, so smooth with a small centered moving average (~5 s).
+        return _moving_average(novelty, round(5.0 / frame_duration))
+
+    @staticmethod
+    def _checkerboard_scores(features: np.ndarray, half: int) -> np.ndarray:
+        """Checkerboard novelty for one half-window size, all valid positions."""
+        total_frames = features.shape[0]
+        span = 2 * half
+        # Per-lag local correlation R(l, t) = X[t] . X[t + l].
+        lag_weights = np.empty(span, dtype=np.float64)
+        novelty = np.zeros(total_frames - span + 1, dtype=np.float64)
+        for lag in range(1, span):
+            if lag >= half:
+                lag_weights[lag] = -(span - lag)
+            else:
+                lag_weights[lag] = 2.0 * half - 3.0 * lag
+            correlation = np.einsum(
+                "ft,ft->f",
+                features[: total_frames - lag],
+                features[lag:],
+                optimize=True,
+            )
+            cumulative = np.concatenate(([0.0], np.cumsum(correlation)))
+            # Boxcar sum of correlation over positions [t, t + span - lag):
+            # Nov(j) += c_l * (cum[j + span - lag] - cum[j]).
+            positions = np.arange(0, len(novelty))
+            box = cumulative[positions + span - lag] - cumulative[positions]
+            novelty += lag_weights[lag] * box
+        # The lag-0 diagonal is constant (L2-normalized rows) and drops out.
+        return novelty
+
+    # -------------------------------------------------------------- passages
+
+    def _pick_boundaries(
+        self,
+        novelty: np.ndarray,
+        feature_times: np.ndarray,
+        total_duration_seconds: float,
+    ) -> list[float]:
+        """Pick novelty peaks, separated by at least ``min_passage``."""
+        if novelty.size < 3 or float(novelty.std()) < 1e-9:
+            return []  # flat/degenerate audio: rely on subdivision only
+        # 3 sigma: stationary material produces tiny numerical ripples that
+        # must not be mistaken for transitions.
+        threshold = float(novelty.mean() + 3.0 * novelty.std())
+        min_gap = max(1, round(self._min_passage * self._feature_fps))
+        candidates = [
+            index
+            for index in range(1, novelty.size - 1)
+            if novelty[index] >= novelty[index - 1]
+            and novelty[index] >= novelty[index + 1]
+            and novelty[index] >= threshold
+        ]
+        selected: list[int] = []
+        for index in sorted(candidates, key=lambda i: novelty[i], reverse=True):
+            if all(abs(index - chosen) >= min_gap for chosen in selected):
+                selected.append(index)
+        times = [
+            float(feature_times[index])
+            for index in sorted(selected)
+            if 0.0 < float(feature_times[index]) < total_duration_seconds
+        ]
+        return times
+
+    def _build_passages(
+        self,
+        boundaries: Sequence[float],
+        total_duration_seconds: float,
+    ) -> tuple[TimeRange, ...]:
+        """Turn boundaries into passages honoring the min/max passage bounds."""
+        edges = [0.0]
+        for boundary in boundaries:
+            r_b = round(boundary, 3)
+            if 0.0 < r_b < total_duration_seconds:
+                edges.append(r_b)
+        # Always use unrounded total_duration_seconds for the terminal edge;
+        # never round upward past total_duration_seconds.
+        edges.append(total_duration_seconds)
+        edges = sorted(set(edges))
+
+        # Merge sections shorter than the minimum into their weaker neighbour
+        # (greedily into the previous section; the first into the next).
+        sections = list(edges)
+        changed = True
+        while changed and len(sections) > 2:
+            changed = False
+            for index in range(len(sections) - 1):
+                if sections[index + 1] - sections[index] < self._min_passage:
+                    if index == 0:
+                        del sections[1]
+                    elif index + 2 == len(sections):
+                        del sections[-2]
+                    else:
+                        # Drop the boundary of the shorter adjacent section.
+                        left = sections[index] - sections[index - 1]
+                        right = sections[index + 2] - sections[index + 1]
+                        del sections[index + 1 if right >= left else index]
+                    changed = True
+                    break
+
+        # Subdivide long flat regions evenly; equal splits of a >max region
+        # always stay >= min because max >= 2 * min by construction.
+        passages: list[TimeRange] = []
+        for s_idx, (start, end) in enumerate(pairwise(sections)):
+            span = end - start
+            if span <= 0:
+                continue
+            parts = max(1, math.ceil(span / self._max_passage - 1e-9))
+            step = span / parts
+            is_last_section = s_idx == len(sections) - 2
+            for part in range(parts):
+                piece_start = start + part * step
+                piece_end = piece_start + step if part < parts - 1 else end
+                is_last_piece = is_last_section and (part == parts - 1)
+
+                p_start = round(piece_start, 3)
+                if is_last_piece:
+                    # NEVER round upward past total_duration_seconds
+                    p_end = min(round(piece_end, 3), total_duration_seconds)
+                    if p_end <= p_start:
+                        p_start = round(max(0.0, p_end - 0.001), 3)
+                else:
+                    p_end = min(round(piece_end, 3), total_duration_seconds)
+
+                if p_end > p_start:
+                    passages.append(TimeRange(p_start, p_end))
+        return tuple(passages)
+
+
+def _moving_average(values: np.ndarray, window: int) -> np.ndarray:
+    """Centered moving average with edge truncation (no padding)."""
+    if window <= 1 or values.size <= window:
+        return values
+    half = window // 2
+    kernel = np.ones(window, dtype=np.float64) / window
+    smoothed = np.convolve(values, kernel, mode="same")
+    smoothed[:half] = values[:half]
+    smoothed[-half:] = values[-half:]
+    return smoothed
+
+
+__all__ = [
+    "SEGMENT_SAMPLE_RATE",
+    "SetSegmenter",
+]
+
+```
+
+### 6.6 `backend/src/data/datasources/remote/shazam_client.py`
+
+```python
+"""Exact-ID fingerprinting through ``shazamio``.
+
+Each passage contributes a ~12 s snippet; recognition runs under a semaphore
+(default 3) with small jitter so Shazam's public endpoint is never hammered.
+Unreleased IDs, unknown tracks, and network hiccups all degrade gracefully to
+``None`` — "no match" must never abort an analysis. ``shazamio`` is imported
+lazily inside the recognition path and snippets are wrapped into a WAV
+container in memory (stdlib ``wave``) because raw PCM has no recognizable
+container header.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import io
+import logging
+import random
+import struct
+import wave
+from collections.abc import Callable
+from typing import Any
+
+from domain.entities.track import AudioBuffer, TrackReference
+from domain.interfaces.audio_engine import IFingerprinter
+
+from ...errors import FingerprintError
+
+LOGGER = logging.getLogger(__name__)
+
+#: Parallel recognition ceiling — polite toward the public Shazam endpoint.
+MAX_CONCURRENCY = 3
+#: Extra delay between recognitions to space out bursts.
+JITTER_SECONDS = 0.25
+
+
+RecognizerFactory = Callable[[], Any]
+
+
+class ShazamFingerprinter(IFingerprinter):
+    """Async-only fingerprinter backed by the ``shazamio`` service."""
+
+    def __init__(
+        self,
+        *,
+        recognizer_factory: RecognizerFactory | None = None,
+        max_concurrency: int = MAX_CONCURRENCY,
+        jitter_seconds: float = JITTER_SECONDS,
+        timeout_seconds: float = 15.0,
+        max_consecutive_failures: int = 5,
+    ) -> None:
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be at least 1")
+        if jitter_seconds < 0:
+            raise ValueError("jitter_seconds must not be negative")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures must be at least 1")
+        self._recognizer_factory = recognizer_factory or self._default_factory
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._jitter_seconds = jitter_seconds
+        self._timeout_seconds = timeout_seconds
+        self._max_consecutive_failures = max_consecutive_failures
+        self._recognizer: Any | None = None
+        self._consecutive_failures: int = 0
+        self._circuit_open: bool = False
+
+    # ------------------------------------------------------------------ API
+
+    @property
+    def is_circuit_open(self) -> bool:
+        """True when consecutive timeouts/errors have opened the circuit breaker."""
+        return self._circuit_open
+
+    def reset_circuit_breaker(self) -> None:
+        """Reset the consecutive failure count and close the circuit breaker."""
+        self._consecutive_failures = 0
+        self._circuit_open = False
+
+    def compute(self, audio: AudioBuffer) -> str:
+        """Stable content fingerprint (sha256 of the PCM bytes)."""
+        return hashlib.sha256(audio.pcm_bytes).hexdigest()
+
+    def identify(self, audio: AudioBuffer) -> Any | None:
+        """Sync seam: unsupported — Shazam recognition is async-only.
+
+        The interface's :meth:`identify_async` is the real entry point; the
+        sync variant returns ``None`` (documented "unidentified") instead of
+        blocking or raising inside a running event loop.
+        """
+        LOGGER.debug(
+            "ShazamFingerprinter.identify is sync-unsupported; use identify_async"
+        )
+        return None
+
+    async def identify_async(self, audio: AudioBuffer) -> TrackReference | None:
+        """Recognize one snippet; ``None`` means "no confident match"."""
+        if self._circuit_open:
+            LOGGER.warning("Shazam circuit breaker open; skipping recognition call")
+            return None
+
+        try:
+            recognizer = self._ensure_recognizer()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - missing shazamio degrades to None
+            LOGGER.warning("Shazam recognizer unavailable: %s", exc)
+            return None
+
+        wav_bytes = pcm_to_wav(audio)
+        async with self._semaphore:
+            if self._jitter_seconds:
+                await asyncio.sleep(random.uniform(0.05, self._jitter_seconds))
+            try:
+                result = await asyncio.wait_for(
+                    self._recognize(recognizer, wav_bytes),
+                    timeout=self._timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except TimeoutError:
+                self._consecutive_failures += 1
+                LOGGER.warning(
+                    "Shazam recognition timed out after %.1fs (failure %d/%d)",
+                    self._timeout_seconds,
+                    self._consecutive_failures,
+                    self._max_consecutive_failures,
+                )
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    self._circuit_open = True
+                    LOGGER.warning(
+                        "Shazam circuit breaker opened after %d consecutive failures; skipping subsequent calls",
+                        self._consecutive_failures,
+                    )
+                return None
+            except Exception as exc:  # noqa: BLE001 - one bad snippet must not fail the set
+                self._consecutive_failures += 1
+                LOGGER.debug(
+                    "Shazam recognition failed (failure %d/%d): %s",
+                    self._consecutive_failures,
+                    self._max_consecutive_failures,
+                    exc,
+                )
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    self._circuit_open = True
+                    LOGGER.warning(
+                        "Shazam circuit breaker opened after %d consecutive failures; skipping subsequent calls",
+                        self._consecutive_failures,
+                    )
+                return None
+
+        self._consecutive_failures = 0
+        return self._reference_from_result(result)
+
+    # ------------------------------------------------------------ internals
+
+    @staticmethod
+    def _default_factory() -> Any:
+        from shazamio import Shazam  # lazy: heavy dependency graph
+
+        return Shazam()
+
+    def _ensure_recognizer(self) -> Any:
+        if self._recognizer is None:
+            self._recognizer = self._recognizer_factory()
+        return self._recognizer
+
+    @staticmethod
+    async def _recognize(recognizer: Any, wav_bytes: bytes) -> Any:
+        recognize = getattr(recognizer, "recognize", None)
+        if recognize is None:
+            recognize = recognizer.full_recognize
+        return await recognize(wav_bytes)
+
+    @staticmethod
+    def _reference_from_result(result: Any) -> TrackReference | None:
+        if not isinstance(result, dict):
+            return None
+        track = result.get("track")
+        if not isinstance(track, dict):
+            return None  # unrecognized or unreleased: Shazam found no track
+        title = str(track.get("title") or "").strip()
+        subtitle = str(track.get("subtitle") or "").strip()
+        if not title or not subtitle:
+            return None
+        try:
+            return TrackReference(
+                artist=subtitle,
+                title=title,
+                confidence=1.0,
+            )
+        except (TypeError, ValueError):
+            return None
+
+
+def pcm_to_wav(audio: AudioBuffer) -> bytes:
+    """Wrap mono float32 PCM into a 16-bit WAV container in memory."""
+    if audio.sample_rate <= 0:
+        raise FingerprintError("audio sample rate must be positive")
+    count = len(audio.pcm_bytes) // 4
+    samples = struct.unpack(f"<{count}f", audio.pcm_bytes[: count * 4])
+    int16 = b"".join(
+        struct.pack("<h", max(-32768, min(32767, int(sample * 32767.0))))
+        for sample in samples
+    )
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(audio.sample_rate)
+        handle.writeframes(int16)
+    return buffer.getvalue()
+
+
+__all__ = ["MAX_CONCURRENCY", "ShazamFingerprinter", "pcm_to_wav"]
+
+```
+
+### 6.7 `backend/src/domain/use_cases/analyze_dj_set.py`
+
+```python
+"""Use case: analyze a full DJ set into passages, IDs, and matches.
+
+Pipeline (memory-bounded for 16 GB RAM / 6 GB VRAM):
+
+1. ``ISetDownloader.fetch_set`` resolves a URL or local file to audio on disk
+   (downloaded files land in the storage cache and are marked temporary).
+2. ``IAudioSegmenter.detect_passages`` streams a 16 kHz mono view to find
+   musically coherent passages — the full set is never decoded into RAM.
+3. For every passage, only a clean 30 s window from its middle (skipping
+   crossfade edges) is decoded at a time; BPM/key extraction runs on the
+   bounded CPU pool and the 30 s buffers are embedded on GPU in FP16
+   micro-batches, then released immediately.
+4. Exact IDs come from two sources: comment timestamps parsed by the local
+   LLM (matched within ±45 s of a passage) and async fingerprinting
+   (Shazam) for passages the comments could not name.
+5. Every passage — including unreleased "no-ID" ones — gets its closest
+   catalog tracks within ±5 BPM (DigDeeper's "closest we found").
+6. The set's tempo range and L2-normalized mean embedding are persisted
+   through ``ISetRepository``; discovered artist names snowball into the seed
+   list; the temporary download is deleted unless ``keep_audio`` is set.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import math
+from collections.abc import Callable, Sequence
+from concurrent.futures import Executor, ProcessPoolExecutor
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any
+
+from ..entities.dj_set import DJSet, DownloadedSet, Passage, TrackMatch
+from ..entities.search import SearchFilter
+from ..entities.track import SeedArtist, TrackReference
+from ..interfaces.audio_engine import (
+    IAudioDecoder,
+    IAudioEmbedder,
+    IAudioSegmenter,
+    IFeatureExtractor,
+    IFingerprinter,
+    ISetDownloader,
+)
+from ..interfaces.llm import ILLMService
+from ..interfaces.repositories import ISeedRepository, ISetRepository, ITrackRepository
+from ..value_objects.audio_features import (
+    BPM,
+    BPM_MAX,
+    BPM_MIN,
+    AudioFeatures,
+    EmbeddingVector,
+    TimeRange,
+)
+
+LOGGER = logging.getLogger(__name__)
+
+#: GPU micro-batch ceiling for the 6 GB card (AnalysisBatch rule from AGENTS).
+MAX_EMBED_BATCH = 16
+DEFAULT_CORE_WINDOW_SECONDS = 30.0
+DEFAULT_SNIPPET_SECONDS = 12.0
+DEFAULT_BPM_MATCH_TOLERANCE = 5.0
+DEFAULT_ID_MATCH_TOLERANCE_SECONDS = 45.0
+DEFAULT_MAX_MATCHES_PER_PASSAGE = 5
+#: Snowball priority for artists discovered inside DJ sets.
+DISCOVERY_PRIORITY = 0.9
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyzeEvent:
+    """Progress event emitted at each pipeline stage."""
+
+    stage: str
+    completed: int
+    total: int
+    message: str = ""
+    failed: int = 0
+
+
+class AnalyzeDJSet:
+    """Analyze one DJ set end-to-end and persist it for set-to-set digging."""
+
+    def __init__(
+        self,
+        *,
+        set_downloader: ISetDownloader,
+        audio_segmenter: IAudioSegmenter,
+        audio_decoder: IAudioDecoder,
+        feature_extractor: IFeatureExtractor,
+        audio_embedder: IAudioEmbedder,
+        track_repository: ITrackRepository,
+        set_repository: ISetRepository,
+        seed_repository: ISeedRepository,
+        fingerprinter: IFingerprinter | None = None,
+        llm_service: ILLMService | None = None,
+        cpu_executor: Executor | None = None,
+        cpu_workers: int = 4,
+        embed_batch_size: int = MAX_EMBED_BATCH,
+        core_window_seconds: float = DEFAULT_CORE_WINDOW_SECONDS,
+        snippet_seconds: float = DEFAULT_SNIPPET_SECONDS,
+        bpm_match_tolerance: float = DEFAULT_BPM_MATCH_TOLERANCE,
+        id_match_tolerance_seconds: float = DEFAULT_ID_MATCH_TOLERANCE_SECONDS,
+        max_matches_per_passage: int = DEFAULT_MAX_MATCHES_PER_PASSAGE,
+    ) -> None:
+        if cpu_workers < 1:
+            raise ValueError("cpu_workers must be at least 1")
+        if not 1 <= embed_batch_size <= MAX_EMBED_BATCH:
+            raise ValueError(
+                f"embed_batch_size must be between 1 and {MAX_EMBED_BATCH}"
+            )
+        if core_window_seconds <= 0 or snippet_seconds <= 0:
+            raise ValueError("window sizes must be positive")
+        self._set_downloader = set_downloader
+        self._audio_segmenter = audio_segmenter
+        self._audio_decoder = audio_decoder
+        self._feature_extractor = feature_extractor
+        self._audio_embedder = audio_embedder
+        self._track_repository = track_repository
+        self._set_repository = set_repository
+        self._seed_repository = seed_repository
+        self._fingerprinter = fingerprinter
+        self._llm_service = llm_service
+        self._cpu_executor = cpu_executor
+        self._cpu_workers = cpu_workers
+        self._embed_batch_size = embed_batch_size
+        self._core_window_seconds = core_window_seconds
+        self._snippet_seconds = snippet_seconds
+        self._bpm_tolerance = bpm_match_tolerance
+        self._id_tolerance = id_match_tolerance_seconds
+        self._max_matches = max_matches_per_passage
+
+    async def execute(
+        self,
+        source: str,
+        *,
+        destination_dir: Path,
+        use_shazam: bool = True,
+        use_comments: bool = True,
+        keep_audio: bool = False,
+        progress: Callable[[AnalyzeEvent], None] | None = None,
+    ) -> DJSet:
+        """Analyze ``source`` and return the persisted :class:`DJSet`."""
+        downloaded = await self._set_downloader.fetch_set(
+            source, destination_dir, fetch_comments=use_comments
+        )
+        self._notify(progress, "download", 1, 1, downloaded.title)
+
+        try:
+            if downloaded.duration_seconds is None:
+                raise ValueError(
+                    "the downloaded set has no duration; cannot segment it"
+                )
+            duration = downloaded.duration_seconds
+
+            if self._fingerprinter is not None and hasattr(
+                self._fingerprinter, "reset_circuit_breaker"
+            ):
+                self._fingerprinter.reset_circuit_breaker()
+
+            ranges = await asyncio.to_thread(
+                self._audio_segmenter.detect_passages,
+                downloaded.audio_path,
+                duration,
+            )
+            if not ranges:
+                ranges = (TimeRange(0.0, duration),)
+            self._notify(
+                progress, "segment", len(ranges), len(ranges), f"{len(ranges)} passages"
+            )
+
+            own_executor = self._cpu_executor is None
+            executor = self._cpu_executor or ProcessPoolExecutor(
+                max_workers=self._cpu_workers
+            )
+            try:
+                passages = await self._analyze_passages(
+                    downloaded, ranges, executor, progress
+                )
+                passages = await self._identify_passages(
+                    downloaded,
+                    passages,
+                    use_shazam=use_shazam,
+                    use_comments=use_comments,
+                    progress=progress,
+                )
+            finally:
+                if own_executor:
+                    executor.shutdown(wait=True)
+
+            dj_set = self._build_set(source, downloaded, passages)
+            await self._set_repository.save(dj_set)
+            self._notify(progress, "persist", 1, 1, dj_set.id)
+            await self._snowball(passages, downloaded)
+            return dj_set
+        finally:
+            if downloaded.is_temporary and not keep_audio:
+                await asyncio.to_thread(_delete_quietly, downloaded.audio_path)
+
+    # --------------------------------------------------------- core windows
+
+    def _core_window(self, passage_range: TimeRange) -> TimeRange:
+        """Clean 30 s window centered in the passage (crossfades skipped)."""
+        span = passage_range.duration_seconds
+        window = min(self._core_window_seconds, span)
+        middle = passage_range.start_seconds + span / 2.0
+        start = middle - window / 2.0
+        return TimeRange(start, start + window)
+
+    async def _analyze_passages(
+        self,
+        downloaded: DownloadedSet,
+        ranges: Sequence[TimeRange],
+        executor: Executor,
+        progress: Callable[[AnalyzeEvent], None] | None,
+    ) -> list[Passage]:
+        """Decode/extract/embed in chunks so RAM holds one batch of windows."""
+        loop = asyncio.get_running_loop()
+        passages: list[Passage] = []
+        extract_completed = 0
+        embed_completed = 0
+        total_passages = len(ranges)
+
+        for chunk_start in range(0, total_passages, self._embed_batch_size):
+            chunk = list(ranges[chunk_start : chunk_start + self._embed_batch_size])
+            buffers = []
+            for passage_range in chunk:
+                core = self._core_window(passage_range)
+                buffers.append(
+                    await self._audio_decoder.decode_segment(
+                        downloaded.audio_path,
+                        core,
+                        sample_rate=48_000,
+                        channels=1,
+                    )
+                )
+
+            tasks = [
+                loop.run_in_executor(executor, self._feature_extractor.extract, b)
+                for b in buffers
+            ]
+            features: list[Any] = []
+            for p_range, fut in zip(chunk, tasks):
+                try:
+                    feature = await fut
+                except Exception as exc:  # noqa: BLE001
+                    feature = exc
+                features.append(feature)
+                extract_completed += 1
+                extracted = _coerce_features(feature)
+                bpm_str = f"{extracted.bpm.value:.0f} BPM" if extracted.bpm else "? BPM"
+                key_str = f", {extracted.key.notation}" if extracted.key else ""
+                self._notify(
+                    progress,
+                    "extract",
+                    extract_completed,
+                    total_passages,
+                    f"{_range_label(p_range)} ({bpm_str}{key_str})",
+                )
+
+            vectors = await asyncio.to_thread(self._audio_embedder.embed_batch, buffers)
+            # PCM is dead the moment embeddings exist.
+            buffers.clear()
+
+            chunk_passages: list[Passage] = []
+            for p_range, feature, vector in zip(chunk, features, vectors):
+                extracted = _coerce_features(feature)
+                passage = Passage(
+                    time_range=p_range,
+                    bpm=extracted.bpm,
+                    key=extracted.key,
+                    embedding=vector,
+                )
+                chunk_passages.append(passage)
+                embed_completed += 1
+                self._notify(
+                    progress,
+                    "embed",
+                    embed_completed,
+                    total_passages,
+                    _range_label(p_range),
+                )
+
+            passages.extend(chunk_passages)
+            await self._attach_closest_matches(
+                passages,
+                start=len(passages) - len(chunk_passages),
+                progress=progress,
+                total=total_passages,
+            )
+        return passages
+
+    async def _attach_closest_matches(
+        self,
+        passages: list[Passage],
+        *,
+        start: int,
+        progress: Callable[[AnalyzeEvent], None] | None = None,
+        total: int | None = None,
+    ) -> None:
+        """Fill each new passage's top catalog matches within ±5 BPM."""
+        total_count = total or len(passages)
+        for index in range(start, len(passages)):
+            passage = passages[index]
+            matches: tuple[TrackMatch, ...] = ()
+            if passage.embedding is not None:
+                try:
+                    matches = await self._find_closest(passage)
+                except Exception:
+                    LOGGER.exception(
+                        "closest-track lookup failed for %s", passage.time_range
+                    )
+            if matches:
+                passages[index] = replace(passage, closest_matches=matches)
+                top = matches[0]
+                detail = f": top {top.track.display_name} ({top.similarity_percent:.0f}%)"
+            else:
+                detail = ": no close match"
+            self._notify(
+                progress,
+                "match",
+                index + 1,
+                total_count,
+                f"{_range_label(passage.time_range)}{detail}",
+            )
+
+    async def _find_closest(self, passage: Passage) -> tuple[TrackMatch, ...]:
+        assert passage.embedding is not None
+        bpm_min: float | None = None
+        bpm_max: float | None = None
+        if passage.bpm is not None:
+            bpm_min = max(BPM_MIN, passage.bpm.value - self._bpm_tolerance)
+            bpm_max = min(BPM_MAX, passage.bpm.value + self._bpm_tolerance)
+        search_filter = SearchFilter(
+            limit=self._max_matches,
+            bpm_min=bpm_min,
+            bpm_max=bpm_max,
+        )
+        return tuple(
+            await self._track_repository.find_similar(passage.embedding, search_filter)
+        )
+
+    # --------------------------------------------------------- exact IDs
+
+    async def _identify_passages(
+        self,
+        downloaded: DownloadedSet,
+        passages: list[Passage],
+        *,
+        use_shazam: bool,
+        use_comments: bool,
+        progress: Callable[[AnalyzeEvent], None] | None,
+    ) -> list[Passage]:
+        """Fill exact-id fields from comments first, then Shazam for the rest."""
+        comment_references: tuple[TrackReference, ...] = ()
+        if use_comments and self._llm_service is not None and downloaded.comments:
+            try:
+                comment_references = tuple(
+                    await self._llm_service.extract_tracklist_from_comments(
+                        downloaded.comments, context=downloaded.title
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - LLM failure must not kill analysis
+                # An unconfigured or overloaded LLM must never kill an analysis.
+                LOGGER.warning("LLM tracklist extraction skipped: %s", exc)
+
+        total_passages = len(passages)
+        identified: list[Passage] = []
+        failed_count = 0
+
+        for idx, passage in enumerate(passages, start=1):
+            identified_passage = self._match_comment_reference(
+                passage, comment_references
+            )
+            msg = ""
+            if identified_passage.exact_id_match:
+                msg = f"Comments {idx}/{total_passages}: {identified_passage.exact_id_display_name}"
+            elif use_shazam and self._fingerprinter is not None:
+                if getattr(self._fingerprinter, "is_circuit_open", False):
+                    failed_count += 1
+                    msg = f"Shazam {idx}/{total_passages}: skipped (circuit open)"
+                else:
+                    shazam_result = await self._shazam_passage(
+                        downloaded, identified_passage
+                    )
+                    if shazam_result.exact_id_match:
+                        identified_passage = shazam_result
+                        msg = f"Shazam {idx}/{total_passages}: matched {identified_passage.exact_id_display_name}"
+                    else:
+                        failed_count += 1
+                        msg = f"Shazam {idx}/{total_passages}: no match / timed out"
+            else:
+                msg = f"Passage {idx}/{total_passages}: unidentified"
+
+            identified.append(identified_passage)
+            self._notify(
+                progress,
+                "identify",
+                idx,
+                total_passages,
+                message=msg,
+                failed=failed_count,
+            )
+
+        return identified
+
+    def _match_comment_reference(
+        self, passage: Passage, references: Sequence[TrackReference]
+    ) -> Passage:
+        """Attach the best comment reference within ±45 s of the passage."""
+        middle = (
+            passage.time_range.start_seconds + passage.time_range.duration_seconds / 2.0
+        )
+        best: TrackReference | None = None
+        for reference in references:
+            start = (
+                reference.timestamp.start_seconds
+                if reference.timestamp is not None
+                else None
+            )
+            if start is None:
+                continue
+            if abs(start - middle) > self._id_tolerance:
+                continue
+            if best is None or reference.confidence > best.confidence:
+                best = reference
+        if best is None:
+            return passage
+        return replace(
+            passage,
+            exact_id_match=True,
+            exact_id_title=best.title,
+            exact_id_artist=best.artist,
+            exact_id_source="comments",
+        )
+
+    async def _shazam_passage(
+        self, downloaded: DownloadedSet, passage: Passage
+    ) -> Passage:
+        assert self._fingerprinter is not None
+        span = passage.time_range.duration_seconds
+        middle = passage.time_range.start_seconds + span / 2.0
+        window = min(self._snippet_seconds, span)
+        try:
+            snippet = await self._audio_decoder.decode_segment(
+                downloaded.audio_path,
+                TimeRange(middle - window / 2.0, middle + window / 2.0),
+                sample_rate=16_000,
+                channels=1,
+            )
+            reference = await self._fingerprinter.identify_async(snippet)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - fingerprinting is best-effort
+            LOGGER.warning(
+                "Shazam identification failed for %s: %s", passage.time_range, exc
+            )
+            return passage
+        if reference is None:
+            return passage
+        return replace(
+            passage,
+            exact_id_match=True,
+            exact_id_title=reference.title,
+            exact_id_artist=reference.artist,
+            exact_id_source="shazam",
+        )
+
+    # ------------------------------------------------------------- persist
+
+    def _build_set(
+        self,
+        source: str,
+        downloaded: DownloadedSet,
+        passages: Sequence[Passage],
+    ) -> DJSet:
+        duration = downloaded.duration_seconds
+        clamped_passages: list[Passage] = []
+        for p in passages:
+            if duration is not None and p.time_range.end_seconds > duration:
+                start = min(p.time_range.start_seconds, max(0.0, duration - 0.001))
+                clamped_passages.append(
+                    replace(p, time_range=TimeRange(start, duration))
+                )
+            else:
+                clamped_passages.append(p)
+
+        bpms = [p.bpm.value for p in clamped_passages if p.bpm is not None]
+        embedding = _mean_embedding([p.embedding for p in clamped_passages])
+        return DJSet(
+            id=f"set-{hashlib.sha256(source.encode('utf-8')).hexdigest()[:12]}",
+            title=downloaded.title,
+            source_url=downloaded.source_url,
+            duration_seconds=downloaded.duration_seconds,
+            artist=downloaded.artist,
+            thumbnail_url=downloaded.thumbnail_url,
+            bpm_min=BPM(min(bpms)) if bpms else None,
+            bpm_max=BPM(max(bpms)) if bpms else None,
+            embedding=embedding,
+            passages=tuple(clamped_passages),
+        )
+
+    async def _snowball(
+        self, passages: Sequence[Passage], downloaded: DownloadedSet
+    ) -> None:
+        """Auto-enqueue newly discovered artist names as high-priority seeds."""
+        names: dict[str, str] = {}
+        for passage in passages:
+            if passage.exact_id_artist:
+                names[passage.exact_id_artist.casefold()] = passage.exact_id_artist
+        if not names:
+            return
+        seeds = [
+            SeedArtist(
+                name=name,
+                priority_score=DISCOVERY_PRIORITY,
+                category="electronic",
+                status="pending",
+                source="dj-set",
+            )
+            for name in sorted(names.values())
+        ]
+        try:
+            await self._seed_repository.record_discovery(seeds)
+        except Exception:
+            LOGGER.exception("seed snowballing failed; analysis result is kept")
+
+    @staticmethod
+    def _notify(
+        progress: Callable[[AnalyzeEvent], None] | None,
+        stage: str,
+        completed: int,
+        total: int,
+        message: str = "",
+        failed: int = 0,
+    ) -> None:
+        if progress is not None:
+            progress(
+                AnalyzeEvent(
+                    stage=stage,
+                    completed=completed,
+                    total=total,
+                    message=message,
+                    failed=failed,
+                )
+            )
+
+
+# ------------------------------------------------------------------ helpers
+
+
+def _coerce_features(feature: Any) -> AudioFeatures:
+    """Pass through AudioFeatures; failed extractions degrade to empty."""
+    if feature is None or isinstance(feature, BaseException):
+        return AudioFeatures()
+    return feature
+
+
+def _range_label(passage_range: TimeRange) -> str:
+    minutes = int(passage_range.start_seconds // 60)
+    seconds = int(passage_range.start_seconds % 60)
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _mean_embedding(
+    vectors: Sequence[EmbeddingVector | None],
+) -> EmbeddingVector | None:
+    """L2-normalized mean of the given vectors (None when there are none)."""
+    present = [vector for vector in vectors if vector is not None]
+    if not present:
+        return None
+    dimension = len(present[0].values)
+    mean = [0.0] * dimension
+    for vector in present:
+        if len(vector.values) != dimension:
+            raise ValueError("passage embeddings have mixed dimensions")
+        for index, value in enumerate(vector.values):
+            mean[index] += value
+    count = float(len(present))
+    norm = math.sqrt(math.fsum(value * value / (count * count) for value in mean))
+    if norm <= 0.0:
+        return None
+    normalized = tuple(value / count / norm for value in mean)
+    return EmbeddingVector(values=normalized, dimension=dimension)
+
+
+def _delete_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        LOGGER.warning("could not delete temporary set audio %s", path)
+
+
+__all__ = ["MAX_EMBED_BATCH", "AnalyzeDJSet", "AnalyzeEvent"]
+
 ```

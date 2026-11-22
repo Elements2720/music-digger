@@ -170,3 +170,32 @@ def test_invalid_duration_raises() -> None:
         segmenter.detect_passages(Path("fake.m4a"), 0.0)
     with pytest.raises(ValueError, match="total_duration_seconds"):
         segmenter.plan_segments(-1.0)
+
+
+def test_non_integer_duration_never_exceeds_total_duration() -> None:
+    # 7374.262857 would round up to 7374.263 if rounded, which must NEVER happen
+    pcm = _pcm_bytes(np.zeros(int(10.0 * _SAMPLE_RATE), dtype=np.float32))
+    segmenter = _segmenter(stream_factory=_factory(pcm))
+    duration = 7374.262857
+
+    passages = segmenter.detect_passages(Path("fake.m4a"), duration)
+
+    assert passages
+    for passage in passages:
+        assert passage.end_seconds <= duration
+        assert passage.start_seconds < passage.end_seconds
+    assert passages[-1].end_seconds <= duration
+
+
+def test_build_passages_clamps_final_boundary_strictly() -> None:
+    segmenter = _segmenter()
+    duration = 7374.262857
+    boundaries = [100.0, 500.0, 7300.0]
+
+    passages = segmenter._build_passages(boundaries, duration)
+
+    assert passages
+    for passage in passages:
+        assert passage.end_seconds <= duration
+        assert passage.start_seconds < passage.end_seconds
+    assert passages[-1].end_seconds <= duration

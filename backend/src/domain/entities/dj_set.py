@@ -189,12 +189,23 @@ class DJSet:
             duration = require_float(self.duration_seconds, "duration_seconds")
             if duration <= 0:
                 raise ValueError("duration_seconds must be positive")
+            tolerance = 0.05
+            adjusted_passages: list[Passage] = []
             for passage in self.passages:
-                if passage.time_range.end_seconds > duration:
+                end = passage.time_range.end_seconds
+                if end > duration + tolerance:
                     raise ValueError(
                         "passage ends after the DJ set duration: "
-                        f"{passage.time_range.end_seconds} > {duration}"
+                        f"{end} > {duration}"
                     )
+                if end > duration:
+                    start = min(
+                        passage.time_range.start_seconds,
+                        max(0.0, duration - 0.001),
+                    )
+                    passage = replace(passage, time_range=TimeRange(start, duration))
+                adjusted_passages.append(passage)
+            object.__setattr__(self, "passages", tuple(adjusted_passages))
             object.__setattr__(self, "duration_seconds", duration)
 
     @property

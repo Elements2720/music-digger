@@ -46,9 +46,38 @@ const FIELDS = {
 let mounted = false;
 let source = null;
 let lastStatus = null;
+let currentJobId = null;
+let recentMessages = [];
 
 function $(id) {
   return document.getElementById(id);
+}
+
+function updateJobLog(job) {
+  const logEl = $("job-log");
+  if (!logEl) return;
+  if (!job || job.status === "idle") {
+    currentJobId = null;
+    recentMessages = [];
+    logEl.replaceChildren();
+    return;
+  }
+  if (job.id && job.id !== currentJobId) {
+    currentJobId = job.id;
+    recentMessages = [];
+    logEl.replaceChildren();
+  }
+  const msg = job.message ? job.message.trim() : "";
+  if (msg && (!recentMessages.length || recentMessages[recentMessages.length - 1] !== msg)) {
+    recentMessages.push(msg);
+    if (recentMessages.length > 10) {
+      recentMessages.shift();
+    }
+    logEl.replaceChildren(
+      ...recentMessages.map((m) => el("div", { class: "job-log-item", text: m }))
+    );
+    logEl.scrollTop = logEl.scrollHeight;
+  }
 }
 
 function renderParams(kind) {
@@ -150,7 +179,7 @@ function handleEvent(event) {
   }
   if (event.type === "progress") {
     renderJob(event.job);
-    renderTelemetry(event.speed, event.memory);
+    renderTelemetry(event.speed, event.memory, event.job);
     return;
   }
   renderJob(event.job);
@@ -164,6 +193,7 @@ function renderJob(job) {
     $("job-idle").classList.remove("hidden");
     $("job-live").classList.add("hidden");
     $("job-cancel").classList.add("hidden");
+    updateJobLog(null);
     return;
   }
 
@@ -179,6 +209,7 @@ function renderJob(job) {
   $("job-failed").textContent = String(job.failed ?? 0);
   $("job-message").textContent = job.message || "";
   $("job-cancel").classList.toggle("hidden", job.status !== "running");
+  updateJobLog(job);
 
   const fill = $("job-progress");
   if (job.status === "running" && (!job.total || job.total <= 0)) {
@@ -196,9 +227,10 @@ function renderJob(job) {
   lastStatus = job.status;
 }
 
-function renderTelemetry(speed, memory) {
+function renderTelemetry(speed, memory, job) {
+  const unit = job?.kind === "analyze-set" ? "passages/s" : "tracks/s";
   $("job-speed").textContent =
-    speed === null || speed === undefined ? "—" : `${speed} tracks/s`;
+    speed === null || speed === undefined ? "—" : `${speed} ${unit}`;
   if (!memory) return;
   $("job-vram").textContent =
     memory.vram_total_mb === null || memory.vram_total_mb === undefined

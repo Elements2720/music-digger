@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import struct
 import wave
@@ -154,3 +155,101 @@ def test_invalid_construction_parameters_rejected() -> None:
         ShazamFingerprinter(max_concurrency=0)
     with pytest.raises(ValueError, match="jitter"):
         ShazamFingerprinter(jitter_seconds=-1.0)
+    with pytest.raises(ValueError, match="timeout"):
+        ShazamFingerprinter(timeout_seconds=0.0)
+    with pytest.raises(ValueError, match="consecutive"):
+        ShazamFingerprinter(max_consecutive_failures=0)
+
+
+async def test_timeout_degrades_cleanly_to_none() -> None:
+    class HangingRecognizer:
+        async def recognize(self, wav_bytes: bytes) -> dict[str, Any]:
+            await asyncio.sleep(1.0)
+            return {"track": {"title": "X", "subtitle": "Y"}}
+
+    fingerprinter = ShazamFingerprinter(
+        recognizer_factory=HangingRecognizer,
+        jitter_seconds=0.0,
+        timeout_seconds=0.05,
+    )
+
+    result = await fingerprinter.identify_async(_buffer())
+    assert result is None
+
+
+async def test_circuit_breaker_triggers_after_consecutive_failures() -> None:
+    calls: list[int] = []
+
+    class FailingRecognizer:
+        async def recognize(self, wav_bytes: bytes) -> dict[str, Any]:
+            calls.append(len(calls) + 1)
+            raise RuntimeError("API rate limited")
+
+    fingerprinter = ShazamFingerprinter(
+        recognizer_factory=FailingRecognizer,
+        jitter_seconds=0.0,
+        timeout_seconds=0.1,
+        max_consecutive_failures=3,
+    )
+
+    # 3 failures should trigger the circuit breaker
+    for _ in range(3):
+        assert await fingerprinter.identify_async(_buffer()) is None
+
+    assert len(calls) == 3
+    assert fingerprinter.is_circuit_open is True
+
+    # 4th call is skipped immediately without invoking recognizer
+    assert await fingerprinter.identify_async(_buffer()) is None
+    assert len(calls) == 3  # not called!
+
+
+async def test_circuit_breaker_resets_on_success_or_manual_reset() -> None:
+    calls: list[int] = []
+
+    class FlakyRecognizer:
+        should_fail = True
+
+        async def recognize(self, wav_bytes: bytes) -> dict[str, Any]:
+            calls.append(1)
+            if self.should_fail:
+                raise RuntimeError("temporary outage")
+            return {"track": {"title": "Working", "subtitle": "Artist"}}
+
+    recognizer = FlakyRecognizer()
+    fingerprinter = ShazamFingerprinter(
+        recognizer_factory=lambda: recognizer,
+        jitter_seconds=0.0,
+        timeout_seconds=0.1,
+        max_consecutive_failures=2,
+    )
+
+    # Fail twice to trip the circuit breaker
+    await fingerprinter.identify_async(_buffer())
+    await fingerprinter.identify_async(_buffer())
+    assert fingerprinter.is_circuit_open is True
+
+    # Manual reset closes the breaker
+    fingerprinter.reset_circuit_breaker()
+    assert fingerprinter.is_circuit_open is False
+
+    # Now make it succeed
+    recognizer.should_fail = False
+    result = await fingerprinter.identify_async(_buffer())
+    assert result is not None
+    assert result.title == "Working"
+    assert fingerprinter.is_circuit_open is False
+
+
+async def test_cancelled_error_is_never_swallowed() -> None:
+    class CancelledRecognizer:
+        async def recognize(self, wav_bytes: bytes) -> dict[str, Any]:
+            raise asyncio.CancelledError()
+
+    fingerprinter = ShazamFingerprinter(
+        recognizer_factory=CancelledRecognizer,
+        jitter_seconds=0.0,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await fingerprinter.identify_async(_buffer())

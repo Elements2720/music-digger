@@ -158,6 +158,10 @@ class IFingerprinter(ABC):
 
         return _run()
 
+    def reset_circuit_breaker(self) -> None:
+        """Reset any consecutive failure counts or circuit breaker state."""
+        return
+
 
 class ISetDownloader(ABC):
     """Downloads a full DJ set to disk for window-by-window analysis."""
