@@ -74,6 +74,7 @@ class ISeedDiscovery(ABC):
         general_limit: int = 300,
         max_depth: int = 2,
         progress: Callable[[CrawlProgress], None] | None = None,
+        seed_artists: Sequence[str] | None = None,
     ) -> Sequence[SeedArtist]:
         """Return deduplicated seeds across electronic and general categories.
 

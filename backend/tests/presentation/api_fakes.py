@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 
 from domain.entities.dj_set import DJSet, Passage, SetMatch, TrackMatch
 from domain.entities.search import SearchFilter
-from domain.entities.track import AudioBuffer, Track
+from domain.entities.track import AudioBuffer, SeedArtist, Track
 from domain.interfaces.repositories import ISetRepository, ITrackRepository
 from domain.use_cases import DigSimilarTracks, FindSimilarForSet, VibeSearch
 from domain.value_objects.audio_features import EmbeddingVector, TimeRange
@@ -126,6 +126,13 @@ class FakeTrackRepository(ITrackRepository):
     async def count_embedded(self) -> int:
         return sum(1 for t in self.tracks.values() if t.embedding is not None)
 
+    async def get_embedded_ids(self, track_ids: Sequence[str]) -> frozenset[str]:
+        return frozenset(
+            track_id
+            for track_id in track_ids
+            if track_id in self.tracks and self.tracks[track_id].embedding is not None
+        )
+
     async def list_unembedded(
         self, limit: int = 100, *, max_failures: int = 3
     ) -> Sequence[Track]:
@@ -216,6 +223,11 @@ class FakeSeedRepository:
 
     async def count_by_category(self, category: str) -> int:
         return self._counts[category]
+
+    async def list_by_source(
+        self, source: str, limit: int = 100
+    ) -> Sequence[SeedArtist]:
+        return ()
 
 
 class FakeEmbedder:
@@ -373,6 +385,59 @@ class FakeAnalyzeDJSet:
         return self._dj_set
 
 
+class FakeImportLocalLibrary:
+    def __init__(
+        self,
+        *,
+        scanned: int = 10,
+        imported: int = 8,
+        embedded: int = 8,
+        failed: int = 0,
+        artists_seeded: int = 5,
+    ) -> None:
+        self.scanned = scanned
+        self.imported = imported
+        self.embedded = embedded
+        self.failed = failed
+        self.artists_seeded = artists_seeded
+        self.calls: list[dict[str, Any]] = []
+
+    async def execute(
+        self,
+        folder_path: Any,
+        *,
+        recursive: bool = True,
+        batch_size: int = 16,
+        reindex: bool = False,
+        seed_artists: bool = True,
+        progress: Any = None,
+    ) -> Any:
+        self.calls.append({
+            "folder_path": folder_path,
+            "recursive": recursive,
+            "batch_size": batch_size,
+            "reindex": reindex,
+            "seed_artists": seed_artists,
+        })
+        if progress is not None:
+            progress(
+                SimpleNamespace(
+                    stage="indexing",
+                    completed=self.imported,
+                    total=self.scanned,
+                    failed=self.failed,
+                    message="Artist - Title",
+                )
+            )
+        return SimpleNamespace(
+            scanned=self.scanned,
+            imported=self.imported,
+            embedded=self.embedded,
+            failed=self.failed,
+            artists_seeded=self.artists_seeded,
+        )
+
+
 class FakeDownloader:
     def __init__(self) -> None:
         self.calls: list[tuple[Path | None, str | None]] = []
@@ -479,6 +544,7 @@ def make_container(
         build_seed_list=FakeBuildSeedList(),
         crawl_itunes_seeds=FakeCrawlITunesSeeds(),
         fetch_catalog_metadata=FakeFetchMetadata(),
+        import_local_library=FakeImportLocalLibrary(),
         analyze_dj_set=FakeAnalyzeDJSet(dj_set),
         set_downloader=FakeDownloader(),
         clap_embedder=embedder,

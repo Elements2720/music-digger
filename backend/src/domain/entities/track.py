@@ -49,6 +49,7 @@ class Track:
     source: str = "unknown"
     external_id: str | None = None
     embedding: EmbeddingVector | None = None
+    local_path: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", require_str(self.id, "id"))
@@ -79,6 +80,9 @@ class Track:
         object.__setattr__(self, "store_url", optional_str(self.store_url, "store_url"))
         object.__setattr__(
             self, "external_id", optional_str(self.external_id, "external_id")
+        )
+        object.__setattr__(
+            self, "local_path", optional_str(self.local_path, "local_path")
         )
 
         if self.release_year is not None:

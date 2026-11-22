@@ -125,6 +125,24 @@ class SQLiteSeedRepository(ISeedRepository):
         )
         return tuple(row_to_seed(row) for row in rows)
 
+    async def list_by_source(
+        self,
+        source: str,
+        limit: int = 100,
+    ) -> Sequence[SeedArtist]:
+        if limit <= 0:
+            return ()
+        rows = await self._sqlite.fetchall(
+            """
+            SELECT * FROM seed_artists
+            WHERE source = ?
+            ORDER BY priority_score DESC, name COLLATE NOCASE ASC
+            LIMIT ?
+            """,
+            (source, limit),
+        )
+        return tuple(row_to_seed(row) for row in rows)
+
     async def update_status(self, name: str, status: SeedStatus) -> None:
         self._validate_status(status)
         await self._sqlite.execute(

@@ -166,6 +166,7 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
         general_limit: int = 300,
         max_depth: int = 2,
         progress: Callable[[CrawlProgress], None] | None = None,
+        seed_artists: Sequence[str] | None = None,
     ) -> Sequence[SeedArtist]:
         if electronic_limit < 0:
             raise ValueError("electronic_limit must not be negative")
@@ -184,6 +185,7 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
                 electronic_limit=electronic_limit,
                 max_depth=max_depth,
                 progress=progress,
+                seed_artists=seed_artists,
             )
         if general_limit > 0:
             await self._discover_general(
@@ -207,15 +209,17 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
         electronic_limit: int,
         max_depth: int,
         progress: Callable[[CrawlProgress], None] | None = None,
+        seed_artists: Sequence[str] | None = None,
     ) -> None:
+        roots = tuple(seed_artists) if seed_artists else self._core_artists
         queue: deque[tuple[str, int, str | None]] = deque(
-            (name, 0, None) for name in self._core_artists
+            (name, 0, None) for name in roots
         )
-        if progress is not None and self._core_artists:
+        if progress is not None and roots:
             progress(
                 CrawlProgress(
                     stage="electronic",
-                    name=self._core_artists[0],
+                    name=roots[0],
                     depth=0,
                     found=len(seeds),
                 )

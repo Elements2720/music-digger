@@ -13,10 +13,18 @@ const FIELDS = {
     { key: "reindex", label: "Reindex already-embedded tracks", type: "checkbox" },
     { key: "retry_failed", label: "Retry previously failed tracks", type: "checkbox" },
   ],
+  "import-local": [
+    { key: "folder_path", label: "Folder path", type: "text", placeholder: "D:\\Music\\Techno or /home/user/music", required: true },
+    { key: "recursive", label: "Include subfolders", type: "checkbox", value: true },
+    { key: "seed_artists", label: "Seed artists for discovery", type: "checkbox", value: true },
+    { key: "batch_size", label: "GPU batch size (max 48)", type: "number", value: 16, min: 1, max: 48 },
+    { key: "reindex", label: "Reindex existing", type: "checkbox", value: false },
+  ],
   "seed-crawl": [
     { key: "electronic_limit", label: "Electronic seeds", type: "number", value: 1000, min: 0 },
     { key: "general_limit", label: "General seeds", type: "number", value: 300, min: 0 },
     { key: "max_depth", label: "Deezer related-artist depth", type: "number", value: 2, min: 0, max: 5 },
+    { key: "use_local_seeds", label: "Use my local library artists as roots", type: "checkbox", value: false },
   ],
   "seed-llm": [
     { key: "genre", label: "Genre focus", type: "text", value: "Melodic Techno & Afro House", placeholder: "comma-separated genres" },

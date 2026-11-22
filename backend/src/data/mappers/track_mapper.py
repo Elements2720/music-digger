@@ -31,7 +31,15 @@ def track_to_row(track: Track) -> dict[str, Any]:
         "source": track.source,
         "external_id": track.external_id,
         "isrc": track.isrc,
+        "local_path": track.local_path,
     }
+
+
+def _row_field(row: Mapping[str, Any], key: str) -> Any:
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return None
 
 
 def row_to_track(row: Mapping[str, Any]) -> Track:
@@ -55,6 +63,7 @@ def row_to_track(row: Mapping[str, Any]) -> Track:
         store_url=row["store_url"],
         source=row["source"],
         external_id=external_id,
+        local_path=_row_field(row, "local_path"),
     )
 
 

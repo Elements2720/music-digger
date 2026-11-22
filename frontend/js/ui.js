@@ -42,6 +42,9 @@ export function artwork(url, className = "row-art") {
 
 export function chips(track, { exact = false } = {}) {
   const wrap = el("div", { class: "track-meta" });
+  if (track.source === "local" || track.local_path) {
+    wrap.append(el("span", { class: "chip local", text: "LOCAL" }));
+  }
   const bpm = fmtBpm(track.bpm);
   if (bpm) wrap.append(el("span", { class: "chip bpm", text: bpm }));
   if (track.key) wrap.append(el("span", { class: "chip key", text: track.key }));

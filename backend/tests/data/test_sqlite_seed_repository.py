@@ -158,3 +158,18 @@ async def test_counts(repository: SQLiteSeedRepository) -> None:
     assert await repository.count_by_status("pending") == 3
     with pytest.raises(ValueError, match="category"):
         await repository.count_by_category("rock")
+
+
+async def test_list_by_source(repository: SQLiteSeedRepository) -> None:
+    await repository.record_discovery(
+        [
+            SeedArtist("Artist 1", 1.0, "electronic", source="local-library"),
+            SeedArtist("Artist 2", 0.8, "electronic", source="local-library"),
+            SeedArtist("Artist 3", 0.5, "electronic", source="deezer"),
+        ]
+    )
+    local_artists = await repository.list_by_source("local-library", limit=10)
+    assert len(local_artists) == 2
+    assert [a.name for a in local_artists] == ["Artist 1", "Artist 2"]
+    assert await repository.list_by_source("nonexistent") == ()
+

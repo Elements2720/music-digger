@@ -82,6 +82,11 @@ class ITrackRepository(ABC):
     async def count_embedded(self) -> int:
         """Return the number of tracks that have a stored embedding."""
 
+    async def get_embedded_ids(self, track_ids: Sequence[str]) -> frozenset[str]:
+        """Return the subset of ``track_ids`` that have stored embeddings."""
+        tracks = await self.get_many(track_ids)
+        return frozenset(t.id for t in tracks if t.embedding is not None)
+
     @abstractmethod
     async def list_unembedded(
         self,
@@ -207,6 +212,12 @@ class ISeedRepository(ABC):
         self, status: SeedStatus, limit: int = 100
     ) -> Sequence[SeedArtist]:
         """Return seeds with the given status, highest priority first."""
+
+    async def list_by_source(
+        self, source: str, limit: int = 100
+    ) -> Sequence[SeedArtist]:
+        """Return seeds for a specific source, highest priority first."""
+        return ()
 
     @abstractmethod
     async def update_status(self, name: str, status: SeedStatus) -> None:

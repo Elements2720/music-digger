@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 import pytest
-from api_fakes import make_container, make_set
+from api_fakes import make_container, make_set, make_track
 
 from domain.entities.dj_set import SetMatch
 from presentation.api import create_app
@@ -216,4 +217,66 @@ async def test_seed_itunes_job_params_validation_and_start(
     )
     assert good.status_code == 200
     assert good.json()["job"]["kind"] == "seed-itunes"
+
+
+async def test_get_track_audio_endpoint_and_preview_url(
+    tmp_path: Path,
+) -> None:
+    audio_file = tmp_path / "test_track.mp3"
+    audio_file.write_bytes(b"FAKE_MP3_STREAM_CONTENT")
+
+    local_track = make_track(
+        "local:1234567890ab",
+        title="Local Techno",
+        artist="Underground Artist",
+    )
+    # Add local_path to track
+    from dataclasses import replace
+    local_track = replace(local_track, local_path=str(audio_file), source="local")
+
+    container = make_container(tracks=[local_track])
+    app = create_app(container=container)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        # Check track payload preview_url is rewritten to local audio endpoint
+        search_res = await c.get("/api/tracks/search", params={"q": "Local"})
+        assert search_res.status_code == 200
+        tr_data = search_res.json()["tracks"][0]
+        assert tr_data["preview_url"] == "/api/catalog/tracks/local:1234567890ab/audio"
+        assert tr_data["local_path"] == str(audio_file)
+
+        # Stream audio
+        audio_res = await c.get("/api/tracks/local:1234567890ab/audio")
+        assert audio_res.status_code == 200
+        assert audio_res.content == b"FAKE_MP3_STREAM_CONTENT"
+
+        # Nonexistent track -> 404
+        missing_res = await c.get("/api/tracks/local:nonexistent/audio")
+        assert missing_res.status_code == 404
+
+        # Missing file on disk -> 404
+        audio_file.unlink()
+        disk_missing_res = await c.get("/api/tracks/local:1234567890ab/audio")
+        assert disk_missing_res.status_code == 404
+
+
+async def test_import_local_job_params_validation_and_start(
+    client: httpx.AsyncClient,
+) -> None:
+    bad = await client.post(
+        "/api/jobs",
+        json={"kind": "import-local", "params": {"folder_path": ""}},
+    )
+    assert bad.status_code == 422
+
+    good = await client.post(
+        "/api/jobs",
+        json={
+            "kind": "import-local",
+            "params": {"folder_path": "C:\\Music\\Techno", "batch_size": 16},
+        },
+    )
+    assert good.status_code == 200
+    assert good.json()["job"]["kind"] == "import-local"
+
 

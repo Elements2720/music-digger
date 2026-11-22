@@ -271,6 +271,7 @@ class JobManager:
             max_depth=config["max_depth"],
             use_deezer=True,
             progress=on_progress,
+            use_local_seeds=config.get("use_local_seeds", False),
         )
         job.result = _seed_result(result)
 
@@ -400,6 +401,43 @@ class JobManager:
                 cookies_from_browser=settings.ytdlp_cookies_from_browser,
             )
 
+    async def _run_import_local(
+        self, job: JobState, container: Any, config: dict[str, Any]
+    ) -> None:
+        job.stage = "scanning folder"
+        job.message = config["folder_path"]
+
+        def on_progress(event: Any) -> None:
+            elapsed = max(time.monotonic() - self._started_monotonic, 1e-6)
+            completed = getattr(event, "completed", getattr(event, "processed", 0))
+            speed = round(completed / elapsed, 2) if completed > 0 else None
+            self._progress(
+                job,
+                stage=getattr(event, "stage", "importing"),
+                processed=completed,
+                failed=getattr(event, "failed", 0),
+                total=getattr(event, "total", None),
+                message=getattr(event, "message", ""),
+                speed=speed,
+                memory=self._memory(container),
+            )
+
+        result = await container.import_local_library.execute(
+            config["folder_path"],
+            recursive=config["recursive"],
+            batch_size=config["batch_size"],
+            reindex=config["reindex"],
+            seed_artists=config["seed_artists"],
+            progress=on_progress,
+        )
+        job.result = {
+            "scanned": result.scanned,
+            "imported": result.imported,
+            "embedded": result.embedded,
+            "failed": result.failed,
+            "artists_seeded": result.artists_seeded,
+        }
+
     # ---------------------------------------------------------------- helpers
 
     def _progress(
@@ -479,6 +517,7 @@ class JobManager:
             "seed-itunes": self._validate_seed_itunes,
             "fetch-metadata": self._validate_fetch_metadata,
             "analyze-set": self._validate_analyze_set,
+            "import-local": self._validate_import_local,
         }
         validator = validators.get(kind)
         if validator is None:
@@ -503,6 +542,20 @@ class JobManager:
             ),
             "general_limit": _as_int(params, "general_limit", 300, minimum=0),
             "max_depth": _as_int(params, "max_depth", 2, minimum=0, maximum=5),
+            "use_local_seeds": _as_bool(params, "use_local_seeds", False),
+        }
+
+    @staticmethod
+    def _validate_import_local(params: dict[str, Any]) -> dict[str, Any]:
+        folder_path = params.get("folder_path")
+        if not isinstance(folder_path, str) or not folder_path.strip():
+            raise JobParamError("folder_path must be a non-empty string")
+        return {
+            "folder_path": folder_path.strip(),
+            "recursive": _as_bool(params, "recursive", True),
+            "seed_artists": _as_bool(params, "seed_artists", True),
+            "batch_size": _as_int(params, "batch_size", 16, minimum=1, maximum=48),
+            "reindex": _as_bool(params, "reindex", False),
         }
 
     @staticmethod

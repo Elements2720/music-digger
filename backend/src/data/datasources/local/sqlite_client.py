@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     source TEXT NOT NULL DEFAULT 'itunes',
     external_id TEXT,
     isrc TEXT,
+    local_path TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -111,6 +112,7 @@ _TRACK_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("source", "TEXT NOT NULL DEFAULT 'itunes'"),
     ("external_id", "TEXT"),
     ("index_failures", "INTEGER NOT NULL DEFAULT 0"),
+    ("local_path", "TEXT"),
 )
 
 # Phase 4 set-analysis columns for databases created before Phase 4.

@@ -48,10 +48,14 @@ class FakeSeedRepository(ISeedRepository):
     async def count(self) -> int:
         return len(self.seeds)
 
+    async def list_by_source(self, source: str, limit: int = 100) -> list[SeedArtist]:
+        return [s for s in self.seeds.values() if s.source == source][:limit]
+
 
 class FakeDiscovery(ISeedDiscovery):
     def __init__(self, seeds: Sequence[SeedArtist]) -> None:
         self._seeds = tuple(seeds)
+        self.received_seed_artists: Sequence[str] | None = None
 
     async def discover(
         self,
@@ -60,7 +64,9 @@ class FakeDiscovery(ISeedDiscovery):
         general_limit: int = 300,
         max_depth: int = 2,
         progress: object = None,
+        seed_artists: Sequence[str] | None = None,
     ) -> Sequence[SeedArtist]:
+        self.received_seed_artists = seed_artists
         if callable(progress):
             progress(CrawlProgress(stage="electronic", name="Seed 1", depth=0, found=1))
             progress(CrawlProgress(stage="electronic", name="Seed 2", depth=1, found=2))
@@ -110,3 +116,26 @@ async def test_build_seed_list_default_progress_is_none() -> None:
 
     assert result.discovered == 1
     assert result.written == 1
+
+
+async def test_build_seed_list_uses_local_library_seeds() -> None:
+    repo = FakeSeedRepository()
+    await repo.upsert_many(
+        [
+            SeedArtist(name="Local 1", priority_score=1.0, category="electronic", source="local-library"),
+            SeedArtist(name="Local 2", priority_score=1.0, category="electronic", source="local-library"),
+            SeedArtist(name="Other", priority_score=0.5, category="electronic", source="deezer"),
+        ]
+    )
+    discovery = FakeDiscovery([])
+    use_case = BuildSeedList(discovery=discovery, seed_repository=repo)
+
+    await use_case.execute(
+        electronic_limit=100,
+        general_limit=20,
+        use_deezer=True,
+        use_local_seeds=True,
+    )
+
+    assert discovery.received_seed_artists == ("Local 1", "Local 2")
+

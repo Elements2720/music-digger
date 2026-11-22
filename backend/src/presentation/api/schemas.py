@@ -18,6 +18,7 @@ JobKind = Literal[
     "fetch-metadata",
     "analyze-set",
     "seed-itunes",
+    "import-local",
 ]
 
 
@@ -60,6 +61,9 @@ class ResetEmbeddingsRequest(BaseModel):
 
 def track_payload(track: Any, *, heard: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Flatten a :class:`~domain.entities.track.Track` for the browser."""
+    preview_url = track.preview_url
+    if getattr(track, "local_path", None):
+        preview_url = f"/api/catalog/tracks/{track.id}/audio"
     return {
         "id": track.id,
         "title": track.title,
@@ -70,10 +74,11 @@ def track_payload(track: Any, *, heard: frozenset[str] = frozenset()) -> dict[st
         "bpm": track.bpm.value if track.bpm is not None else None,
         "key": track.key.notation if track.key is not None else None,
         "release_year": track.release_year,
-        "preview_url": track.preview_url,
+        "preview_url": preview_url,
         "artwork_url": track.artwork_url,
         "store_url": track.store_url,
         "source": track.source,
+        "local_path": getattr(track, "local_path", None),
         "is_heard": track.id in heard,
     }
 

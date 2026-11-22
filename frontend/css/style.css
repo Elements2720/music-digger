@@ -365,6 +365,12 @@ select { cursor: pointer; }
 }
 .chip.bpm { color: var(--text); }
 .chip.key { color: var(--accent); border-color: var(--accent-line); }
+.chip.local {
+  color: #00e5ff;
+  border-color: rgba(0, 229, 255, 0.4);
+  background: rgba(0, 229, 255, 0.08);
+  font-weight: 600;
+}
 
 .reference-card {
   margin-top: 14px;

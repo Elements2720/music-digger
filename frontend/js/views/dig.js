@@ -24,6 +24,9 @@ function pickerItem(track) {
       el("div", { class: "picker-artist", text: track.artist }),
     ]),
     el("div", { class: "picker-badges" }, [
+      track.source === "local" || track.local_path
+        ? el("span", { class: "chip local", text: "LOCAL" })
+        : null,
       track.bpm !== null
         ? el("span", { class: "chip bpm", text: String(Math.round(track.bpm)) })
         : null,

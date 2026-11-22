@@ -66,6 +66,8 @@ class BuildSeedList:
         llm_count: int = 0,
         exclude_artists: Sequence[str] = (),
         progress: Callable[[CrawlProgress], None] | None = None,
+        use_local_seeds: bool = False,
+        seed_artists: Sequence[str] | None = None,
     ) -> BuildSeedListResult:
         """Discover seeds, persist them, and return the resulting counts.
 
@@ -82,14 +84,31 @@ class BuildSeedList:
         if llm_count < 0:
             raise ValueError("llm_count must not be negative")
 
+        effective_seed_artists = seed_artists
+        if use_local_seeds:
+            local_seeds = await self._seed_repository.list_by_source(
+                "local-library", limit=100
+            )
+            if local_seeds:
+                effective_seed_artists = tuple(seed.name for seed in local_seeds)
+
         discovered: Sequence[SeedArtist] = ()
         if use_deezer and self._discovery is not None:
-            discovered = await self._discovery.discover(
-                electronic_limit=electronic_limit,
-                general_limit=general_limit,
-                max_depth=max_depth,
-                progress=progress,
-            )
+            if effective_seed_artists is not None:
+                discovered = await self._discovery.discover(
+                    electronic_limit=electronic_limit,
+                    general_limit=general_limit,
+                    max_depth=max_depth,
+                    progress=progress,
+                    seed_artists=effective_seed_artists,
+                )
+            else:
+                discovered = await self._discovery.discover(
+                    electronic_limit=electronic_limit,
+                    general_limit=general_limit,
+                    max_depth=max_depth,
+                    progress=progress,
+                )
 
         llm_generated: Sequence[SeedArtist] = ()
         if self._llm_service is not None and llm_count > 0 and llm_genres:

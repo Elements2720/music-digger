@@ -31,15 +31,17 @@ backend/
         catalog.py                                # ICatalogProvider (search, lookup, crawl_keyword), ISeedDiscovery, ISeedCrawler
         hardware.py                               # IHardwareProbe
         llm.py                                    # ILLMService
+        local_library.py                          # ILocalLibraryScanner
         repositories.py                           # ITrackRepository, ISetRepository, ISeedRepository
       use_cases/
         __init__.py
         analyze_dj_set.py                         # AnalyzeDJSet (Phase 4: end-to-end DJ set pipeline, live progress)
-        build_seed_list.py                        # BuildSeedList (Deezer BFS + LLM seed generation, CrawlProgress)
+        build_seed_list.py                        # BuildSeedList (Deezer BFS + LLM seed generation, CrawlProgress, local roots)
         crawl_itunes_seeds.py                     # CrawlITunesSeeds (Phase B: iTunes techno/label keyword crawler)
         dig_similar_tracks.py                     # DigSimilarTracks (track-to-track similarity, harmonic/BPM filter)
         fetch_catalog_metadata.py                 # FetchCatalogMetadata (iTunes artist metadata harvester)
         find_similar_for_set.py                   # FindSimilarForSet (set-to-set & passage-to-track similarity)
+        import_local_library.py                   # ImportLocalLibrary (local folder import, middle-window decode, artist seeding)
         index_catalog.py                          # IndexCatalog (streaming audio decode, librosa analysis, CLAP embed)
         vibe_search.py                            # VibeSearch (natural language query -> CLAP text embedding)
     data/
@@ -52,6 +54,7 @@ backend/
           __init__.py
           sqlite_client.py                        # SQLiteClient + Schema DDL (tracks, seed_artists, dj_sets, set_passages)
           lancedb_client.py                       # LanceDBClient + VectorMatch (disk-backed IVF-PQ cosine index)
+          local_library_scanner.py                # LocalLibraryScanner (ffprobe recursive tag reader + filename fallback)
         remote/
           __init__.py
           artist_parser.py                        # parse_collaborators() (remix/feature artist extractor)
@@ -110,6 +113,7 @@ backend/
       test_dj_set_entities.py                     # DJ set entity tests + 0.05s tolerance auto-clamp tests
       test_embedding_vector.py
       test_find_similar_for_set.py
+      test_import_local_library.py                # Local library import & taste-based artist seeding tests
       test_index_catalog.py
       test_interfaces.py
       test_search_filter.py

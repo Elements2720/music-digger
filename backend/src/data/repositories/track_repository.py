@@ -20,9 +20,9 @@ _UPSERT_SQL = """
 INSERT INTO tracks (
     id, itunes_track_id, title, artist, normalized_key, album, genre,
     duration_sec, release_year, preview_url, artwork_url, store_url, bpm,
-    camelot_key, is_embedded, is_heard, source, external_id, isrc
+    camelot_key, is_embedded, is_heard, source, external_id, isrc, local_path
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     itunes_track_id = excluded.itunes_track_id,
     title = excluded.title,
@@ -42,6 +42,7 @@ ON CONFLICT(id) DO UPDATE SET
     source = excluded.source,
     external_id = excluded.external_id,
     isrc = excluded.isrc,
+    local_path = COALESCE(excluded.local_path, tracks.local_path),
     updated_at = CURRENT_TIMESTAMP
 """
 
@@ -230,6 +231,16 @@ class HybridTrackRepository(ITrackRepository):
         )
         return int(row["total"]) if row is not None else 0
 
+    async def get_embedded_ids(self, track_ids: Sequence[str]) -> frozenset[str]:
+        if not track_ids:
+            return frozenset()
+        placeholders = ", ".join("?" for _ in track_ids)
+        rows = await self._sqlite.fetchall(
+            f"SELECT id FROM tracks WHERE id IN ({placeholders}) AND is_embedded = 1",
+            tuple(track_ids),
+        )
+        return frozenset(row["id"] for row in rows)
+
     async def list_unembedded(
         self,
         limit: int = 100,
@@ -347,6 +358,7 @@ class HybridTrackRepository(ITrackRepository):
             row["source"],
             row["external_id"],
             row["isrc"],
+            row.get("local_path"),
         )
 
     @staticmethod

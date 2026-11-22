@@ -89,6 +89,15 @@ class InMemorySeedRepository(ISeedRepository):
         matching.sort(key=lambda seed: (-seed.priority_score, seed.name.casefold()))
         return matching[: max(0, limit)]
 
+    async def list_by_source(
+        self,
+        source: str,
+        limit: int = 100,
+    ) -> list[SeedArtist]:
+        matching = [seed for seed in self._seeds.values() if seed.source == source]
+        matching.sort(key=lambda seed: (-seed.priority_score, seed.name.casefold()))
+        return matching[: max(0, limit)]
+
     async def update_status(self, name: str, status: SeedStatus) -> None:
         key = name.casefold()
         if key in self._seeds:
@@ -129,6 +138,14 @@ class FakeTrackRepository:
     async def get_many(self, track_ids: Any) -> list[Track]:
         wanted = set(track_ids)
         return [track for track in self.saved if track.id in wanted]
+
+    async def get_embedded_ids(self, track_ids: Any) -> frozenset[str]:
+        wanted = set(track_ids)
+        return frozenset(
+            track.id
+            for track in self.saved
+            if track.id in wanted and track.embedding is not None
+        )
 
     async def find_similar(
         self,

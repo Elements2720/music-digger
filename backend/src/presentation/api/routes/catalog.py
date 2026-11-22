@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 
 from domain.entities.search import SearchFilter
 from domain.use_cases import TrackNotEmbeddedError, TrackNotFoundError
@@ -162,6 +164,28 @@ async def reset_embeddings(
         )
     cleared = await container.track_repository.reset_embeddings()
     return {"cleared": cleared}
+
+
+@router.get("/tracks/{track_id}/audio")
+async def get_track_audio(
+    track_id: str,
+    container: Any = Depends(get_container),
+) -> FileResponse:
+    """Stream a local audio file safely."""
+    track = await container.track_repository.get_by_id(track_id)
+    if track is None or not getattr(track, "local_path", None):
+        raise HTTPException(
+            status_code=404, detail=f"Local track {track_id!r} not found"
+        )
+    file_path = Path(track.local_path)
+    if not file_path.is_file():
+        raise HTTPException(
+            status_code=404, detail="Audio file does not exist on disk"
+        )
+    return FileResponse(
+        path=file_path,
+        filename=file_path.name,
+    )
 
 
 __all__ = ["router"]

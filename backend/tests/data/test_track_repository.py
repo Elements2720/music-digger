@@ -422,3 +422,29 @@ async def test_set_heard_toggles_both_ways(repository: HybridTrackRepository) ->
 
     await repository.set_heard("itunes:1", False)
     assert await repository.get_heard_ids() == frozenset()
+
+
+async def test_upsert_and_get_local_track(repository: HybridTrackRepository) -> None:
+    local_track = Track(
+        id="local:abc123456789",
+        title="Moon Rocks",
+        artist="Enrico Sangiuliano",
+        source="local",
+        local_path="/music/moon_rocks.mp3",
+        duration_seconds=360.0,
+        embedding=_embedding(),
+    )
+    await repository.upsert_many([local_track])
+    loaded = await repository.get_by_id("local:abc123456789")
+    assert loaded is not None
+    assert loaded.id == "local:abc123456789"
+    assert loaded.source == "local"
+    assert loaded.local_path == "/music/moon_rocks.mp3"
+    assert loaded.embedding is not None
+
+    # Test get_embedded_ids
+    embedded_ids = await repository.get_embedded_ids(
+        ["local:abc123456789", "nonexistent"]
+    )
+    assert embedded_ids == frozenset({"local:abc123456789"})
+

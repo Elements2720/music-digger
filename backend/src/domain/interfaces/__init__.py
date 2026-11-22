@@ -11,6 +11,7 @@ from .audio_engine import (
 from .catalog import ICatalogProvider, ISeedCrawler, ISeedDiscovery
 from .hardware import IHardwareProbe
 from .llm import ILLMService
+from .local_library import ILocalLibraryScanner
 from .repositories import ISeedRepository, ISetRepository, ITrackRepository
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "IFingerprinter",
     "IHardwareProbe",
     "ILLMService",
+    "ILocalLibraryScanner",
     "ISeedCrawler",
     "ISeedDiscovery",
     "ISeedRepository",

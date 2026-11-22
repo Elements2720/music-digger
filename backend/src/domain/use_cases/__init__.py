@@ -26,6 +26,11 @@ from .find_similar_for_set import (
     SetNotEmbeddedError,
     SetNotFoundError,
 )
+from .import_local_library import (
+    ImportLocalLibrary,
+    ImportLocalProgress,
+    ImportLocalResult,
+)
 from .index_catalog import IndexCatalog, IndexProgress, IndexResult
 from .vibe_search import VibeSearch
 
@@ -44,6 +49,9 @@ __all__ = [
     "FetchCatalogMetadata",
     "FetchMetadataResult",
     "FindSimilarForSet",
+    "ImportLocalLibrary",
+    "ImportLocalProgress",
+    "ImportLocalResult",
     "IndexCatalog",
     "IndexProgress",
     "IndexResult",

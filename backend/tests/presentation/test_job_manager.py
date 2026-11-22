@@ -342,3 +342,69 @@ async def test_seed_itunes_job_streams_progress_and_finishes() -> None:
         "artists_discovered": 8,
     }
 
+
+async def test_import_local_job_streams_progress_and_finishes() -> None:
+    container = make_container()
+    manager = make_manager(container)
+    stream = manager.stream(FakeRequest())
+    await stream.__anext__()  # initial state
+
+    await manager.start(
+        "import-local",
+        {
+            "folder_path": "C:\\Music\\Techno",
+            "recursive": True,
+            "seed_artists": True,
+            "batch_size": 16,
+            "reindex": False,
+        },
+    )
+    events = []
+    async for frame in stream:
+        event = parse_frame(frame)
+        if event is not None:
+            events.append(event)
+
+    assert [event["type"] for event in events][-1] == "done"
+    progress = [event for event in events if event["type"] == "progress"]
+    assert progress
+    p = progress[0]
+    assert p["job"]["stage"] == "indexing"
+    assert p["job"]["processed"] == 8
+    assert p["job"]["total"] == 10
+    assert "speed" in p
+
+    snapshot = manager.snapshot()
+    assert snapshot is not None
+    assert snapshot["status"] == "done"
+    assert snapshot["result"] == {
+        "scanned": 10,
+        "imported": 8,
+        "embedded": 8,
+        "failed": 0,
+        "artists_seeded": 5,
+    }
+
+
+async def test_seed_crawl_with_local_seeds() -> None:
+    container = make_container()
+    manager = make_manager(container)
+
+    await manager.start(
+        "seed-crawl",
+        {
+            "electronic_limit": 500,
+            "general_limit": 100,
+            "max_depth": 1,
+            "use_local_seeds": True,
+        },
+    )
+    await manager.wait()
+
+    assert len(container.build_seed_list.calls) == 1
+    call = container.build_seed_list.calls[0]
+    assert call["use_local_seeds"] is True
+    assert call["electronic_limit"] == 500
+    assert call["general_limit"] == 100
+
+

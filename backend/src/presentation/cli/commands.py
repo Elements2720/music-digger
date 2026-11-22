@@ -206,6 +206,84 @@ def index(
     _run(run())
 
 
+@app.command("import-local")
+def import_local(
+    folder_path: Path = typer.Argument(
+        ...,
+        help="Path to local folder containing audio files.",
+    ),
+    recursive: bool = typer.Option(
+        True,
+        "--recursive/--no-recursive",
+        help="Recursively scan subfolders for audio files.",
+    ),
+    batch_size: int = typer.Option(
+        16,
+        "--batch-size",
+        min=1,
+        max=48,
+        help="GPU micro-batch size for CLAP embeddings.",
+    ),
+    reindex: bool = typer.Option(
+        False,
+        "--reindex",
+        help="Re-embed already embedded local tracks.",
+    ),
+    seed_artists: bool = typer.Option(
+        True,
+        "--seed-artists/--no-seed-artists",
+        help="Seed unique artists into discovery at priority 1.0.",
+    ),
+) -> None:
+    """Scan local audio folder, decode middle windows, embed, and seed artists."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.import_local_library is not None
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Importing local library", total=None)
+
+                def on_progress(event: Any) -> None:
+                    desc = f"[cyan]{event.stage}[/]"
+                    if event.message:
+                        desc = f"[cyan]{event.stage}[/] {event.message}"
+                    progress.update(
+                        task,
+                        total=event.total,
+                        completed=event.completed,
+                        description=desc,
+                    )
+
+                result = await container.import_local_library.execute(
+                    folder_path,
+                    recursive=recursive,
+                    batch_size=batch_size,
+                    reindex=reindex,
+                    seed_artists=seed_artists,
+                    progress=on_progress,
+                )
+
+            table = Table(title="Local library import")
+            table.add_column("Metric")
+            table.add_column("Value", justify="right")
+            table.add_row("Files scanned", str(result.scanned))
+            table.add_row("Tracks imported", str(result.imported))
+            table.add_row("Tracks embedded", str(result.embedded))
+            table.add_row("Tracks failed", str(result.failed))
+            table.add_row("Artists seeded", str(result.artists_seeded))
+            console.print(table)
+
+    _run(run())
+
+
 @app.command("reset-embeddings")
 def reset_embeddings(
     force: bool = typer.Option(
@@ -697,6 +775,11 @@ def seed_crawl(
         min=0,
         help="Deezer related-artist BFS depth.",
     ),
+    use_local_seeds: bool = typer.Option(
+        False,
+        "--use-local-seeds",
+        help="Use artists discovered from local library as crawl roots.",
+    ),
 ) -> None:
     """Populate seed_artists from Deezer's related-artist graph and charts."""
 
@@ -730,6 +813,7 @@ def seed_crawl(
                     max_depth=max_depth,
                     use_deezer=True,
                     progress=on_progress,
+                    use_local_seeds=use_local_seeds,
                 )
             _print_seed_result(result)
 

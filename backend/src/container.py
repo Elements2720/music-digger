@@ -16,7 +16,9 @@ import httpx
 from dotenv import load_dotenv
 
 from data.datasources.local.lancedb_client import SET_VECTOR_SCHEMA, LanceDBClient
+from data.datasources.local.local_library_scanner import LocalLibraryScanner
 from data.datasources.local.sqlite_client import SQLiteClient
+from data.datasources.remote.artist_parser import parse_collaborators
 from data.datasources.remote.deezer_seed_crawler import DeezerSeedCrawler
 from data.datasources.remote.itunes_provider import ITunesProvider
 from data.datasources.remote.shazam_client import ShazamFingerprinter
@@ -37,6 +39,7 @@ from domain.use_cases import (
     DigSimilarTracks,
     FetchCatalogMetadata,
     FindSimilarForSet,
+    ImportLocalLibrary,
     IndexCatalog,
     VibeSearch,
 )
@@ -225,6 +228,8 @@ class Container:
         self.crawl_itunes_seeds: CrawlITunesSeeds | None = None
         self.fetch_catalog_metadata: FetchCatalogMetadata | None = None
         self.index_catalog: IndexCatalog | None = None
+        self.import_local_library: ImportLocalLibrary | None = None
+        self.local_library_scanner: LocalLibraryScanner | None = None
         self.dig_similar_tracks: DigSimilarTracks | None = None
         self.vibe_search: VibeSearch | None = None
         self._started = False
@@ -329,6 +334,19 @@ class Container:
             embedder=clap_embedder,
             track_repository=track_repository,
         )
+        local_library_scanner = LocalLibraryScanner()
+        import_local_library = ImportLocalLibrary(
+            scanner=local_library_scanner,
+            audio_decoder=audio_decoder,
+            feature_extractor=feature_extractor,
+            audio_embedder=clap_embedder,
+            track_repository=track_repository,
+            seed_repository=seed_repository,
+            artist_parser=parse_collaborators,
+            cpu_workers=settings.cpu_workers,
+        )
+        self.local_library_scanner = local_library_scanner
+        self.import_local_library = import_local_library
 
         # ----- Phase 4: DJ set analysis -----------------------------------
         # Second disk-backed table: whole-set mean vectors. A separate
