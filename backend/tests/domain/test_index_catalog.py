@@ -562,3 +562,32 @@ def test_invalid_constructor_arguments_are_rejected() -> None:
             audio_embedder=embedder,
             chunk_size=0,
         )
+
+
+@pytest.mark.asyncio
+async def test_index_specific_track_ids() -> None:
+    tracks = [
+        Track(
+            id=f"track-{i}",
+            title=f"T{i}",
+            artist="A",
+            source="itunes",
+            preview_url=f"http://example.com/{i}.mp3",
+        )
+        for i in range(10)
+    ]
+    repository = FakeTrackRepository(tracks)
+    use_case = IndexCatalog(
+        track_repository=repository,
+        audio_decoder=FakeDecoder(),
+        feature_extractor=FakeExtractor(),
+        audio_embedder=FakeEmbedder(),
+        cpu_executor=InlineExecutor(),
+    )
+
+    result = await use_case.execute(track_ids=["track-2", "track-5"])
+
+    assert result.processed == 2
+    assert result.failed == 0
+    persisted = [t for batch in repository.upsert_batches for t in batch]
+    assert {t.id for t in persisted} == {"track-2", "track-5"}

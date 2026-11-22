@@ -406,3 +406,41 @@ async def test_seed_crawl_with_local_seeds() -> None:
     assert call["use_local_seeds"] is True
     assert call["electronic_limit"] == 500
     assert call["general_limit"] == 100
+
+
+async def test_fetch_artist_job_validates_and_executes() -> None:
+    container = make_container()
+    manager = make_manager(container)
+
+    with pytest.raises(JobParamError, match="artist must be a non-empty string"):
+        await manager.start("fetch-artist", {"artist": "  "})
+
+    await manager.start(
+        "fetch-artist",
+        {
+            "artist": "Enrico Sangiuliano",
+            "tracks_per_artist": 40,
+            "auto_index": True,
+            "discover_related": True,
+            "related_limit": 5,
+        },
+    )
+    await manager.wait()
+
+    snapshot = manager.snapshot()
+    assert snapshot is not None
+    assert snapshot["status"] == "done"
+    assert snapshot["result"] == {
+        "artists_processed": 1,
+        "tracks_found": 10,
+        "tracks_saved": 8,
+        "tracks_indexed": 8,
+        "related_seeds_found": 5,
+    }
+    assert len(container.fetch_artist_tracks.calls) == 1
+    call = container.fetch_artist_tracks.calls[0]
+    assert call["artist_name"] == "Enrico Sangiuliano"
+    assert call["tracks_limit"] == 40
+    assert call["auto_index"] is True
+    assert call["discover_related"] is True
+    assert call["related_limit"] == 5

@@ -574,6 +574,34 @@ class FakeFetchMetadata:
         )
 
 
+class FakeFetchArtistTracks:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def execute(self, artist_name: str, **kwargs: Any) -> Any:
+        self.calls.append({"artist_name": artist_name, **kwargs})
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(
+                SimpleNamespace(
+                    stage="fetching",
+                    artist=artist_name,
+                    processed=0,
+                    total=kwargs.get("tracks_limit", 50),
+                    message=f"Fetching {artist_name}",
+                )
+            )
+        auto_index = kwargs.get("auto_index", True)
+        discover_related = kwargs.get("discover_related", False)
+        return SimpleNamespace(
+            artist=artist_name,
+            tracks_found=10,
+            tracks_saved=8,
+            tracks_indexed=8 if auto_index else 0,
+            related_seeds_found=5 if discover_related else 0,
+        )
+
+
 class FakeCrawlITunesSeeds:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -781,6 +809,7 @@ def make_container(
         build_seed_list=FakeBuildSeedList(),
         crawl_itunes_seeds=FakeCrawlITunesSeeds(),
         fetch_catalog_metadata=FakeFetchMetadata(),
+        fetch_artist_tracks=FakeFetchArtistTracks(),
         import_local_library=FakeImportLocalLibrary(),
         analyze_dj_set=FakeAnalyzeDJSet(dj_set),
         set_downloader=FakeDownloader(),

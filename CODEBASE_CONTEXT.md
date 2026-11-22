@@ -40,6 +40,7 @@ backend/
         build_seed_list.py                        # BuildSeedList (Deezer BFS + LLM seed generation, CrawlProgress, local roots)
         crawl_itunes_seeds.py                     # CrawlITunesSeeds (Phase B: iTunes techno/label keyword crawler)
         dig_similar_tracks.py                     # DigSimilarTracks (track-to-track similarity, harmonic/BPM filter)
+        fetch_artist_tracks.py                    # FetchArtistTracks (targeted artist track fetching, auto-indexing, related discovery)
         fetch_catalog_metadata.py                 # FetchCatalogMetadata (iTunes artist metadata harvester, blacklist-aware)
         find_similar_for_set.py                   # FindSimilarForSet (set-to-set & passage-to-track similarity)
         import_local_library.py                   # ImportLocalLibrary (local folder import, middle-window decode, artist seeding)

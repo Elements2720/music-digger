@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Any
@@ -105,14 +105,16 @@ class IndexCatalog:
         batch_size: int = 16,
         max_failures: int = 3,
         reindex: bool = False,
+        track_ids: Sequence[str] | None = None,
         progress: Callable[[IndexProgress], None] | None = None,
     ) -> IndexResult:
         """Index up to ``limit`` tracks in resumable chunks.
 
         ``batch_size`` is clamped to the embedder's hard cap of 48. With
         ``reindex=True`` already-embedded tracks are selected too, so improved
-        ML logic can re-process the whole catalog. The ``progress`` callback is
-        synchronous so CLI progress rendering stays simple; it fires after
+        ML logic can re-process the whole catalog. When ``track_ids`` is provided,
+        only those specific tracks are fetched and indexed. The ``progress`` callback
+        is synchronous so CLI progress rendering stays simple; it fires after
         every persisted batch and every failed track.
         """
         if limit < 0:
@@ -135,46 +137,73 @@ class IndexCatalog:
                 )
 
         try:
-            remaining = limit
-            attempted: set[str] = set()
-            while remaining > 0:
-                if reindex:
-                    tracks = await self._track_repository.list_reindexable(
-                        min(self._chunk_size, remaining),
-                        max_failures=max_failures,
-                    )
-                else:
-                    tracks = await self._track_repository.list_unembedded(
-                        min(self._chunk_size, remaining),
-                        max_failures=max_failures,
-                    )
-                # One attempt per track per run: chunks re-query the
-                # repository, which would otherwise hand failed tracks back
-                # immediately and spin until max_failures is exhausted.
-                tracks = [track for track in tracks if track.id not in attempted]
-                if not tracks:
-                    break
-                remaining -= len(tracks)
-                attempted.update(track.id for track in tracks)
+            if track_ids is not None:
+                fetched = await self._track_repository.get_many(track_ids)
+                candidate_tracks = [
+                    track
+                    for track in fetched
+                    if track is not None and (reindex or track.embedding is None)
+                ][:limit]
 
-                queue: asyncio.Queue[tuple[Track, Any, BaseException | None]] = (
-                    asyncio.Queue(maxsize=self._queue_maxsize)
-                )
-                producers = [
-                    asyncio.create_task(
-                        self._produce_track(track, queue), name=f"decode:{track.id}"
+                for i in range(0, len(candidate_tracks), self._chunk_size):
+                    chunk = candidate_tracks[i : i + self._chunk_size]
+                    queue: asyncio.Queue[tuple[Track, Any, BaseException | None]] = (
+                        asyncio.Queue(maxsize=self._queue_maxsize)
                     )
-                    for track in tracks
-                ]
-                await self._consume_chunk(
-                    queue,
-                    expected=len(tracks),
-                    batch_size=effective_batch_size,
-                    executor=executor,
-                    counters=counters,
-                    notify=notify,
-                )
-                producers = []
+                    producers = [
+                        asyncio.create_task(
+                            self._produce_track(track, queue), name=f"decode:{track.id}"
+                        )
+                        for track in chunk
+                    ]
+                    await self._consume_chunk(
+                        queue,
+                        expected=len(chunk),
+                        batch_size=effective_batch_size,
+                        executor=executor,
+                        counters=counters,
+                        notify=notify,
+                    )
+                    producers = []
+            else:
+                remaining = limit
+                attempted: set[str] = set()
+                while remaining > 0:
+                    if reindex:
+                        tracks = await self._track_repository.list_reindexable(
+                            min(self._chunk_size, remaining),
+                            max_failures=max_failures,
+                        )
+                    else:
+                        tracks = await self._track_repository.list_unembedded(
+                            min(self._chunk_size, remaining),
+                            max_failures=max_failures,
+                        )
+                    # One attempt per track per run: chunks re-query the
+                    # repository, which would otherwise hand failed tracks back
+                    # immediately and spin until max_failures is exhausted.
+                    tracks = [track for track in tracks if track.id not in attempted]
+                    if not tracks:
+                        break
+                    remaining -= len(tracks)
+                    attempted.update(track.id for track in tracks)
+
+                    queue = asyncio.Queue(maxsize=self._queue_maxsize)
+                    producers = [
+                        asyncio.create_task(
+                            self._produce_track(track, queue), name=f"decode:{track.id}"
+                        )
+                        for track in tracks
+                    ]
+                    await self._consume_chunk(
+                        queue,
+                        expected=len(tracks),
+                        batch_size=effective_batch_size,
+                        executor=executor,
+                        counters=counters,
+                        notify=notify,
+                    )
+                    producers = []
         finally:
             for task in producers:
                 if not task.done():

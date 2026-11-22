@@ -3,21 +3,23 @@
 import { api } from "../api.js";
 import { emit, on } from "../state.js";
 import { el, renderKv, trackRow } from "../ui.js";
-import { fmtMemory } from "../format.js";
+import { fmtMemory, fmtNumber } from "../format.js";
 
 let mounted = false;
 let artistPage = 1;
 const ARTIST_PAGE_SIZE = 15;
 let artistsSearchTimer = null;
 let blacklistSearchTimer = null;
+let openFetchModalFn = null;
 
 function $(id) {
   return document.getElementById(id);
 }
 
 function card(value, label, extra = "") {
+  const displayVal = typeof value === "number" ? fmtNumber(value) : String(value);
   return el("div", { class: "stat-card" }, [
-    el("div", { class: "stat-value", text: String(value) }),
+    el("div", { class: "stat-value", text: displayVal }),
     el("div", { class: "stat-label", text: label }),
     extra ? el("div", { class: "stat-extra dim", text: extra }) : null,
   ]);
@@ -62,7 +64,7 @@ async function loadAnalytics() {
             el("div", { class: "chart-bar-track" }, [
               el("div", { class: "chart-bar-fill", style: `width: ${pct}%` }),
             ]),
-            el("div", { class: "chart-bar-val mono", text: `${g.track_count}` }),
+            el("div", { class: "chart-bar-val mono", text: fmtNumber(g.track_count) }),
           ]);
         })
       );
@@ -81,7 +83,7 @@ async function loadAnalytics() {
             el("div", { class: "chart-bar-track" }, [
               el("div", { class: "chart-bar-fill bpm-fill", style: `width: ${pct}%` }),
             ]),
-            el("div", { class: "chart-bar-val mono", text: `${b.track_count}` }),
+            el("div", { class: "chart-bar-val mono", text: fmtNumber(b.track_count) }),
           ]);
         })
       );
@@ -95,7 +97,7 @@ async function loadAnalytics() {
         ...analytics.top_keys.slice(0, 16).map((k) =>
           el("span", { class: "chip key-pill" }, [
             el("strong", { text: k.camelot_key }),
-            el("span", { class: "dim", text: ` (${k.track_count})` }),
+            el("span", { class: "dim", text: ` (${fmtNumber(k.track_count)})` }),
           ])
         )
       );
@@ -141,12 +143,21 @@ async function loadArtists(page = 1) {
 
     tbody.replaceChildren(
       ...artists.map((artist) => {
-        const viewBtn = el("button", {
+        const fetchBtn = el("button", {
+          class: "btn tiny primary",
+          type: "button",
+          text: "FETCH",
+        });
+        fetchBtn.addEventListener("click", () => {
+          if (openFetchModalFn) openFetchModalFn(artist.artist);
+        });
+
+        const tracksBtn = el("button", {
           class: "btn tiny ghost",
           type: "button",
-          text: "VIEW TRACKS",
+          text: "TRACKS",
         });
-        viewBtn.addEventListener("click", () => openArtistDrawer(artist.artist));
+        tracksBtn.addEventListener("click", () => openArtistDrawer(artist.artist));
 
         const delBtn = el("button", {
           class: "btn tiny danger",
@@ -172,9 +183,15 @@ async function loadArtists(page = 1) {
           }
         });
 
-        const genresList = (artist.genres || []).slice(0, 3).map((g) =>
+        const rawGenres = artist.genres || [];
+        const genreChips = rawGenres.slice(0, 3).map((g) =>
           el("span", { class: "chip genre-chip", text: g })
         );
+        if (rawGenres.length > 3) {
+          genreChips.push(
+            el("span", { class: "chip more-chip", text: `+${rawGenres.length - 3}` })
+          );
+        }
 
         const sourcesList = (artist.sources || []).map((s) =>
           el("span", { class: `chip ${s === "local" ? "local" : "source"}`, text: s.toUpperCase() })
@@ -188,14 +205,14 @@ async function loadArtists(page = 1) {
           el("td", { class: "artist-name-cell" }, [
             el("strong", { text: artist.artist }),
           ]),
-          el("td", { class: "mono", text: String(artist.track_count) }),
+          el("td", { class: "mono", text: fmtNumber(artist.track_count) }),
           el("td", { class: "mono" }, [
-            el("span", { text: `${artist.embedded_count} ` }),
+            el("span", { text: `${fmtNumber(artist.embedded_count)} ` }),
             el("span", { class: "dim", text: `(${embPct}%)` }),
           ]),
-          el("td", { class: "badges-cell" }, genresList),
-          el("td", { class: "badges-cell" }, sourcesList),
-          el("td", { class: "actions-cell" }, [viewBtn, delBtn]),
+          el("td", {}, [el("div", { class: "cell-badges" }, genreChips)]),
+          el("td", {}, [el("div", { class: "cell-badges" }, sourcesList)]),
+          el("td", {}, [el("div", { class: "cell-actions" }, [fetchBtn, tracksBtn, delBtn])]),
         ]);
       })
     );
@@ -384,6 +401,98 @@ export function mount() {
     blacklistSearchTimer = setTimeout(() => loadBlacklist(), 300);
   });
   $("blacklist-add-btn").addEventListener("click", promptAddBlacklist);
+
+  // Fetch artist modal wiring
+  const fetchModal = $("modal-fetch-artist");
+  const fetchInput = $("fetch-artist-input");
+  const fetchCount = $("fetch-artist-count");
+  const fetchPresets = $("fetch-artist-presets");
+  const fetchAutoIndex = $("fetch-artist-auto-index");
+  const fetchDiscover = $("fetch-artist-discover");
+  const fetchForm = $("form-fetch-artist");
+
+  function openFetchArtistModal(artistName = "") {
+    if (!fetchModal) return;
+    fetchInput.value = artistName;
+    fetchCount.value = "50";
+    if (fetchAutoIndex) fetchAutoIndex.checked = true;
+    if (fetchDiscover) fetchDiscover.checked = false;
+    if (fetchPresets) {
+      for (const btn of fetchPresets.querySelectorAll(".preset-btn")) {
+        btn.classList.toggle("active", btn.dataset.count === "50");
+      }
+    }
+    fetchModal.classList.remove("hidden");
+    if (artistName) {
+      fetchCount.focus();
+    } else {
+      fetchInput.focus();
+    }
+  }
+
+  function closeFetchArtistModal() {
+    if (!fetchModal) return;
+    fetchModal.classList.add("hidden");
+  }
+
+  openFetchModalFn = openFetchArtistModal;
+
+  $("artists-fetch-btn")?.addEventListener("click", () => openFetchArtistModal(""));
+  $("modal-fetch-artist-close")?.addEventListener("click", closeFetchArtistModal);
+  $("modal-fetch-artist-cancel")?.addEventListener("click", closeFetchArtistModal);
+
+  fetchModal?.addEventListener("click", (e) => {
+    if (e.target === fetchModal) closeFetchArtistModal();
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && fetchModal && !fetchModal.classList.contains("hidden")) {
+      closeFetchArtistModal();
+    }
+  });
+
+  fetchPresets?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".preset-btn");
+    if (!btn) return;
+    const count = btn.dataset.count;
+    fetchCount.value = count;
+    for (const b of fetchPresets.querySelectorAll(".preset-btn")) {
+      b.classList.toggle("active", b === btn);
+    }
+  });
+
+  fetchCount?.addEventListener("input", () => {
+    const val = fetchCount.value;
+    if (fetchPresets) {
+      for (const b of fetchPresets.querySelectorAll(".preset-btn")) {
+        b.classList.toggle("active", b.dataset.count === val);
+      }
+    }
+  });
+
+  fetchForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const artist = fetchInput.value.trim();
+    if (!artist) return;
+    const count = parseInt(fetchCount.value, 10) || 50;
+    const autoIndex = fetchAutoIndex ? fetchAutoIndex.checked : true;
+    const discoverRelated = fetchDiscover ? fetchDiscover.checked : false;
+
+    closeFetchArtistModal();
+    try {
+      await api.startJob("fetch-artist", {
+        artist,
+        tracks_per_artist: count,
+        auto_index: autoIndex,
+        discover_related: discoverRelated,
+        related_limit: 10,
+      });
+      emit("toast", `Started fetch for "${artist}"`);
+      emit("tab:show", "run");
+    } catch (err) {
+      emit("toast", err.message);
+    }
+  });
 
   // Refresh upon track deletion
   on("track:deleted", () => {

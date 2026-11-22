@@ -42,3 +42,8 @@ export function fmtMemory(mb) {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
   return `${mb} MB`;
 }
+
+export function fmtNumber(n) {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "0";
+  return Number(n).toLocaleString();
+}

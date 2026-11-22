@@ -344,6 +344,74 @@ class JobManager:
             "tracks_saved": result.tracks_saved,
         }
 
+    async def _run_fetch_artist(
+        self, job: JobState, container: Any, config: dict[str, Any]
+    ) -> None:
+        raw_artists = config["artist"]
+        artists = [a.strip() for a in raw_artists.split(",") if a.strip()]
+        job.total = len(artists)
+        self._progress(
+            job,
+            stage="starting",
+            processed=0,
+            total=len(artists),
+            message=f"Starting fetch for {len(artists)} artist(s)...",
+            memory=self._memory(container),
+        )
+
+        total_found = 0
+        total_saved = 0
+        total_indexed = 0
+        total_related = 0
+
+        use_case = container.fetch_artist_tracks
+        for idx, artist in enumerate(artists, start=1):
+            self._progress(
+                job,
+                stage="fetching",
+                processed=job.processed,
+                total=job.total,
+                message=f"Fetching tracks for {artist} ({idx}/{len(artists)})...",
+                memory=self._memory(container),
+            )
+
+            def on_progress(p: Any) -> None:
+                elapsed = max(time.monotonic() - self._started_monotonic, 1e-6)
+                speed = round(job.processed / elapsed, 1) if job.processed > 0 else None
+                self._progress(
+                    job,
+                    stage=p.stage,
+                    processed=job.processed,
+                    total=job.total,
+                    message=f"[{p.artist}] {p.message}",
+                    speed=speed,
+                    memory=self._memory(container),
+                )
+
+            res = await use_case.execute(
+                artist,
+                tracks_limit=config["tracks_per_artist"],
+                auto_index=config["auto_index"],
+                discover_related=config["discover_related"],
+                related_limit=config["related_limit"],
+                progress=on_progress,
+            )
+            total_found += res.tracks_found
+            total_saved += res.tracks_saved
+            total_indexed += res.tracks_indexed
+            total_related += res.related_seeds_found
+            job.processed += 1
+
+        job.stage = "done"
+        job.message = f"Completed: saved {total_saved} tracks, indexed {total_indexed} audio files."
+        job.result = {
+            "artists_processed": len(artists),
+            "tracks_found": total_found,
+            "tracks_saved": total_saved,
+            "tracks_indexed": total_indexed,
+            "related_seeds_found": total_related,
+        }
+
     async def _run_analyze_set(
         self, job: JobState, container: Any, config: dict[str, Any]
     ) -> None:
@@ -507,6 +575,7 @@ class JobManager:
             "seed-llm": self._validate_seed_llm,
             "seed-itunes": self._validate_seed_itunes,
             "fetch-metadata": self._validate_fetch_metadata,
+            "fetch-artist": self._validate_fetch_artist,
             "analyze-set": self._validate_analyze_set,
             "import-local": self._validate_import_local,
         }
@@ -602,6 +671,25 @@ class JobManager:
                 params, "tracks_per_artist", 200, minimum=1, maximum=200
             ),
             "retry_failed": _as_bool(params, "retry_failed", False),
+        }
+
+    @staticmethod
+    def _validate_fetch_artist(params: dict[str, Any]) -> dict[str, Any]:
+        artist = params.get("artist") or params.get("artists")
+        if isinstance(artist, (list, tuple)):
+            artist = ", ".join(str(a).strip() for a in artist if str(a).strip())
+        if not isinstance(artist, str) or not artist.strip():
+            raise JobParamError("artist must be a non-empty string")
+        return {
+            "artist": artist.strip(),
+            "tracks_per_artist": _as_int(
+                params, "tracks_per_artist", 50, minimum=1, maximum=200
+            ),
+            "auto_index": _as_bool(params, "auto_index", True),
+            "discover_related": _as_bool(params, "discover_related", False),
+            "related_limit": _as_int(
+                params, "related_limit", 10, minimum=0, maximum=100
+            ),
         }
 
     @staticmethod

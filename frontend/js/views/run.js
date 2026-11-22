@@ -41,6 +41,13 @@ const FIELDS = {
     { key: "tracks_per_artist", label: "Tracks per artist (max 200)", type: "number", value: 200, min: 1, max: 200 },
     { key: "retry_failed", label: "Retry seeds marked failed", type: "checkbox" },
   ],
+  "fetch-artist": [
+    { key: "artist", label: "Artist name", type: "text", placeholder: "e.g. Enrico Sangiuliano or Adam Beyer", required: true },
+    { key: "tracks_per_artist", label: "Tracks to fetch (max 200)", type: "number", value: 50, min: 1, max: 200 },
+    { key: "auto_index", label: "Auto-index audio embeddings immediately", type: "checkbox", value: true },
+    { key: "discover_related", label: "Discover related artists (Deezer graph)", type: "checkbox", value: false },
+    { key: "related_limit", label: "Related artists limit", type: "number", value: 10, min: 1, max: 50 },
+  ],
   "analyze-set": [
     { key: "source", label: "Set URL or local audio file", type: "text", placeholder: "https://youtube.com/watch?v=… or D:\\sets\\set.mp3", required: true },
     { key: "shazam", label: "Shazam unidentified passages", type: "checkbox", value: true },

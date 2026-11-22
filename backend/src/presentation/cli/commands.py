@@ -1006,6 +1006,84 @@ def fetch_metadata(
     _run(run())
 
 
+@app.command("fetch-artist")
+def fetch_artist(
+    artist: str = typer.Argument(
+        ...,
+        help="Artist name to fetch from iTunes.",
+    ),
+    tracks: int = typer.Option(
+        50,
+        "--tracks",
+        "-t",
+        min=1,
+        max=200,
+        help="Maximum tracks to fetch for this artist (up to 200).",
+    ),
+    auto_index: bool = typer.Option(
+        True,
+        "--auto-index/--no-auto-index",
+        help="Automatically embed audio previews for newly fetched tracks.",
+    ),
+    discover_related: bool = typer.Option(
+        False,
+        "--discover-related/--no-discover-related",
+        help="Discover related artists via Deezer and add as pending seeds.",
+    ),
+    related_limit: int = typer.Option(
+        10,
+        "--related-limit",
+        min=1,
+        max=50,
+        help="Maximum related artists to discover when --discover-related is enabled.",
+    ),
+) -> None:
+    """Fetch tracks for a specific artist, auto-index audio, and optionally discover related seeds."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.fetch_artist_tracks is not None
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(f"Fetching '{artist}'", total=None)
+
+                def on_progress(p: Any) -> None:
+                    progress.update(
+                        task,
+                        total=p.total or None,
+                        completed=p.processed,
+                        description=f"[cyan]{p.stage}[/] - {p.message}",
+                    )
+
+                result = await container.fetch_artist_tracks.execute(
+                    artist,
+                    tracks_limit=tracks,
+                    auto_index=auto_index,
+                    discover_related=discover_related,
+                    related_limit=related_limit,
+                    progress=on_progress,
+                )
+                progress.update(task, completed=result.tracks_saved)
+
+            table = Table(title=f"Fetch Artist: {result.artist}")
+            table.add_column("Metric")
+            table.add_column("Value", justify="right")
+            table.add_row("Artist", result.artist)
+            table.add_row("Tracks found", str(result.tracks_found))
+            table.add_row("Tracks saved", str(result.tracks_saved))
+            table.add_row("Tracks indexed", str(result.tracks_indexed))
+            table.add_row("Related seeds discovered", str(result.related_seeds_found))
+            console.print(table)
+
+    _run(run())
+
+
 @app.command("stats")
 def stats() -> None:
     """Print seed, track, and catalog analytics."""

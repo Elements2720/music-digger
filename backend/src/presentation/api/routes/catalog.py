@@ -170,6 +170,7 @@ async def reset_embeddings(
     return {"cleared": cleared}
 
 
+@router.get("/catalog/tracks/{track_id}/audio")
 @router.get("/tracks/{track_id}/audio")
 async def get_track_audio(
     track_id: str,
@@ -177,7 +178,11 @@ async def get_track_audio(
 ) -> FileResponse:
     """Stream a local audio file safely."""
     track = await container.track_repository.get_by_id(track_id)
-    if track is None or not getattr(track, "local_path", None):
+    if (
+        track is None
+        or not getattr(track, "local_path", None)
+        or getattr(track, "source", None) != "local"
+    ):
         raise HTTPException(
             status_code=404, detail=f"Local track {track_id!r} not found"
         )

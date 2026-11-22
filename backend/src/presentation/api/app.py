@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 from .job_manager import JobManager
@@ -75,6 +75,13 @@ def create_app(container: Any | None = None) -> FastAPI:
     app.include_router(catalog.router)
     app.include_router(sets.router)
     app.include_router(hardware.router)
+
+    @app.api_route(
+        "/api/{full_path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    )
+    async def api_catch_all(full_path: str) -> None:
+        raise HTTPException(status_code=404, detail="API endpoint not found")
 
     if FRONTEND_DIR.is_dir():
         app.mount(

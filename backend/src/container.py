@@ -38,6 +38,7 @@ from domain.use_cases import (
     BuildSeedList,
     CrawlITunesSeeds,
     DigSimilarTracks,
+    FetchArtistTracks,
     FetchCatalogMetadata,
     FindSimilarForSet,
     ImportLocalLibrary,
@@ -231,6 +232,7 @@ class Container:
         self.build_seed_list: BuildSeedList | None = None
         self.crawl_itunes_seeds: CrawlITunesSeeds | None = None
         self.fetch_catalog_metadata: FetchCatalogMetadata | None = None
+        self.fetch_artist_tracks: FetchArtistTracks | None = None
         self.index_catalog: IndexCatalog | None = None
         self.import_local_library: ImportLocalLibrary | None = None
         self.local_library_scanner: LocalLibraryScanner | None = None
@@ -326,6 +328,14 @@ class Container:
             seed_repository=seed_repository,
             catalog_provider=itunes_provider,
             track_repository=track_repository,
+            blacklist_repository=blacklist_repository,
+        )
+        self.fetch_artist_tracks = FetchArtistTracks(
+            catalog_provider=itunes_provider,
+            track_repository=track_repository,
+            seed_repository=seed_repository,
+            seed_discovery=deezer_crawler,
+            index_catalog=self.index_catalog,
             blacklist_repository=blacklist_repository,
         )
         self.manage_catalog = ManageCatalog(

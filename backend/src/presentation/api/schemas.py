@@ -8,6 +8,7 @@ FastAPI already depends on it — domain entities stay framework-free.
 from __future__ import annotations
 
 from typing import Any, Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +20,7 @@ JobKind = Literal[
     "analyze-set",
     "seed-itunes",
     "import-local",
+    "fetch-artist",
 ]
 
 
@@ -71,8 +73,8 @@ class BlacklistCreateRequest(BaseModel):
 def track_payload(track: Any, *, heard: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Flatten a :class:`~domain.entities.track.Track` for the browser."""
     preview_url = track.preview_url
-    if getattr(track, "local_path", None):
-        preview_url = f"/api/catalog/tracks/{track.id}/audio"
+    if getattr(track, "local_path", None) and getattr(track, "source", None) == "local":
+        preview_url = f"/api/catalog/tracks/{quote(track.id, safe='')}/audio"
     return {
         "id": track.id,
         "title": track.title,

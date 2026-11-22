@@ -184,6 +184,8 @@ class YtDlpSetDownloader(ISetDownloader):
             ["ffprobe", *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=60,
         )

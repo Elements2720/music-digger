@@ -18,6 +18,11 @@ from .dig_similar_tracks import (
     TrackNotEmbeddedError,
     TrackNotFoundError,
 )
+from .fetch_artist_tracks import (
+    FetchArtistProgress,
+    FetchArtistResult,
+    FetchArtistTracks,
+)
 from .fetch_catalog_metadata import FetchCatalogMetadata, FetchMetadataResult
 from .find_similar_for_set import (
     FindSimilarForSet,
@@ -49,6 +54,9 @@ __all__ = [
     "DigLookupError",
     "DigResult",
     "DigSimilarTracks",
+    "FetchArtistProgress",
+    "FetchArtistResult",
+    "FetchArtistTracks",
     "FetchCatalogMetadata",
     "FetchMetadataResult",
     "FindSimilarForSet",

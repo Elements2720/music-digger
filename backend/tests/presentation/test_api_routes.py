@@ -231,22 +231,37 @@ async def test_get_track_audio_endpoint_and_preview_url(
         search_res = await c.get("/api/tracks/search", params={"q": "Local"})
         assert search_res.status_code == 200
         tr_data = search_res.json()["tracks"][0]
-        assert tr_data["preview_url"] == "/api/catalog/tracks/local:1234567890ab/audio"
+        assert (
+            tr_data["preview_url"] == "/api/catalog/tracks/local%3A1234567890ab/audio"
+        )
         assert tr_data["local_path"] == str(audio_file)
 
-        # Stream audio
-        audio_res = await c.get("/api/tracks/local:1234567890ab/audio")
+        # Stream audio via the preview_url endpoint
+        audio_res = await c.get(tr_data["preview_url"])
         assert audio_res.status_code == 200
         assert audio_res.content == b"FAKE_MP3_STREAM_CONTENT"
 
+        # Backwards-compatible route also works
+        audio_res_compat = await c.get("/api/tracks/local:1234567890ab/audio")
+        assert audio_res_compat.status_code == 200
+
         # Nonexistent track -> 404
-        missing_res = await c.get("/api/tracks/local:nonexistent/audio")
+        missing_res = await c.get("/api/catalog/tracks/local%3Anonexistent/audio")
         assert missing_res.status_code == 404
+
+        # Non-local track (or iTunes track) -> 404 cleanly, never 500
+        itunes_audio_res = await c.get("/api/catalog/tracks/itunes%3A123/audio")
+        assert itunes_audio_res.status_code == 404
 
         # Missing file on disk -> 404
         audio_file.unlink()
-        disk_missing_res = await c.get("/api/tracks/local:1234567890ab/audio")
+        disk_missing_res = await c.get("/api/catalog/tracks/local%3A1234567890ab/audio")
         assert disk_missing_res.status_code == 404
+
+        # Unmatched /api/... paths with colons return JSON 404, never 500 WinError
+        catch_all_res = await c.get("/api/does-not-exist/foo:bar")
+        assert catch_all_res.status_code == 404
+        assert catch_all_res.json() == {"detail": "API endpoint not found"}
 
 
 async def test_import_local_job_params_validation_and_start(
