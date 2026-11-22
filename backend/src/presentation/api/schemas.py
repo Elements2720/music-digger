@@ -58,6 +58,14 @@ class ResetEmbeddingsRequest(BaseModel):
     confirm: bool = False
 
 
+class SeedPurgeRequest(BaseModel):
+    """Request to purge seeds by status/source/category."""
+
+    status: str | None = None
+    source: str | None = None
+    category: str | None = None
+
+
 class BlacklistCreateRequest(BaseModel):
     """Payload to add an artist or track to the blacklist."""
 
@@ -218,6 +226,9 @@ def artist_summary_payload(summary: Any) -> dict[str, Any]:
         "sources": list(summary.sources),
         "sample_track_id": summary.sample_track_id,
         "sample_track_title": summary.sample_track_title,
+        "year_min": getattr(summary, "year_min", None),
+        "year_max": getattr(summary, "year_max", None),
+        "taste_match_percent": getattr(summary, "taste_match_percent", None),
     }
 
 
@@ -228,6 +239,7 @@ def catalog_analytics_payload(analytics: Any) -> dict[str, Any]:
         "total_artists": analytics.total_artists,
         "total_local": analytics.total_local,
         "total_itunes": analytics.total_itunes,
+        "local_taste_count": getattr(analytics, "local_taste_count", 0),
         "genres": [genre_stat_payload(g) for g in analytics.genres],
         "bpm_buckets": [bpm_bucket_stat_payload(b) for b in analytics.bpm_buckets],
         "sources": [source_stat_payload(s) for s in analytics.sources],
@@ -245,4 +257,35 @@ def blacklist_entry_payload(entry: Any) -> dict[str, Any]:
         "track_title": entry.track_title,
         "reason": entry.reason,
         "created_at": entry.created_at,
+    }
+
+
+def seed_payload(seed: Any) -> dict[str, Any]:
+    return {
+        "name": seed.name,
+        "category": seed.category,
+        "status": seed.status,
+        "source": seed.source,
+        "priority_score": seed.priority_score,
+        "external_id": getattr(seed, "external_id", getattr(seed, "deezer_id", None)),
+    }
+
+
+def seed_source_stat_payload(stat: Any) -> dict[str, Any]:
+    return {
+        "source": stat.source,
+        "total": stat.total,
+        "pending": stat.pending,
+        "fetched": stat.fetched,
+        "failed": stat.failed,
+    }
+
+
+def seed_breakdown_payload(breakdown: Any) -> dict[str, Any]:
+    return {
+        "total": breakdown.total,
+        "pending": breakdown.pending,
+        "fetched": breakdown.fetched,
+        "failed": breakdown.failed,
+        "by_source": [seed_source_stat_payload(s) for s in breakdown.by_source],
     }

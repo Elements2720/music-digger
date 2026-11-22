@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from .._validation import (
     freeze_tuple,
     optional_str,
+    require_float,
     require_int,
     require_str,
 )
@@ -95,6 +96,9 @@ class ArtistSummary:
     sources: tuple[str, ...]
     sample_track_id: str | None = None
     sample_track_title: str | None = None
+    year_min: int | None = None
+    year_max: int | None = None
+    taste_match_percent: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "artist", require_str(self.artist, "artist"))
@@ -118,6 +122,16 @@ class ArtistSummary:
             "sample_track_title",
             optional_str(self.sample_track_title, "sample_track_title"),
         )
+        if self.year_min is not None:
+            object.__setattr__(self, "year_min", require_int(self.year_min, "year_min"))
+        if self.year_max is not None:
+            object.__setattr__(self, "year_max", require_int(self.year_max, "year_max"))
+        if self.taste_match_percent is not None:
+            object.__setattr__(
+                self,
+                "taste_match_percent",
+                require_float(self.taste_match_percent, "taste_match_percent"),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +147,7 @@ class CatalogAnalytics:
     bpm_buckets: tuple[BpmBucketStat, ...]
     sources: tuple[SourceStat, ...]
     top_keys: tuple[KeyStat, ...]
+    local_taste_count: int = 0
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -141,6 +156,7 @@ class CatalogAnalytics:
             "total_artists",
             "total_local",
             "total_itunes",
+            "local_taste_count",
         ):
             val = require_int(getattr(self, field_name), field_name)
             if val < 0:
@@ -160,4 +176,46 @@ class CatalogAnalytics:
         )
         object.__setattr__(
             self, "top_keys", freeze_tuple(self.top_keys, "top_keys", KeyStat)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SeedSourceStat:
+    """Breakdown of seed statuses for one seed source."""
+
+    source: str
+    total: int
+    pending: int
+    fetched: int
+    failed: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source", require_str(self.source, "source"))
+        for field_name in ("total", "pending", "fetched", "failed"):
+            val = require_int(getattr(self, field_name), field_name)
+            if val < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+            object.__setattr__(self, field_name, val)
+
+
+@dataclass(frozen=True, slots=True)
+class SeedBreakdown:
+    """Overall counts and per-source statistics for the seed repository."""
+
+    total: int
+    pending: int
+    fetched: int
+    failed: int
+    by_source: tuple[SeedSourceStat, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in ("total", "pending", "fetched", "failed"):
+            val = require_int(getattr(self, field_name), field_name)
+            if val < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+            object.__setattr__(self, field_name, val)
+        object.__setattr__(
+            self,
+            "by_source",
+            freeze_tuple(self.by_source, "by_source", SeedSourceStat),
         )

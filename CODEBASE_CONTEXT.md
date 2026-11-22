@@ -15,13 +15,14 @@ backend/
     container.py                                  # Composition Root (wires SQLite, LanceDB, ML, Repositories, Use Cases)
     domain/
       _validation.py                              # Pure validation helpers (stdlib only)
+      genres.py                                   # Curated techno subgenre presets, token matching, year guard
       __init__.py
       entities/
         __init__.py
         track.py                                  # Track, BlacklistEntry, BlacklistKind, SeedArtist, AudioBuffer, TrackReference, TrackVibe
-        analytics.py                              # GenreStat, BpmBucketStat, SourceStat, KeyStat, ArtistSummary, CatalogAnalytics
+        analytics.py                              # GenreStat, BpmBucketStat, SourceStat, KeyStat, ArtistSummary, CatalogAnalytics, SeedBreakdown, SeedSourceStat
         dj_set.py                                 # TrackMatch, Passage, DJSet, DownloadedSet, SetMatch
-        search.py                                 # SearchFilter
+        search.py                                 # SearchFilter (min_year, max_year, genres)
       value_objects/
         __init__.py
         audio_features.py                         # BPM, CamelotKey, TimeRange, EmbeddingVector, AudioFeatures

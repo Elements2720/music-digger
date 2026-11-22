@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
+from domain.entities.analytics import SeedBreakdown, SeedSourceStat
 from domain.entities.track import (
     SEED_CATEGORIES,
     SEED_STATUSES,
@@ -199,6 +201,127 @@ class SQLiteSeedRepository(ISeedRepository):
             (norm_name, name),
         )
         return (cursor.rowcount or 0) > 0
+
+    async def list_seeds(
+        self,
+        *,
+        status: str | None = None,
+        source: str | None = None,
+        category: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Sequence[SeedArtist], int]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            self._validate_status(status)
+            clauses.append("status = ?")
+            params.append(status)
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        if category:
+            if category not in SEED_CATEGORIES:
+                raise ValueError(f"category must be one of {sorted(SEED_CATEGORIES)}")
+            clauses.append("category = ?")
+            params.append(category)
+        if query and query.strip():
+            clauses.append("name LIKE ?")
+            params.append(f"%{query.strip()}%")
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+        count_sql = f"SELECT COUNT(*) AS total FROM seed_artists {where}"
+        count_row = await self._sqlite.fetchone(count_sql, tuple(params))
+        total = int(count_row["total"]) if count_row is not None else 0
+        if total == 0 or limit <= 0:
+            return ((), total)
+
+        sql = f"""
+        SELECT * FROM seed_artists
+        {where}
+        ORDER BY priority_score DESC, name COLLATE NOCASE ASC
+        LIMIT ? OFFSET ?
+        """
+        fetch_params = list(params)
+        fetch_params.extend([limit, offset])
+        rows = await self._sqlite.fetchall(sql, tuple(fetch_params))
+        return (tuple(row_to_seed(r) for r in rows), total)
+
+    async def get_breakdown(self) -> SeedBreakdown:
+        status_row = await self._sqlite.fetchone(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN status = 'fetched' THEN 1 ELSE 0 END) AS fetched,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+            FROM seed_artists
+            """
+        )
+        total = int(status_row["total"] or 0) if status_row else 0
+        pending = int(status_row["pending"] or 0) if status_row else 0
+        fetched = int(status_row["fetched"] or 0) if status_row else 0
+        failed = int(status_row["failed"] or 0) if status_row else 0
+
+        source_rows = await self._sqlite.fetchall(
+            """
+            SELECT
+                source,
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN status = 'fetched' THEN 1 ELSE 0 END) AS fetched,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+            FROM seed_artists
+            GROUP BY source
+            ORDER BY total DESC
+            """
+        )
+        by_source = tuple(
+            SeedSourceStat(
+                source=str(r["source"] or "unknown"),
+                total=int(r["total"] or 0),
+                pending=int(r["pending"] or 0),
+                fetched=int(r["fetched"] or 0),
+                failed=int(r["failed"] or 0),
+            )
+            for r in source_rows
+        )
+        return SeedBreakdown(
+            total=total,
+            pending=pending,
+            fetched=fetched,
+            failed=failed,
+            by_source=by_source,
+        )
+
+    async def purge_seeds(
+        self,
+        *,
+        status: str | None = None,
+        source: str | None = None,
+        category: str | None = None,
+    ) -> int:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            self._validate_status(status)
+            clauses.append("status = ?")
+            params.append(status)
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        if category:
+            if category not in SEED_CATEGORIES:
+                raise ValueError(f"category must be one of {sorted(SEED_CATEGORIES)}")
+            clauses.append("category = ?")
+            params.append(category)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"DELETE FROM seed_artists {where}"
+        cursor = await self._sqlite.execute(sql, tuple(params))
+        return int(cursor.rowcount or 0)
 
     @staticmethod
     def _validate_status(status: str) -> None:

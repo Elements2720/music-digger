@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from ..entities.track import SeedArtist
+from ..genres import track_matches_genre_guard, track_matches_year
 from ..interfaces.catalog import ICatalogProvider
 from ..interfaces.repositories import ISeedRepository, ITrackRepository
 
@@ -74,6 +75,9 @@ class CrawlITunesSeeds:
         expand_compilations: bool = True,
         save_tracks: bool = True,
         priority_score: float = 0.85,
+        min_year: int | None = None,
+        electronic_only: bool = False,
+        allowed_genres: Sequence[str] | None = None,
         progress: Callable[[str, int, int, int], None] | None = None,
     ) -> CrawlITunesResult:
         """Crawl iTunes by keyword/label/compilation.
@@ -120,12 +124,28 @@ class CrawlITunesSeeds:
                 term_tracks_found = len(tracks)
                 tracks_found += term_tracks_found
 
-                if save_tracks and tracks:
-                    tracks_saved += await self._track_repository.upsert_many(tracks)
+                if min_year is not None or electronic_only or allowed_genres:
+                    filtered_tracks = [
+                        t
+                        for t in tracks
+                        if track_matches_year(t.release_year, min_year=min_year)
+                        and track_matches_genre_guard(
+                            t.genre,
+                            allowed_genres=allowed_genres or (),
+                            electronic_only=electronic_only,
+                        )
+                    ]
+                else:
+                    filtered_tracks = list(tracks)
+
+                if save_tracks and filtered_tracks:
+                    tracks_saved += await self._track_repository.upsert_many(
+                        filtered_tracks
+                    )
 
                 seen_in_term: set[str] = set()
                 artists_to_record: list[SeedArtist] = []
-                for track in tracks:
+                for track in filtered_tracks:
                     name = track.artist.strip()
                     key = name.casefold()
                     if not key or key in seen_in_term:

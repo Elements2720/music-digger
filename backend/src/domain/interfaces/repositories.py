@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from ..entities.analytics import ArtistSummary, CatalogAnalytics
+from ..entities.analytics import ArtistSummary, CatalogAnalytics, SeedBreakdown
 from ..entities.dj_set import DJSet, SetMatch, TrackMatch
 from ..entities.search import SearchFilter
 from ..entities.track import BlacklistEntry, SeedArtist, SeedStatus, Track
@@ -158,12 +158,21 @@ class ITrackRepository(ABC):
         query: str | None = None,
         genre: str | None = None,
         source: str | None = None,
+        min_year: int | None = None,
         sort: str = "tracks_desc",
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[Sequence[ArtistSummary], int]:
         """List artists summary with counts and genres, returning (artists, total_count)."""
         return ((), 0)
+
+    async def get_artist_taste_scores(self) -> tuple[dict[str, float], int]:
+        """Return (artist_taste_scores, local_taste_count).
+
+        Scores are 0.0-100.0 percentages reflecting how close each artist's
+        catalog is to the user's local music taste profile.
+        """
+        return ({}, 0)
 
     async def get_catalog_analytics(self) -> CatalogAnalytics:
         """Return high-level analytics and distributions across the catalog."""
@@ -278,6 +287,33 @@ class ISeedRepository(ABC):
     async def delete_by_name(self, name: str) -> bool:
         """Delete a seed by artist name, returning True if deleted."""
         return False
+
+    async def list_seeds(
+        self,
+        *,
+        status: str | None = None,
+        source: str | None = None,
+        category: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Sequence[SeedArtist], int]:
+        """List seeds matching filters with pagination, returning (seeds, total_count)."""
+        return ((), 0)
+
+    async def get_breakdown(self) -> SeedBreakdown:
+        """Return overall count breakdown by status and by source."""
+        return SeedBreakdown(total=0, pending=0, fetched=0, failed=0, by_source=())
+
+    async def purge_seeds(
+        self,
+        *,
+        status: str | None = None,
+        source: str | None = None,
+        category: str | None = None,
+    ) -> int:
+        """Purge seeds matching criteria, returning the count of deleted seeds."""
+        return 0
 
 
 class IBlacklistRepository(ABC):

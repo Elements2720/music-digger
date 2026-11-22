@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from .._validation import normalize_artist_key, normalize_track_key
 from ..entities.track import SeedArtist, Track
+from ..genres import track_matches_genre_guard, track_matches_year
 from ..interfaces.catalog import ICatalogProvider, ISeedDiscovery
 from ..interfaces.repositories import (
     IBlacklistRepository,
@@ -69,6 +70,9 @@ class FetchArtistTracks:
         auto_index: bool = True,
         discover_related: bool = False,
         related_limit: int = 10,
+        min_year: int | None = None,
+        electronic_only: bool = False,
+        allowed_genres: Sequence[str] | None = None,
         progress: Callable[[FetchArtistProgress], None] | None = None,
     ) -> FetchArtistResult:
         artist_clean = artist_name.strip()
@@ -104,17 +108,26 @@ class FetchArtistTracks:
         )
 
         filtered_tracks: list[Track] = []
+        blocked_tracks: frozenset[str] = frozenset()
         if self._blacklist_repository is not None:
             blocked_tracks = await self._blacklist_repository.get_blocked_track_keys()
-            for t in tracks:
-                if normalize_track_key(t.artist, t.title) in blocked_tracks:
-                    LOGGER.info(
-                        "Skipping blacklisted track: %s - %s", t.artist, t.title
-                    )
-                    continue
-                filtered_tracks.append(t)
-        else:
-            filtered_tracks = list(tracks)
+
+        for t in tracks:
+            if (
+                blocked_tracks
+                and normalize_track_key(t.artist, t.title) in blocked_tracks
+            ):
+                LOGGER.info("Skipping blacklisted track: %s - %s", t.artist, t.title)
+                continue
+            if not track_matches_year(t.release_year, min_year=min_year):
+                continue
+            if not track_matches_genre_guard(
+                t.genre,
+                allowed_genres=allowed_genres or (),
+                electronic_only=electronic_only,
+            ):
+                continue
+            filtered_tracks.append(t)
 
         # 3. Save tracks to repository
         tracks_saved = 0

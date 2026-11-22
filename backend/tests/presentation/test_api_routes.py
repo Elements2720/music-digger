@@ -301,6 +301,13 @@ async def test_catalog_artists_and_tracks_endpoints(client: httpx.AsyncClient) -
     assert body["total"] == 3
     assert len(body["artists"]) == 3
 
+    # Test genre presets
+    presets_res = await client.get("/api/catalog/genre-presets")
+    assert presets_res.status_code == 200
+    presets_body = presets_res.json()
+    assert "Techno" in presets_body["presets"]
+    assert "techno" in presets_body["electronic_tokens"]
+
     artist_res = await client.get("/api/catalog/artists/Solomun/tracks")
     assert artist_res.status_code == 200
     artist_body = artist_res.json()
@@ -356,3 +363,41 @@ async def test_blacklist_crud_endpoints(client: httpx.AsyncClient) -> None:
     del_res = await client.delete(f"/api/catalog/blacklist/{entry_id}")
     assert del_res.status_code == 200
     assert del_res.json()["success"] is True
+
+
+async def test_seeds_endpoints(client: httpx.AsyncClient) -> None:
+    # 1. List all seeds and check breakdown
+    res = await client.get("/api/catalog/seeds")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 7
+    assert len(body["seeds"]) == 7
+    assert body["breakdown"]["total"] == 7
+    assert body["breakdown"]["pending"] == 3
+    assert body["breakdown"]["failed"] == 1
+    assert len(body["breakdown"]["by_source"]) >= 3
+
+    # 2. Filter by status
+    pending_res = await client.get("/api/catalog/seeds", params={"status": "pending"})
+    assert pending_res.status_code == 200
+    assert pending_res.json()["total"] == 3
+
+    # 3. Filter by search query
+    search_res = await client.get("/api/catalog/seeds", params={"q": "Tale"})
+    assert search_res.status_code == 200
+    assert search_res.json()["total"] == 1
+    assert search_res.json()["seeds"][0]["name"] == "Tale of Us"
+
+    # 4. Delete single seed
+    del_res = await client.delete("/api/catalog/seeds/ARTBAT")
+    assert del_res.status_code == 200
+    assert del_res.json() == {"name": "ARTBAT", "deleted": True}
+
+    # Verify deleted
+    after_del = await client.get("/api/catalog/seeds", params={"q": "ARTBAT"})
+    assert after_del.json()["total"] == 0
+
+    # 5. Purge failed seeds
+    purge_res = await client.post("/api/catalog/seeds/purge", json={"status": "failed"})
+    assert purge_res.status_code == 200
+    assert purge_res.json()["purged"] == 1

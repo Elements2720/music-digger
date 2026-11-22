@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
@@ -72,6 +73,12 @@ class HybridTrackRepository(ITrackRepository):
         self._sqlite = sqlite
         self._vectors = vectors
         self._blacklist = blacklist
+        self._taste_scores_cache: tuple[dict[str, float], int] | None = None
+        self._taste_scores_timestamp: float = 0.0
+
+    def _invalidate_taste_cache(self) -> None:
+        self._taste_scores_cache = None
+        self._taste_scores_timestamp = 0.0
 
     async def upsert_many(self, tracks: Sequence[Track]) -> int:
         if not tracks:
@@ -109,6 +116,7 @@ class HybridTrackRepository(ITrackRepository):
             await self._vectors.upsert_many(
                 [track_to_vector_row(track) for track in vector_tracks]
             )
+        self._invalidate_taste_cache()
         return len(tracks)
 
     async def get_by_id(self, track_id: str) -> Track | None:
@@ -157,9 +165,20 @@ class HybridTrackRepository(ITrackRepository):
             await self.get_heard_ids() if search_filter.exclude_heard else frozenset()
         )
         where = self._vector_where(search_filter, heard_ids)
+        needs_post_filter = bool(
+            search_filter.min_year is not None
+            or search_filter.max_year is not None
+            or search_filter.genres
+            or search_filter.exclude_heard
+        )
+        vector_limit = (
+            min(1000, max(search_filter.limit * 8, 200))
+            if needs_post_filter
+            else search_filter.limit
+        )
         vector_matches = await self._vectors.search(
             embedding.values,
-            limit=search_filter.limit,
+            limit=vector_limit,
             where=where,
         )
         tracks = await self.get_many([match.track_id for match in vector_matches])
@@ -169,7 +188,7 @@ class HybridTrackRepository(ITrackRepository):
             track = by_id.get(vector_match.track_id)
             if track is None:
                 continue
-            if search_filter.exclude_heard and track.id in heard_ids:
+            if not search_filter.matches(track, heard_ids):
                 continue
             matches.append(
                 TrackMatch(
@@ -177,6 +196,8 @@ class HybridTrackRepository(ITrackRepository):
                     similarity_score=vector_match.similarity,
                 )
             )
+            if len(matches) >= search_filter.limit:
+                break
         return tuple(matches)
 
     async def find_by_filter(self, search_filter: SearchFilter) -> Sequence[Track]:
@@ -194,7 +215,17 @@ class HybridTrackRepository(ITrackRepository):
             parameters.extend(key.notation for key in search_filter.camelot_keys)
         if search_filter.exclude_heard:
             clauses.append("is_heard = 0")
-        if search_filter.genre_filter is not None:
+        if search_filter.min_year is not None:
+            clauses.append("release_year >= ?")
+            parameters.append(search_filter.min_year)
+        if search_filter.max_year is not None:
+            clauses.append("release_year <= ?")
+            parameters.append(search_filter.max_year)
+        if search_filter.genres:
+            genre_or_clauses = ["genre LIKE ?" for _ in search_filter.genres]
+            clauses.append(f"({' OR '.join(genre_or_clauses)})")
+            parameters.extend(f"%{g}%" for g in search_filter.genres)
+        elif search_filter.genre_filter is not None:
             clauses.append("LOWER(genre) = LOWER(?)")
             parameters.append(search_filter.genre_filter)
 
@@ -351,6 +382,7 @@ class HybridTrackRepository(ITrackRepository):
             WHERE is_embedded = 1
             """
         )
+        self._invalidate_taste_cache()
         return cleared
 
     async def delete_by_ids(self, track_ids: Sequence[str]) -> int:
@@ -371,6 +403,7 @@ class HybridTrackRepository(ITrackRepository):
             )
             total_deleted += cursor.rowcount or 0
         await self._vectors.delete_ids(track_ids)
+        self._invalidate_taste_cache()
         return total_deleted
 
     async def delete_by_artist(self, artist_name: str) -> tuple[int, tuple[str, ...]]:
@@ -406,12 +439,57 @@ class HybridTrackRepository(ITrackRepository):
         )
         return tuple(row_to_track(row) for row in rows)
 
+    async def get_artist_taste_scores(self) -> tuple[dict[str, float], int]:
+        """Compute mean taste match percentage per artist against local library profile."""
+        now = time.monotonic()
+        if (
+            self._taste_scores_cache is not None
+            and (now - self._taste_scores_timestamp) < 300.0
+        ):
+            return self._taste_scores_cache
+
+        local_rows = await self._sqlite.fetchall(
+            "SELECT id FROM tracks WHERE source = 'local' AND is_embedded = 1"
+        )
+        if not local_rows:
+            self._taste_scores_cache = ({}, 0)
+            self._taste_scores_timestamp = now
+            return ({}, 0)
+
+        seed_ids = [str(r["id"]) for r in local_rows]
+        track_scores = await self._vectors.compute_similarity_to_seed_ids(seed_ids)
+        if not track_scores:
+            self._taste_scores_cache = ({}, len(seed_ids))
+            self._taste_scores_timestamp = now
+            return ({}, len(seed_ids))
+
+        artist_rows = await self._sqlite.fetchall(
+            "SELECT id, artist FROM tracks WHERE is_embedded = 1"
+        )
+        artist_scores_accum: dict[str, list[float]] = {}
+        for r in artist_rows:
+            tid = str(r["id"])
+            artist = str(r["artist"])
+            if tid in track_scores:
+                artist_scores_accum.setdefault(artist, []).append(track_scores[tid])
+
+        artist_taste_scores: dict[str, float] = {}
+        for artist, scores in artist_scores_accum.items():
+            if scores:
+                artist_taste_scores[artist] = round(sum(scores) / len(scores), 1)
+
+        result = (artist_taste_scores, len(seed_ids))
+        self._taste_scores_cache = result
+        self._taste_scores_timestamp = now
+        return result
+
     async def list_artists_summary(
         self,
         *,
         query: str | None = None,
         genre: str | None = None,
         source: str | None = None,
+        min_year: int | None = None,
         sort: str = "tracks_desc",
         limit: int = 50,
         offset: int = 0,
@@ -428,6 +506,9 @@ class HybridTrackRepository(ITrackRepository):
         if source and source.strip():
             clauses.append("source = ?")
             params.append(source.strip())
+        if min_year is not None:
+            clauses.append("release_year >= ?")
+            params.append(min_year)
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
@@ -437,35 +518,59 @@ class HybridTrackRepository(ITrackRepository):
         if total_artists == 0 or limit <= 0:
             return ((), total_artists)
 
+        taste_scores, _ = await self.get_artist_taste_scores()
+        is_taste_sort = sort in ("taste_desc", "taste_asc")
+
         if sort == "artist_asc":
             order_by = "artist COLLATE NOCASE ASC"
         elif sort == "embedded_desc":
             order_by = (
                 "embedded_count DESC, track_count DESC, artist COLLATE NOCASE ASC"
             )
-        else:  # "tracks_desc"
+        else:  # "tracks_desc" or taste sort baseline
             order_by = (
                 "track_count DESC, embedded_count DESC, artist COLLATE NOCASE ASC"
             )
 
-        summary_sql = f"""
-        SELECT
-            artist,
-            COUNT(*) AS track_count,
-            SUM(is_embedded) AS embedded_count,
-            GROUP_CONCAT(DISTINCT genre) AS genres_concat,
-            GROUP_CONCAT(DISTINCT source) AS sources_concat,
-            MIN(id) AS sample_id,
-            MIN(title) AS sample_title
-        FROM tracks
-        {where}
-        GROUP BY artist
-        ORDER BY {order_by}
-        LIMIT ? OFFSET ?
-        """
-        fetch_params = list(params)
-        fetch_params.extend([limit, offset])
-        rows = await self._sqlite.fetchall(summary_sql, tuple(fetch_params))
+        if is_taste_sort:
+            summary_sql = f"""
+            SELECT
+                artist,
+                COUNT(*) AS track_count,
+                SUM(is_embedded) AS embedded_count,
+                MIN(release_year) AS year_min,
+                MAX(release_year) AS year_max,
+                GROUP_CONCAT(DISTINCT genre) AS genres_concat,
+                GROUP_CONCAT(DISTINCT source) AS sources_concat,
+                MIN(id) AS sample_id,
+                MIN(title) AS sample_title
+            FROM tracks
+            {where}
+            GROUP BY artist
+            ORDER BY {order_by}
+            """
+            rows = await self._sqlite.fetchall(summary_sql, tuple(params))
+        else:
+            summary_sql = f"""
+            SELECT
+                artist,
+                COUNT(*) AS track_count,
+                SUM(is_embedded) AS embedded_count,
+                MIN(release_year) AS year_min,
+                MAX(release_year) AS year_max,
+                GROUP_CONCAT(DISTINCT genre) AS genres_concat,
+                GROUP_CONCAT(DISTINCT source) AS sources_concat,
+                MIN(id) AS sample_id,
+                MIN(title) AS sample_title
+            FROM tracks
+            {where}
+            GROUP BY artist
+            ORDER BY {order_by}
+            LIMIT ? OFFSET ?
+            """
+            fetch_params = list(params)
+            fetch_params.extend([limit, offset])
+            rows = await self._sqlite.fetchall(summary_sql, tuple(fetch_params))
 
         summaries: list[ArtistSummary] = []
         for row in rows:
@@ -473,9 +578,11 @@ class HybridTrackRepository(ITrackRepository):
             genres = tuple(g for g in genres_raw.split(",") if g)
             sources_raw = row["sources_concat"] or ""
             sources = tuple(s for s in sources_raw.split(",") if s)
+            artist_name = str(row["artist"])
+            taste_pct = taste_scores.get(artist_name)
             summaries.append(
                 ArtistSummary(
-                    artist=str(row["artist"]),
+                    artist=artist_name,
                     track_count=int(row["track_count"] or 0),
                     embedded_count=int(row["embedded_count"] or 0),
                     genres=genres,
@@ -484,8 +591,41 @@ class HybridTrackRepository(ITrackRepository):
                     sample_track_title=str(row["sample_title"])
                     if row["sample_title"]
                     else None,
+                    year_min=int(row["year_min"])
+                    if row["year_min"] is not None
+                    else None,
+                    year_max=int(row["year_max"])
+                    if row["year_max"] is not None
+                    else None,
+                    taste_match_percent=taste_pct,
                 )
             )
+
+        if is_taste_sort:
+            if sort == "taste_desc":
+                summaries.sort(
+                    key=lambda s: (
+                        s.taste_match_percent is not None,
+                        s.taste_match_percent or 0.0,
+                        s.track_count,
+                    ),
+                    reverse=True,
+                )
+            elif sort == "taste_asc":
+                summaries.sort(
+                    key=lambda s: (
+                        s.taste_match_percent is not None,
+                        -(
+                            s.taste_match_percent
+                            if s.taste_match_percent is not None
+                            else 999.0
+                        ),
+                        s.track_count,
+                    ),
+                    reverse=True,
+                )
+            summaries = summaries[offset : offset + limit]
+
         return (tuple(summaries), total_artists)
 
     async def get_catalog_analytics(self) -> CatalogAnalytics:
@@ -600,6 +740,7 @@ class HybridTrackRepository(ITrackRepository):
             total_artists=total_artists,
             total_local=total_local,
             total_itunes=total_itunes,
+            local_taste_count=total_local,
             genres=genres,
             bpm_buckets=bpm_buckets,
             sources=sources,

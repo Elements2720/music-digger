@@ -8,7 +8,10 @@ import { fmtMemory, fmtNumber } from "../format.js";
 let mounted = false;
 let artistPage = 1;
 const ARTIST_PAGE_SIZE = 15;
+let seedsPage = 1;
+const SEEDS_PAGE_SIZE = 20;
 let artistsSearchTimer = null;
+let seedsSearchTimer = null;
 let blacklistSearchTimer = null;
 let openFetchModalFn = null;
 
@@ -41,15 +44,21 @@ async function loadAnalytics() {
       ? Math.round((analytics.total_embedded / analytics.total_tracks) * 100)
       : 0;
 
-    cardsTarget.replaceChildren(
+    const cards = [
       card(analytics.total_tracks, "Total Tracks"),
       card(analytics.total_embedded, "Embedded", `${embeddedPct}% ready`),
       card(analytics.total_artists, "Total Artists"),
       card(analytics.total_local, "Local Files"),
       card(analytics.total_itunes, "iTunes Tracks"),
       card(statsData.sets.total, "DJ Sets Analyzed"),
-      card(statsData.seeds.total, "Seed Artists", `${statsData.seeds.pending} pending`)
-    );
+      card(statsData.seeds.total, "Seed Artists", `${statsData.seeds.pending} pending`),
+    ];
+    if (analytics.local_taste_count > 0) {
+      cards.push(
+        card(analytics.local_taste_count, "Taste Profile", "local tracks active")
+      );
+    }
+    cardsTarget.replaceChildren(...cards);
 
     // 1. Genres chart
     if (!analytics.genres || analytics.genres.length === 0) {
@@ -110,10 +119,13 @@ async function loadAnalytics() {
 async function loadArtists(page = 1) {
   artistPage = Math.max(1, page);
   const tbody = $("artists-tbody");
-  tbody.replaceChildren(el("tr", {}, [el("td", { colspan: 6, class: "empty", text: "Loading artists…" })]));
+  tbody.replaceChildren(el("tr", {}, [el("td", { colspan: 8, class: "empty", text: "Loading artists…" })]));
 
   const q = $("artists-search").value.trim();
   const source = $("artists-source-filter").value;
+  const genre = $("artists-genre-filter") ? $("artists-genre-filter").value : "";
+  const minYearVal = $("artists-min-year") ? $("artists-min-year").value.trim() : "";
+  const minYear = minYearVal ? Number(minYearVal) : undefined;
   const sort = $("artists-sort").value;
   const offset = (artistPage - 1) * ARTIST_PAGE_SIZE;
 
@@ -121,6 +133,8 @@ async function loadArtists(page = 1) {
     const data = await api.artistsSummary({
       q: q || undefined,
       source: source || undefined,
+      genre: genre || undefined,
+      min_year: minYear,
       sort,
       limit: ARTIST_PAGE_SIZE,
       offset,
@@ -136,7 +150,7 @@ async function loadArtists(page = 1) {
 
     if (artists.length === 0) {
       tbody.replaceChildren(
-        el("tr", {}, [el("td", { colspan: 6, class: "empty", text: "No matching artists found." })])
+        el("tr", {}, [el("td", { colspan: 8, class: "empty", text: "No matching artists found." })])
       );
       return;
     }
@@ -157,7 +171,7 @@ async function loadArtists(page = 1) {
           type: "button",
           text: "TRACKS",
         });
-        tracksBtn.addEventListener("click", () => openArtistDrawer(artist.artist));
+        tracksBtn.addEventListener("click", () => openArtistTracksModal(artist.artist));
 
         const delBtn = el("button", {
           class: "btn tiny danger",
@@ -182,6 +196,29 @@ async function loadArtists(page = 1) {
             delBtn.disabled = false;
           }
         });
+
+        let yearsText = "—";
+        if (artist.year_min && artist.year_max) {
+          yearsText =
+            artist.year_min === artist.year_max
+              ? String(artist.year_min)
+              : `${artist.year_min}–${artist.year_max}`;
+        } else if (artist.year_min || artist.year_max) {
+          yearsText = String(artist.year_min || artist.year_max);
+        }
+
+        let tasteEl;
+        if (
+          artist.taste_match_percent !== null &&
+          artist.taste_match_percent !== undefined
+        ) {
+          const score = Math.round(artist.taste_match_percent);
+          const tier =
+            score >= 80 ? "taste-high" : score >= 65 ? "taste-mid" : "taste-low";
+          tasteEl = el("span", { class: `chip ${tier}`, text: `${score}%` });
+        } else {
+          tasteEl = el("span", { class: "dim", text: "—" });
+        }
 
         const rawGenres = artist.genres || [];
         const genreChips = rawGenres.slice(0, 3).map((g) =>
@@ -210,43 +247,265 @@ async function loadArtists(page = 1) {
             el("span", { text: `${fmtNumber(artist.embedded_count)} ` }),
             el("span", { class: "dim", text: `(${embPct}%)` }),
           ]),
+          el("td", { class: "mono dim", text: yearsText }),
           el("td", {}, [el("div", { class: "cell-badges" }, genreChips)]),
+          el("td", {}, [tasteEl]),
           el("td", {}, [el("div", { class: "cell-badges" }, sourcesList)]),
           el("td", {}, [el("div", { class: "cell-actions" }, [fetchBtn, tracksBtn, delBtn])]),
         ]);
       })
     );
   } catch (error) {
-    tbody.replaceChildren(el("tr", {}, [el("td", { colspan: 6, class: "empty", text: error.message })]));
+    tbody.replaceChildren(el("tr", {}, [el("td", { colspan: 8, class: "empty", text: error.message })]));
   }
 }
 
-async function openArtistDrawer(artistName) {
-  const drawer = $("artist-tracks-drawer");
-  const list = $("drawer-tracks-list");
-  $("drawer-artist-name").textContent = artistName;
-  drawer.classList.remove("hidden");
-  list.replaceChildren(el("div", { class: "empty", text: "Loading tracks…" }));
+let currentArtistTracks = [];
+let currentArtistName = "";
+
+function renderArtistTracksModalList() {
+  const list = $("modal-artist-tracks-list");
+  const filterInput = $("modal-artist-tracks-filter");
+  const countLabel = $("modal-artist-tracks-count");
+  if (!list) return;
+
+  const q = (filterInput?.value || "").trim().toLowerCase();
+  const filtered = q
+    ? currentArtistTracks.filter((t) => {
+        const title = (t.title || "").toLowerCase();
+        const genre = (t.genre || "").toLowerCase();
+        const key = (t.key || "").toLowerCase();
+        const year = String(t.release_year || "");
+        return (
+          title.includes(q) ||
+          genre.includes(q) ||
+          key.includes(q) ||
+          year.includes(q)
+        );
+      })
+    : currentArtistTracks;
+
+  if (countLabel) {
+    countLabel.textContent = q
+      ? `${filtered.length} of ${currentArtistTracks.length} tracks`
+      : `${currentArtistTracks.length} track${currentArtistTracks.length === 1 ? "" : "s"}`;
+  }
+
+  if (filtered.length === 0) {
+    list.replaceChildren(
+      el("div", {
+        class: "empty",
+        text: q ? "No matching tracks found." : "No tracks found for this artist.",
+      })
+    );
+    return;
+  }
+
+  list.replaceChildren(
+    ...filtered.map((t, idx) => trackRow(t, { rank: idx + 1 }))
+  );
+}
+
+async function openArtistTracksModal(artistName) {
+  currentArtistName = artistName;
+  currentArtistTracks = [];
+
+  const modal = $("modal-artist-tracks");
+  const title = $("modal-artist-tracks-title");
+  const countLabel = $("modal-artist-tracks-count");
+  const filterInput = $("modal-artist-tracks-filter");
+  const list = $("modal-artist-tracks-list");
+
+  if (title) title.textContent = artistName;
+  if (countLabel) countLabel.textContent = "Loading…";
+  if (filterInput) filterInput.value = "";
+  if (list) list.replaceChildren(el("div", { class: "empty", text: "Loading tracks…" }));
+
+  modal?.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
 
   try {
     const data = await api.artistTracks(artistName, { limit: 200 });
-    const tracks = data.tracks || [];
-    if (tracks.length === 0) {
-      list.replaceChildren(el("div", { class: "empty", text: "No tracks found for this artist." }));
-      return;
-    }
-    list.replaceChildren(
-      ...tracks.map((t, idx) => trackRow(t, { rank: idx + 1 }))
-    );
+    currentArtistTracks = data.tracks || [];
+    renderArtistTracksModalList();
   } catch (error) {
-    list.replaceChildren(el("div", { class: "empty", text: error.message }));
+    if (list) list.replaceChildren(el("div", { class: "empty", text: error.message }));
+    if (countLabel) countLabel.textContent = "0 tracks";
   }
 }
 
-function closeArtistDrawer() {
-  const drawer = $("artist-tracks-drawer");
-  drawer.classList.add("hidden");
-  $("drawer-tracks-list").replaceChildren();
+function closeArtistTracksModal() {
+  const modal = $("modal-artist-tracks");
+  if (!modal || modal.classList.contains("hidden")) return;
+  modal.classList.add("hidden");
+  document.body.style.overflow = "";
+  currentArtistTracks = [];
+  currentArtistName = "";
+  $("modal-artist-tracks-list")?.replaceChildren();
+}
+
+async function loadSeeds(page = 1) {
+  seedsPage = Math.max(1, page);
+  const tbody = $("seeds-tbody");
+  if (!tbody) return;
+  tbody.replaceChildren(
+    el("tr", {}, [el("td", { colspan: 6, class: "empty", text: "Loading seeds…" })])
+  );
+
+  const q = $("seeds-search") ? $("seeds-search").value.trim() : "";
+  const status = $("seeds-status-filter") ? $("seeds-status-filter").value : "";
+  const source = $("seeds-source-filter") ? $("seeds-source-filter").value : "";
+  const category = $("seeds-category-filter") ? $("seeds-category-filter").value : "";
+  const offset = (seedsPage - 1) * SEEDS_PAGE_SIZE;
+
+  try {
+    const data = await api.seeds({
+      q: q || undefined,
+      status: status || undefined,
+      source: source || undefined,
+      category: category || undefined,
+      limit: SEEDS_PAGE_SIZE,
+      offset,
+    });
+
+    const seeds = data.seeds || [];
+    const total = data.total || 0;
+    const breakdown = data.breakdown;
+
+    // Render source breakdown pills
+    const pillsTarget = $("seeds-source-pills");
+    if (pillsTarget && breakdown) {
+      const pills = [
+        el("span", {
+          class: "chip key-pill",
+          text: `All: ${breakdown.total} (${breakdown.pending} pend)`,
+        }),
+      ];
+      if (breakdown.by_source) {
+        for (const s of breakdown.by_source) {
+          pills.push(
+            el("span", {
+              class: "chip key-pill",
+              text: `${s.source}: ${s.total} (${s.pending} pend)`,
+            })
+          );
+        }
+      }
+      pillsTarget.replaceChildren(...pills);
+
+      // Populate source filter dropdown if not populated
+      const sourceSelect = $("seeds-source-filter");
+      if (sourceSelect && !sourceSelect.dataset.populated && breakdown.by_source) {
+        sourceSelect.dataset.populated = "true";
+        for (const s of breakdown.by_source) {
+          sourceSelect.append(el("option", { value: s.source, text: s.source }));
+        }
+      }
+    }
+
+    const totalPages = Math.max(1, Math.ceil(total / SEEDS_PAGE_SIZE));
+    if ($("seeds-page-info")) {
+      $("seeds-page-info").textContent = `Page ${seedsPage} of ${totalPages} (${total} seeds)`;
+    }
+    if ($("seeds-prev")) $("seeds-prev").disabled = seedsPage <= 1;
+    if ($("seeds-next")) $("seeds-next").disabled = seedsPage >= totalPages;
+
+    if (seeds.length === 0) {
+      tbody.replaceChildren(
+        el("tr", {}, [el("td", { colspan: 6, class: "empty", text: "No matching seeds found." })])
+      );
+      return;
+    }
+
+    tbody.replaceChildren(
+      ...seeds.map((s) => {
+        const fetchBtn = el("button", {
+          class: "btn tiny primary",
+          type: "button",
+          text: "FETCH",
+        });
+        fetchBtn.addEventListener("click", () => {
+          if (openFetchModalFn) openFetchModalFn(s.name);
+        });
+
+        const removeBtn = el("button", {
+          class: "btn tiny ghost",
+          type: "button",
+          text: "REMOVE",
+        });
+        removeBtn.addEventListener("click", async () => {
+          if (!window.confirm(`Remove seed "${s.name}" from queue?`)) return;
+          removeBtn.disabled = true;
+          try {
+            await api.deleteSeed(s.name);
+            emit("toast", `Removed seed "${s.name}"`);
+            await loadSeeds(seedsPage);
+          } catch (err) {
+            emit("toast", err.message);
+            removeBtn.disabled = false;
+          }
+        });
+
+        const blockBtn = el("button", {
+          class: "btn tiny danger",
+          type: "button",
+          text: "BLOCK",
+        });
+        blockBtn.addEventListener("click", async () => {
+          if (!window.confirm(`Block "${s.name}" and remove from seeds queue?`)) return;
+          blockBtn.disabled = true;
+          try {
+            await api.addBlacklist({
+              kind: "artist",
+              name: s.name,
+              reason: "Blocked from seeds queue",
+            });
+            await api.deleteSeed(s.name);
+            emit("toast", `Blocked "${s.name}" and removed from seeds`);
+            await loadSeeds(seedsPage);
+          } catch (err) {
+            emit("toast", err.message);
+            blockBtn.disabled = false;
+          }
+        });
+
+        const statusClass =
+          s.status === "fetched"
+            ? "chip taste-high"
+            : s.status === "failed"
+            ? "chip taste-low"
+            : "chip taste-mid";
+
+        return el("tr", {}, [
+          el("td", { class: "artist-name-cell" }, [
+            el("strong", { text: s.name }),
+          ]),
+          el("td", {}, [
+            el("span", {
+              class: `chip ${s.category === "electronic" ? "key" : "local"}`,
+              text: s.category.toUpperCase(),
+            }),
+          ]),
+          el("td", {}, [
+            el("span", { class: "chip source", text: (s.source || "unknown").toUpperCase() }),
+          ]),
+          el("td", { class: "mono" }, [
+            el("span", { text: Number(s.priority_score || 0).toFixed(2) }),
+          ]),
+          el("td", {}, [
+            el("span", { class: statusClass, text: s.status.toUpperCase() }),
+          ]),
+          el("td", {}, [
+            el("div", { class: "cell-actions" }, [fetchBtn, removeBtn, blockBtn]),
+          ]),
+        ]);
+      })
+    );
+  } catch (error) {
+    tbody.replaceChildren(
+      el("tr", {}, [el("td", { colspan: 6, class: "empty", text: error.message })])
+    );
+  }
 }
 
 async function loadBlacklist() {
@@ -356,6 +615,22 @@ async function loadHardware() {
   }
 }
 
+async function populateGenreFilter() {
+  const select = $("artists-genre-filter");
+  if (!select || select.dataset.loaded) return;
+  try {
+    const data = await api.genrePresets();
+    if (data && data.presets) {
+      select.dataset.loaded = "true";
+      for (const preset of data.presets) {
+        select.append(el("option", { value: preset, text: preset }));
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 async function resetEmbeddings() {
   if (!window.confirm("Drop every stored embedding? Metadata is kept.")) return;
   const button = $("reset-embeddings");
@@ -378,10 +653,31 @@ export function mount() {
   $("stats-refresh").addEventListener("click", () => {
     loadAnalytics();
     loadArtists(artistPage);
+    loadSeeds(seedsPage);
     loadBlacklist();
     loadHardware();
   });
   $("reset-embeddings").addEventListener("click", resetEmbeddings);
+
+  // Subtabs switcher
+  const subtabsWrap = $("stats-subtabs");
+  if (subtabsWrap) {
+    subtabsWrap.addEventListener("click", (e) => {
+      const btn = e.target.closest(".subtab");
+      if (!btn) return;
+      const subtab = btn.dataset.subtab;
+      for (const b of subtabsWrap.querySelectorAll(".subtab")) {
+        b.classList.toggle("active", b === btn);
+      }
+      $("panel-artists")?.classList.toggle("hidden", subtab !== "artists");
+      $("panel-seeds")?.classList.toggle("hidden", subtab !== "seeds");
+      $("panel-blacklist")?.classList.toggle("hidden", subtab !== "blacklist");
+
+      if (subtab === "artists") loadArtists(artistPage);
+      else if (subtab === "seeds") loadSeeds(seedsPage);
+      else if (subtab === "blacklist") loadBlacklist();
+    });
+  }
 
   // Artists explorer listeners
   $("artists-search").addEventListener("input", () => {
@@ -389,10 +685,50 @@ export function mount() {
     artistsSearchTimer = setTimeout(() => loadArtists(1), 300);
   });
   $("artists-source-filter").addEventListener("change", () => loadArtists(1));
+  $("artists-genre-filter")?.addEventListener("change", () => loadArtists(1));
+  $("artists-min-year")?.addEventListener("input", () => {
+    clearTimeout(artistsSearchTimer);
+    artistsSearchTimer = setTimeout(() => loadArtists(1), 300);
+  });
   $("artists-sort").addEventListener("change", () => loadArtists(1));
   $("artists-prev").addEventListener("click", () => loadArtists(artistPage - 1));
   $("artists-next").addEventListener("click", () => loadArtists(artistPage + 1));
-  $("drawer-close").addEventListener("click", closeArtistDrawer);
+
+  populateGenreFilter();
+
+  // Seeds queue listeners
+  $("seeds-search")?.addEventListener("input", () => {
+    clearTimeout(seedsSearchTimer);
+    seedsSearchTimer = setTimeout(() => loadSeeds(1), 300);
+  });
+  $("seeds-status-filter")?.addEventListener("change", () => loadSeeds(1));
+  $("seeds-source-filter")?.addEventListener("change", () => loadSeeds(1));
+  $("seeds-category-filter")?.addEventListener("change", () => loadSeeds(1));
+  $("seeds-prev")?.addEventListener("click", () => loadSeeds(seedsPage - 1));
+  $("seeds-next")?.addEventListener("click", () => loadSeeds(seedsPage + 1));
+
+  // Purge buttons
+  $("seeds-purge-failed-btn")?.addEventListener("click", async () => {
+    if (!window.confirm("Purge ALL failed seeds from the queue?")) return;
+    try {
+      const res = await api.purgeSeeds({ status: "failed" });
+      emit("toast", `Purged ${res.purged} failed seeds`);
+      await Promise.all([loadAnalytics(), loadSeeds(1)]);
+    } catch (err) {
+      emit("toast", err.message);
+    }
+  });
+
+  $("seeds-purge-pending-btn")?.addEventListener("click", async () => {
+    if (!window.confirm("Purge ALL pending seeds from the queue?")) return;
+    try {
+      const res = await api.purgeSeeds({ status: "pending" });
+      emit("toast", `Purged ${res.purged} pending seeds`);
+      await Promise.all([loadAnalytics(), loadSeeds(1)]);
+    } catch (err) {
+      emit("toast", err.message);
+    }
+  });
 
   // Blacklist manager listeners
   $("blacklist-kind-filter").addEventListener("change", () => loadBlacklist());
@@ -445,10 +781,34 @@ export function mount() {
     if (e.target === fetchModal) closeFetchArtistModal();
   });
 
+  // Artist tracks modal wiring
+  const tracksModal = $("modal-artist-tracks");
+  $("modal-artist-tracks-close")?.addEventListener("click", closeArtistTracksModal);
+  tracksModal?.addEventListener("click", (e) => {
+    if (e.target === tracksModal) closeArtistTracksModal();
+  });
+  $("modal-artist-tracks-filter")?.addEventListener("input", renderArtistTracksModalList);
+  $("modal-artist-tracks-fetch")?.addEventListener("click", () => {
+    const artist = currentArtistName;
+    closeArtistTracksModal();
+    if (openFetchModalFn) openFetchModalFn(artist);
+  });
+
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && fetchModal && !fetchModal.classList.contains("hidden")) {
-      closeFetchArtistModal();
+    if (e.key === "Escape") {
+      if (fetchModal && !fetchModal.classList.contains("hidden")) {
+        closeFetchArtistModal();
+        return;
+      }
+      if (tracksModal && !tracksModal.classList.contains("hidden")) {
+        closeArtistTracksModal();
+      }
     }
+  });
+
+  // Close tracks modal when navigating to dig from inside it
+  on("dig:track", () => {
+    closeArtistTracksModal();
   });
 
   fetchPresets?.addEventListener("click", (e) => {
@@ -477,6 +837,11 @@ export function mount() {
     const count = parseInt(fetchCount.value, 10) || 50;
     const autoIndex = fetchAutoIndex ? fetchAutoIndex.checked : true;
     const discoverRelated = fetchDiscover ? fetchDiscover.checked : false;
+    const minYearInput = $("fetch-artist-min-year");
+    const electronicOnlyInput = $("fetch-artist-electronic-only");
+    const minYearVal = minYearInput ? minYearInput.value.trim() : "";
+    const minYear = minYearVal ? Number(minYearVal) : undefined;
+    const electronicOnly = electronicOnlyInput ? electronicOnlyInput.checked : false;
 
     closeFetchArtistModal();
     try {
@@ -486,6 +851,8 @@ export function mount() {
         auto_index: autoIndex,
         discover_related: discoverRelated,
         related_limit: 10,
+        min_year: minYear,
+        electronic_only: electronicOnly,
       });
       emit("toast", `Started fetch for "${artist}"`);
       emit("tab:show", "run");
@@ -495,15 +862,24 @@ export function mount() {
   });
 
   // Refresh upon track deletion
-  on("track:deleted", () => {
+  on("track:deleted", (payload) => {
     loadAnalytics();
     loadArtists(artistPage);
+    const tm = $("modal-artist-tracks");
+    if (tm && !tm.classList.contains("hidden")) {
+      const trackId = payload?.trackId;
+      if (trackId) {
+        currentArtistTracks = currentArtistTracks.filter((t) => t.id !== trackId);
+      }
+      renderArtistTracksModalList();
+    }
   });
 
   loadAnalytics();
   loadArtists(1);
+  loadSeeds(1);
   loadBlacklist();
   loadHardware();
 }
 
-export { loadAnalytics, loadArtists, loadBlacklist, loadHardware };
+export { loadAnalytics, loadArtists, loadSeeds, loadBlacklist, loadHardware };

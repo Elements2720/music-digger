@@ -14,6 +14,8 @@ from domain.entities.analytics import (
     CatalogAnalytics,
     GenreStat,
     KeyStat,
+    SeedBreakdown,
+    SeedSourceStat,
     SourceStat,
 )
 from domain.entities.dj_set import DJSet, Passage, SetMatch, TrackMatch
@@ -210,6 +212,7 @@ class FakeTrackRepository(ITrackRepository):
         query: str | None = None,
         genre: str | None = None,
         source: str | None = None,
+        min_year: int | None = None,
         sort: str = "tracks_desc",
         limit: int = 50,
         offset: int = 0,
@@ -228,8 +231,13 @@ class FakeTrackRepository(ITrackRepository):
                 continue
             if source and not any(t.source == source for t in trks):
                 continue
+            if min_year and not any(
+                t.release_year is not None and t.release_year >= min_year for t in trks
+            ):
+                continue
             genres = tuple({t.genre for t in trks if t.genre})
             sources = tuple({t.source for t in trks if t.source})
+            years = [t.release_year for t in trks if t.release_year is not None]
             emb_cnt = sum(1 for t in trks if t.embedding is not None)
             summaries.append(
                 ArtistSummary(
@@ -240,6 +248,8 @@ class FakeTrackRepository(ITrackRepository):
                     sources=sources,
                     sample_track_id=trks[0].id if trks else None,
                     sample_track_title=trks[0].title if trks else None,
+                    year_min=min(years) if years else None,
+                    year_max=max(years) if years else None,
                 )
             )
 
@@ -249,12 +259,36 @@ class FakeTrackRepository(ITrackRepository):
             summaries.sort(
                 key=lambda s: (s.embedded_count, s.track_count), reverse=True
             )
+        elif sort == "taste_desc":
+            summaries.sort(
+                key=lambda s: (
+                    s.taste_match_percent is not None,
+                    s.taste_match_percent or 0.0,
+                ),
+                reverse=True,
+            )
+        elif sort == "taste_asc":
+            summaries.sort(
+                key=lambda s: (
+                    s.taste_match_percent is not None,
+                    -(
+                        s.taste_match_percent
+                        if s.taste_match_percent is not None
+                        else 999.0
+                    ),
+                ),
+                reverse=True,
+            )
         else:
             summaries.sort(
                 key=lambda s: (s.track_count, s.embedded_count), reverse=True
             )
 
         return (tuple(summaries[offset : offset + limit]), len(summaries))
+
+    async def get_artist_taste_scores(self) -> tuple[dict[str, float], int]:
+        local_count = sum(1 for t in self.tracks.values() if t.source == "local")
+        return ({}, local_count)
 
     async def get_catalog_analytics(self) -> CatalogAnalytics:
         genres_map: dict[str, list[Track]] = {}
@@ -359,31 +393,120 @@ class FakeSeedRepository:
         electronic: int = 5,
         general: int = 2,
     ) -> None:
-        self._counts = {
-            "total": total,
-            "pending": pending,
-            "fetched": fetched,
-            "failed": failed,
-            "electronic": electronic,
-            "general": general,
-        }
+        self.seeds: list[SeedArtist] = [
+            SeedArtist(
+                "Tale of Us", 0.9, "electronic", status="pending", source="deezer"
+            ),
+            SeedArtist("ARTBAT", 0.8, "electronic", status="pending", source="itunes"),
+            SeedArtist(
+                "Solomun", 0.7, "electronic", status="pending", source="local-library"
+            ),
+            SeedArtist(
+                "Boris Brejcha", 0.6, "electronic", status="fetched", source="deezer"
+            ),
+            SeedArtist(
+                "Maceo Plex", 0.5, "electronic", status="fetched", source="deezer"
+            ),
+            SeedArtist(
+                "Stephan Bodzin", 0.4, "general", status="fetched", source="itunes"
+            ),
+            SeedArtist("Dead Artist", 0.1, "general", status="failed", source="crawl"),
+        ]
 
     async def count(self) -> int:
-        return self._counts["total"]
+        return len(self.seeds)
 
     async def count_by_status(self, status: str) -> int:
-        return self._counts[status]
+        return sum(1 for s in self.seeds if s.status == status)
 
     async def count_by_category(self, category: str) -> int:
-        return self._counts[category]
+        return sum(1 for s in self.seeds if s.category == category)
 
     async def list_by_source(
         self, source: str, limit: int = 100
     ) -> Sequence[SeedArtist]:
-        return ()
+        return tuple(s for s in self.seeds if s.source == source)[:limit]
 
     async def delete_by_name(self, name: str) -> bool:
-        return True
+        before = len(self.seeds)
+        self.seeds = [s for s in self.seeds if s.name.lower() != name.lower()]
+        return len(self.seeds) < before
+
+    async def list_seeds(
+        self,
+        *,
+        status: str | None = None,
+        source: str | None = None,
+        category: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Sequence[SeedArtist], int]:
+        matches = self.seeds
+        if status:
+            matches = [s for s in matches if s.status == status]
+        if source:
+            matches = [s for s in matches if s.source == source]
+        if category:
+            matches = [s for s in matches if s.category == category]
+        if query:
+            matches = [s for s in matches if query.lower() in s.name.lower()]
+        return tuple(matches[offset : offset + limit]), len(matches)
+
+    async def get_breakdown(self) -> SeedBreakdown:
+        total = len(self.seeds)
+        pending = sum(1 for s in self.seeds if s.status == "pending")
+        fetched = sum(1 for s in self.seeds if s.status == "fetched")
+        failed = sum(1 for s in self.seeds if s.status == "failed")
+        sources = sorted({s.source or "unknown" for s in self.seeds})
+        by_source = tuple(
+            SeedSourceStat(
+                source=src,
+                total=sum(1 for s in self.seeds if (s.source or "unknown") == src),
+                pending=sum(
+                    1
+                    for s in self.seeds
+                    if (s.source or "unknown") == src and s.status == "pending"
+                ),
+                fetched=sum(
+                    1
+                    for s in self.seeds
+                    if (s.source or "unknown") == src and s.status == "fetched"
+                ),
+                failed=sum(
+                    1
+                    for s in self.seeds
+                    if (s.source or "unknown") == src and s.status == "failed"
+                ),
+            )
+            for src in sources
+        )
+        return SeedBreakdown(
+            total=total,
+            pending=pending,
+            fetched=fetched,
+            failed=failed,
+            by_source=by_source,
+        )
+
+    async def purge_seeds(
+        self,
+        *,
+        status: str | None = None,
+        source: str | None = None,
+        category: str | None = None,
+    ) -> int:
+        before = len(self.seeds)
+        self.seeds = [
+            s
+            for s in self.seeds
+            if not (
+                (status is None or s.status == status)
+                and (source is None or s.source == source)
+                and (category is None or s.category == category)
+            )
+        ]
+        return before - len(self.seeds)
 
 
 class FakeBlacklistRepository(IBlacklistRepository):

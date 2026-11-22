@@ -33,17 +33,23 @@ const FIELDS = {
   "seed-itunes": [
     { key: "terms", label: "Keywords / labels (comma-separated, blank = built-in techno list)", type: "text", placeholder: "hypnotic techno, Drumcode, PoleGroup..." },
     { key: "tracks_per_term", label: "Tracks per term (max 200)", type: "number", value: 200, min: 1, max: 200 },
+    { key: "min_year", label: "Minimum release year (e.g. 2018)", type: "number", min: 1900, max: 2100 },
+    { key: "electronic_only", label: "Electronic only (filter pop/rock/jazz)", type: "checkbox", value: true },
     { key: "expand_compilations", label: "Expand VA compilations", type: "checkbox", value: true },
     { key: "save_tracks", label: "Save tracks immediately (ready for index)", type: "checkbox", value: true },
   ],
   "fetch-metadata": [
     { key: "artists_limit", label: "Artists this run", type: "number", value: 50, min: 1 },
     { key: "tracks_per_artist", label: "Tracks per artist (max 200)", type: "number", value: 200, min: 1, max: 200 },
+    { key: "min_year", label: "Minimum release year (e.g. 2018)", type: "number", min: 1900, max: 2100 },
+    { key: "electronic_only", label: "Electronic only (filter pop/rock/jazz)", type: "checkbox", value: false },
     { key: "retry_failed", label: "Retry seeds marked failed", type: "checkbox" },
   ],
   "fetch-artist": [
     { key: "artist", label: "Artist name", type: "text", placeholder: "e.g. Enrico Sangiuliano or Adam Beyer", required: true },
     { key: "tracks_per_artist", label: "Tracks to fetch (max 200)", type: "number", value: 50, min: 1, max: 200 },
+    { key: "min_year", label: "Minimum release year (e.g. 2018)", type: "number", min: 1900, max: 2100 },
+    { key: "electronic_only", label: "Electronic only (filter pop/rock/jazz)", type: "checkbox", value: false },
     { key: "auto_index", label: "Auto-index audio embeddings immediately", type: "checkbox", value: true },
     { key: "discover_related", label: "Discover related artists (Deezer graph)", type: "checkbox", value: false },
     { key: "related_limit", label: "Related artists limit", type: "number", value: 10, min: 1, max: 50 },
@@ -95,7 +101,7 @@ function updateJobLog(job) {
   }
 }
 
-function renderParams(kind) {
+async function renderParams(kind) {
   const wrap = $("job-params");
   wrap.replaceChildren();
   for (const field of FIELDS[kind] ?? []) {
@@ -120,6 +126,44 @@ function renderParams(kind) {
     wrap.append(
       el("label", { class: "field" }, [el("span", { text: field.label }), input])
     );
+  }
+
+  if (kind === "seed-itunes") {
+    try {
+      const data = await api.genrePresets();
+      if (data && data.presets && data.presets.length > 0) {
+        const chipsContainer = el("div", { class: "preset-chips-wrap", style: "margin-top: 8px;" }, [
+          el("div", { class: "dim", style: "font-size: 11px; margin-bottom: 4px;", text: "Quick Techno Presets (click to add):" }),
+        ]);
+        const chipsList = el("div", { class: "cell-badges", style: "display: flex; flex-wrap: wrap; gap: 4px;" });
+        for (const preset of data.presets.slice(0, 16)) {
+          const chip = el("button", {
+            type: "button",
+            class: "chip preset-chip",
+            style: "cursor: pointer; border: 1px solid #2a2a2e; background: #18181b;",
+            text: `+ ${preset}`,
+          });
+          chip.addEventListener("click", () => {
+            const input = $("job-terms");
+            if (!input) return;
+            const current = input.value.trim();
+            if (!current) {
+              input.value = preset;
+            } else {
+              const parts = current.split(",").map((s) => s.trim().toLowerCase());
+              if (!parts.includes(preset.toLowerCase())) {
+                input.value = `${current}, ${preset}`;
+              }
+            }
+          });
+          chipsList.append(chip);
+        }
+        chipsContainer.append(chipsList);
+        wrap.append(chipsContainer);
+      }
+    } catch {
+      // ignore
+    }
   }
 }
 

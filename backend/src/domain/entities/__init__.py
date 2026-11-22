@@ -6,6 +6,8 @@ from .analytics import (
     CatalogAnalytics,
     GenreStat,
     KeyStat,
+    SeedBreakdown,
+    SeedSourceStat,
     SourceStat,
 )
 from .dj_set import DJSet, DownloadedSet, Passage, SetMatch, TrackMatch
@@ -40,7 +42,9 @@ __all__ = [
     "Passage",
     "SearchFilter",
     "SeedArtist",
+    "SeedBreakdown",
     "SeedCategory",
+    "SeedSourceStat",
     "SeedStatus",
     "SetMatch",
     "SourceStat",

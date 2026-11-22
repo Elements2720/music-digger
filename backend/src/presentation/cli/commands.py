@@ -63,7 +63,7 @@ def check_hw() -> None:
             (
                 f"[green]{info.ffmpeg_path}[/]\n[dim]{info.ffmpeg_version}[/]"
                 if info.has_ffmpeg
-                else "[red]not found — install FFmpeg and add it to PATH[/]"
+                else "[red]not found - install FFmpeg and add it to PATH[/]"
             ),
         )
         table.add_row(
@@ -81,7 +81,7 @@ def check_hw() -> None:
         else:
             table.add_row(
                 "CUDA",
-                "[yellow]unavailable — CLAP will run on CPU[/]",
+                "[yellow]unavailable - CLAP will run on CPU[/]",
             )
             table.add_row("GPU", "[dim]none detected[/]")
         table.add_row("RAM (free/total)", info.ram_summary())
@@ -299,7 +299,7 @@ def reset_embeddings(
             assert container.track_repository is not None
             embedded = await container.track_repository.count_embedded()
             if embedded == 0:
-                console.print("No embeddings stored — nothing to reset.")
+                console.print("No embeddings stored - nothing to reset.")
                 return
             if not force:
                 confirmed = typer.confirm(
@@ -323,7 +323,7 @@ def dig(
     bpm_tolerance: float | None = typer.Option(
         None,
         "--bpm-tolerance",
-        help="Restrict matches to reference BPM ± tolerance.",
+        help="Restrict matches to reference BPM +- tolerance.",
     ),
     harmonic: bool = typer.Option(
         False,
@@ -335,6 +335,16 @@ def dig(
         "--genre",
         help="Exact genre filter (case-insensitive).",
     ),
+    min_year: int | None = typer.Option(
+        None,
+        "--min-year",
+        help="Restrict matches to tracks released in or after this year.",
+    ),
+    max_year: int | None = typer.Option(
+        None,
+        "--max-year",
+        help="Restrict matches to tracks released in or before this year.",
+    ),
     exclude_heard: bool = typer.Option(
         False, "--exclude-heard", help="Skip tracks already marked heard."
     ),
@@ -345,7 +355,11 @@ def dig(
         async with Container() as container:
             assert container.dig_similar_tracks is not None
             search_filter = SearchFilter(
-                limit=limit, genre_filter=genre, exclude_heard=exclude_heard
+                limit=limit,
+                genre_filter=genre,
+                min_year=min_year,
+                max_year=max_year,
+                exclude_heard=exclude_heard,
             )
             try:
                 result = await container.dig_similar_tracks.execute(
@@ -379,9 +393,9 @@ def dig(
                 track.title,
                 track.artist,
                 f"{match.similarity_percent:.1f}",
-                f"{track.bpm.value:g}" if track.bpm else "—",
-                track.key.notation if track.key else "—",
-                track.genre or "—",
+                f"{track.bpm.value:g}" if track.bpm else "-",
+                track.key.notation if track.key else "-",
+                track.genre or "-",
             )
         console.print(table)
 
@@ -417,8 +431,8 @@ def list_tracks(
                 track.id,
                 track.artist,
                 track.title,
-                f"{track.bpm.value:g}" if track.bpm else "—",
-                track.key.notation if track.key else "—",
+                f"{track.bpm.value:g}" if track.bpm else "-",
+                track.key.notation if track.key else "-",
             )
         console.print(table)
 
@@ -542,7 +556,7 @@ def show_set(
     bpm_tolerance: float | None = typer.Option(
         None,
         "--bpm-tolerance",
-        help="Restrict the tracks view to passage BPM ± tolerance.",
+        help="Restrict the tracks view to passage BPM +/- tolerance.",
     ),
     exclude_heard: bool = typer.Option(
         False, "--exclude-heard", help="Skip tracks already marked heard."
@@ -623,13 +637,13 @@ def list_sets(
         for dj_set in sets:
             identified = sum(1 for p in dj_set.passages if p.exact_id_match)
             bpm = (
-                f"{dj_set.bpm_min.value:g}–{dj_set.bpm_max.value:g}"
+                f"{dj_set.bpm_min.value:g}-{dj_set.bpm_max.value:g}"
                 if dj_set.bpm_min is not None and dj_set.bpm_max is not None
-                else "—"
+                else "-"
             )
             table.add_row(
                 dj_set.id,
-                dj_set.artist or "—",
+                dj_set.artist or "-",
                 dj_set.title,
                 str(len(dj_set.passages)),
                 str(identified),
@@ -692,10 +706,10 @@ def _print_set_tracklist(dj_set: Any) -> None:
         )
         table.add_row(
             clock,
-            passage.exact_id_artist or "—",
-            passage.exact_id_title or "—",
-            passage.exact_id_source or "—",
-            f"{passage.bpm.value:g}" if passage.bpm else "—",
+            passage.exact_id_artist or "-",
+            passage.exact_id_title or "-",
+            passage.exact_id_source or "-",
+            f"{passage.bpm.value:g}" if passage.bpm else "-",
         )
     console.print(table)
 
@@ -718,9 +732,9 @@ def _print_set_dig(dj_set: Any, matches: Any) -> None:
             track.title,
             track.artist,
             f"{match.similarity_percent:.1f}",
-            f"{track.bpm.value:g}" if track.bpm else "—",
-            track.key.notation if track.key else "—",
-            track.genre or "—",
+            f"{track.bpm.value:g}" if track.bpm else "-",
+            track.key.notation if track.key else "-",
+            track.genre or "-",
         )
     console.print(table)
 
@@ -740,7 +754,7 @@ def _print_similar_sets(dj_set: Any, matches: Any) -> None:
     for match in matches:
         table.add_row(
             match.dj_set.id,
-            match.dj_set.artist or "—",
+            match.dj_set.artist or "-",
             match.dj_set.title,
             f"{match.similarity_percent:.1f}",
         )
@@ -758,7 +772,7 @@ def _format_memory(probe: Any) -> str:
         if info.vram_total_mb is not None and info.vram_free_mb is not None:
             used = info.vram_total_mb - info.vram_free_mb
             parts.append(f"VRAM {used / 1024:.1f}/{info.vram_total_mb / 1024:.1f} GB")
-        return f"[dim]{' · '.join(parts)}[/]" if parts else ""
+        return f"[dim]{' | '.join(parts)}[/]" if parts else ""
     except Exception:  # noqa: BLE001 - memory display must never break indexing
         return ""
 
@@ -884,6 +898,16 @@ def seed_itunes(
         "--save-tracks/--no-save-tracks",
         help="Persist tracks immediately into track repository.",
     ),
+    min_year: int | None = typer.Option(
+        None,
+        "--min-year",
+        help="Only keep tracks released in or after this year.",
+    ),
+    electronic_only: bool = typer.Option(
+        False,
+        "--electronic-only",
+        help="Only keep tracks matching electronic genre tokens.",
+    ),
 ) -> None:
     """Crawl underground techno terms, labels, and compilations on iTunes."""
 
@@ -927,6 +951,8 @@ def seed_itunes(
                     tracks_per_term=tracks_per_term,
                     expand_compilations=expand_compilations,
                     save_tracks=save_tracks,
+                    min_year=min_year,
+                    electronic_only=electronic_only,
                     progress=on_progress,
                 )
 
@@ -962,6 +988,16 @@ def fetch_metadata(
         "--retry-failed",
         help="Retry seeds marked failed by an earlier run.",
     ),
+    min_year: int | None = typer.Option(
+        None,
+        "--min-year",
+        help="Only keep tracks released in or after this year.",
+    ),
+    electronic_only: bool = typer.Option(
+        False,
+        "--electronic-only",
+        help="Only keep tracks matching electronic genre tokens.",
+    ),
 ) -> None:
     """Fetch iTunes metadata for the highest-priority pending seeds."""
 
@@ -990,6 +1026,8 @@ def fetch_metadata(
                     artists_limit=artists_limit,
                     tracks_per_artist=tracks_per_artist,
                     retry_failed=retry_failed,
+                    min_year=min_year,
+                    electronic_only=electronic_only,
                     progress=on_progress,
                 )
                 progress.update(task, completed=result.artists_processed)
@@ -1037,6 +1075,16 @@ def fetch_artist(
         max=50,
         help="Maximum related artists to discover when --discover-related is enabled.",
     ),
+    min_year: int | None = typer.Option(
+        None,
+        "--min-year",
+        help="Only keep tracks released in or after this year.",
+    ),
+    electronic_only: bool = typer.Option(
+        False,
+        "--electronic-only",
+        help="Only keep tracks matching electronic genre tokens.",
+    ),
 ) -> None:
     """Fetch tracks for a specific artist, auto-index audio, and optionally discover related seeds."""
 
@@ -1067,6 +1115,8 @@ def fetch_artist(
                     auto_index=auto_index,
                     discover_related=discover_related,
                     related_limit=related_limit,
+                    min_year=min_year,
+                    electronic_only=electronic_only,
                     progress=on_progress,
                 )
                 progress.update(task, completed=result.tracks_saved)
@@ -1261,6 +1311,116 @@ def blacklist_remove(
                 console.print(f"[red]Error:[/] Blacklist entry {entry_id} not found.")
                 raise typer.Exit(1)
             console.print(f"[green]Removed blacklist entry {entry_id}.[/]")
+
+    _run(run())
+
+
+@app.command("seeds-list")
+def seeds_list(
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help="Filter by status (pending, fetched, failed).",
+    ),
+    source: str | None = typer.Option(
+        None,
+        "--source",
+        help="Filter by seed source.",
+    ),
+    category: str | None = typer.Option(
+        None,
+        "--category",
+        help="Filter by category (electronic, general).",
+    ),
+    query: str | None = typer.Option(
+        None,
+        "--query",
+        "-q",
+        help="Search seed artist name.",
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, help="Rows to show."),
+    offset: int = typer.Option(0, "--offset", min=0, help="Rows to skip."),
+) -> None:
+    """List pending/fetched/failed seeds in the discovery queue."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.seed_repository is not None
+            seeds, total = await container.seed_repository.list_seeds(
+                status=status,
+                source=source,
+                category=category,
+                query=query,
+                limit=limit,
+                offset=offset,
+            )
+            breakdown = await container.seed_repository.get_breakdown()
+
+        if not seeds:
+            console.print("[yellow]No seeds matching criteria.[/]")
+            return
+
+        console.print(
+            f"Total seeds: {breakdown.total} "
+            f"(pending: {breakdown.pending}, fetched: {breakdown.fetched}, failed: {breakdown.failed})"
+        )
+        table = Table(title=f"Seeds ({total} matching)")
+        table.add_column("Artist")
+        table.add_column("Category")
+        table.add_column("Source")
+        table.add_column("Priority", justify="right")
+        table.add_column("Status", justify="center")
+        for s in seeds:
+            table.add_row(
+                s.name,
+                s.category,
+                s.source,
+                f"{s.priority_score:.2f}",
+                s.status,
+            )
+        console.print(table)
+
+    _run(run())
+
+
+@app.command("seeds-purge")
+def seeds_purge(
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help="Purge seeds matching status (pending, fetched, failed).",
+    ),
+    source: str | None = typer.Option(
+        None,
+        "--source",
+        help="Purge seeds matching source.",
+    ),
+    category: str | None = typer.Option(
+        None,
+        "--category",
+        help="Purge seeds matching category.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Skip confirmation prompt.",
+    ),
+) -> None:
+    """Purge seeds matching criteria from the database."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.seed_repository is not None
+            if not force:
+                prompt_msg = f"Purge seeds (status={status}, source={source}, category={category})?"
+                if not typer.confirm(prompt_msg):
+                    raise typer.Abort()
+            purged = await container.seed_repository.purge_seeds(
+                status=status,
+                source=source,
+                category=category,
+            )
+            console.print(f"[green]Purged {purged} seed(s).[/]")
 
     _run(run())
 

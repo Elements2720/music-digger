@@ -214,3 +214,74 @@ async def test_blacklist_filters_upsert_and_discovery(
     assert written == 1
     assert await repo_with_bl.get_by_name("Blocked DJ") is None
     assert await repo_with_bl.get_by_name("Good DJ") is not None
+
+
+async def test_list_seeds_breakdown_and_purge(repository: SQLiteSeedRepository) -> None:
+    seeds = [
+        SeedArtist("Tale of Us", 0.9, "electronic", status="pending", source="deezer"),
+        SeedArtist("ARTBAT", 0.8, "electronic", status="pending", source="itunes"),
+        SeedArtist(
+            "Solomun", 0.7, "electronic", status="pending", source="local-library"
+        ),
+        SeedArtist(
+            "Boris Brejcha", 0.6, "electronic", status="fetched", source="deezer"
+        ),
+        SeedArtist("Maceo Plex", 0.5, "electronic", status="fetched", source="deezer"),
+        SeedArtist("Stephan Bodzin", 0.4, "general", status="fetched", source="itunes"),
+        SeedArtist("Failed Artist", 0.1, "general", status="failed", source="crawl"),
+    ]
+    await repository.upsert_many(seeds)
+
+    # 1. list_seeds with pagination and ordering
+    page1, total = await repository.list_seeds(limit=3, offset=0)
+    assert total == 7
+    assert len(page1) == 3
+    assert page1[0].name == "Tale of Us"
+    assert page1[1].name == "ARTBAT"
+    assert page1[2].name == "Solomun"
+
+    # 2. list_seeds filter by status
+    pending, p_total = await repository.list_seeds(status="pending")
+    assert p_total == 3
+    assert len(pending) == 3
+
+    # 3. list_seeds filter by source
+    local, l_total = await repository.list_seeds(source="local-library")
+    assert l_total == 1
+    assert local[0].name == "Solomun"
+
+    # 4. list_seeds filter by category
+    gen, g_total = await repository.list_seeds(category="general")
+    assert g_total == 2
+    assert {s.name for s in gen} == {"Stephan Bodzin", "Failed Artist"}
+
+    # 5. list_seeds filter by search query
+    searched, s_total = await repository.list_seeds(query="brejcha")
+    assert s_total == 1
+    assert searched[0].name == "Boris Brejcha"
+
+    # 6. get_breakdown
+    breakdown = await repository.get_breakdown()
+    assert breakdown.total == 7
+    assert breakdown.pending == 3
+    assert breakdown.fetched == 3
+    assert breakdown.failed == 1
+    sources_dict = {s.source: s for s in breakdown.by_source}
+    assert "deezer" in sources_dict
+    assert sources_dict["deezer"].total == 3
+    assert sources_dict["deezer"].pending == 1
+    assert sources_dict["deezer"].fetched == 2
+
+    # 7. purge_seeds by status
+    purged_failed = await repository.purge_seeds(status="failed")
+    assert purged_failed == 1
+    assert await repository.get_by_name("Failed Artist") is None
+    assert await repository.count() == 6
+
+    # 8. purge_seeds by status and source
+    purged_deezer_pending = await repository.purge_seeds(
+        status="pending", source="deezer"
+    )
+    assert purged_deezer_pending == 1
+    assert await repository.get_by_name("Tale of Us") is None
+    assert await repository.count() == 5

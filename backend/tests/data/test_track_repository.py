@@ -576,3 +576,58 @@ async def test_track_repo_blacklist_filters_upsert(tmp_path) -> None:
     finally:
         await vectors.close()
         await sqlite.close()
+
+
+async def test_taste_scores_and_sorting(repository: HybridTrackRepository) -> None:
+    # 1. Local track representing user taste
+    local_track = Track(
+        id="local:1",
+        title="Local Techno",
+        artist="Underground Local",
+        embedding=_embedding(0.1),
+        source="local",
+        local_path="C:/music/track1.mp3",
+        release_year=2021,
+        genre="Techno",
+    )
+    # 2. Artist Close
+    close_track = Track(
+        id="itunes:close",
+        title="Close Track",
+        artist="Artist Close",
+        embedding=_embedding(0.12),
+        source="itunes",
+        release_year=2022,
+        genre="Techno",
+    )
+    # 3. Artist Far
+    far_track = Track(
+        id="itunes:far",
+        title="Far Track",
+        artist="Artist Far",
+        embedding=_embedding(0.85),
+        source="itunes",
+        release_year=2019,
+        genre="Pop",
+    )
+    await repository.upsert_many([local_track, close_track, far_track])
+
+    scores, local_count = await repository.get_artist_taste_scores()
+    assert local_count == 1
+    assert "Artist Close" in scores
+    assert "Artist Far" in scores
+    assert scores["Artist Close"] > scores["Artist Far"]
+
+    # Test sorting by taste_desc
+    summaries, total = await repository.list_artists_summary(sort="taste_desc")
+    assert total == 3
+    assert (
+        summaries[0].artist == "Underground Local"
+        or summaries[0].artist == "Artist Close"
+    )
+    assert summaries[-1].artist == "Artist Far"
+
+    analytics = await repository.get_catalog_analytics()
+    assert analytics.local_taste_count == 1
+    assert analytics.total_local == 1
+    assert analytics.total_itunes == 2

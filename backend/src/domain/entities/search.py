@@ -33,6 +33,9 @@ class SearchFilter:
     exclude_heard: bool = False
     genre_filter: str | None = None
     limit: int = 50
+    min_year: int | None = None
+    max_year: int | None = None
+    genres: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         minimum = self._normalize_bpm_bound(self.bpm_min, "bpm_min")
@@ -66,6 +69,37 @@ class SearchFilter:
             raise ValueError(f"limit must be between 1 and {_MAX_LIMIT}")
         object.__setattr__(self, "limit", limit)
 
+        if self.min_year is not None:
+            min_y = require_int(self.min_year, "min_year")
+            if not 1900 <= min_y <= 2100:
+                raise ValueError("min_year must be between 1900 and 2100")
+            object.__setattr__(self, "min_year", min_y)
+
+        if self.max_year is not None:
+            max_y = require_int(self.max_year, "max_year")
+            if not 1900 <= max_y <= 2100:
+                raise ValueError("max_year must be between 1900 and 2100")
+            object.__setattr__(self, "max_year", max_y)
+
+        if (
+            self.min_year is not None
+            and self.max_year is not None
+            and self.min_year > self.max_year
+        ):
+            raise ValueError("min_year must be less than or equal to max_year")
+
+        raw_genres = freeze_tuple(self.genres, "genres", str)
+        normalized_genres: list[str] = []
+        seen_g: set[str] = set()
+        for g in raw_genres:
+            clean_g = g.strip()
+            if clean_g:
+                key_g = clean_g.casefold()
+                if key_g not in seen_g:
+                    seen_g.add(key_g)
+                    normalized_genres.append(clean_g)
+        object.__setattr__(self, "genres", tuple(normalized_genres))
+
     @staticmethod
     def _normalize_bpm_bound(value: object | None, field: str) -> float | None:
         if value is None:
@@ -97,8 +131,26 @@ class SearchFilter:
         if self.exclude_heard and track.id in heard_ids:
             return False
 
-        genre_matches = self.genre_filter is None or (
-            track.genre is not None
-            and track.genre.casefold() == self.genre_filter.casefold()
-        )
-        return genre_matches
+        if self.min_year is not None and (
+            track.release_year is None or track.release_year < self.min_year
+        ):
+            return False
+
+        if self.max_year is not None and (
+            track.release_year is None or track.release_year > self.max_year
+        ):
+            return False
+
+        if self.genres:
+            if track.genre is None:
+                return False
+            g_low = track.genre.casefold()
+            if not any(req.casefold() in g_low for req in self.genres):
+                return False
+        elif self.genre_filter is not None and (
+            track.genre is None
+            or track.genre.casefold() != self.genre_filter.casefold()
+        ):
+            return False
+
+        return True

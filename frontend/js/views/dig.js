@@ -93,6 +93,8 @@ async function runDig() {
   if (tolerance) filters.bpm_tolerance = Number(tolerance);
   const genre = $("dig-genre").value.trim();
   if (genre) filters.genre = genre;
+  const minYear = $("dig-min-year") ? $("dig-min-year").value.trim() : "";
+  if (minYear) filters.min_year = Number(minYear);
 
   try {
     const body = await api.dig(reference.id, filters);

@@ -9,17 +9,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from domain.entities.search import SearchFilter
+from domain.genres import ELECTRONIC_ALLOWED_GENRE_TOKENS, TECHNO_SUBGENRE_PRESETS
 from domain.use_cases import TrackNotEmbeddedError, TrackNotFoundError
 
 from ..schemas import (
     BlacklistCreateRequest,
     HeardRequest,
     ResetEmbeddingsRequest,
+    SeedPurgeRequest,
     VibeSearchRequest,
     artist_summary_payload,
     blacklist_entry_payload,
     catalog_analytics_payload,
     match_payload,
+    seed_breakdown_payload,
+    seed_payload,
     track_payload,
 )
 from . import get_container
@@ -81,6 +85,16 @@ async def recent_tracks(
     }
 
 
+@router.get("/catalog/genre-presets")
+@router.get("/genre-presets")
+async def get_genre_presets() -> dict[str, Any]:
+    """Curated Techno subgenre presets and electronic tokens."""
+    return {
+        "presets": list(TECHNO_SUBGENRE_PRESETS),
+        "electronic_tokens": sorted(ELECTRONIC_ALLOWED_GENRE_TOKENS),
+    }
+
+
 @router.get("/dig/{track_id}")
 async def dig(
     track_id: str,
@@ -88,13 +102,22 @@ async def dig(
     bpm_tolerance: float | None = Query(None, ge=0),
     harmonic: bool = Query(False),
     genre: str | None = Query(None),
+    genres: str | None = Query(None),
+    min_year: int | None = Query(None, ge=1900, le=2100),
+    max_year: int | None = Query(None, ge=1900, le=2100),
     exclude_heard: bool = Query(False),
     container: Any = Depends(get_container),
 ) -> dict[str, Any]:
     """Track-to-track similarity search (the CLI ``dig dig``)."""
+    genres_tuple = (
+        tuple(g.strip() for g in genres.split(",") if g.strip()) if genres else ()
+    )
     search_filter = SearchFilter(
         limit=limit,
         genre_filter=genre,
+        genres=genres_tuple,
+        min_year=min_year,
+        max_year=max_year,
         exclude_heard=exclude_heard,
     )
     try:
@@ -209,6 +232,7 @@ async def get_artists_summary(
     q: str | None = Query(None),
     genre: str | None = Query(None),
     source: str | None = Query(None),
+    min_year: int | None = Query(None, ge=1900, le=2100),
     sort: str = Query("tracks_desc"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -219,6 +243,7 @@ async def get_artists_summary(
         query=q,
         genre=genre,
         source=source,
+        min_year=min_year,
         sort=sort,
         limit=limit,
         offset=offset,
@@ -343,6 +368,57 @@ async def remove_blacklist(
             status_code=404, detail=f"Blacklist entry {entry_id} not found"
         )
     return {"success": True, "id": entry_id}
+
+
+@router.get("/catalog/seeds")
+async def list_seeds(
+    status: str | None = Query(None),
+    source: str | None = Query(None),
+    category: str | None = Query(None),
+    q: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """List pending/fetched/failed crawl seeds with breakdown stats."""
+    seeds, total = await container.seed_repository.list_seeds(
+        status=status,
+        source=source,
+        category=category,
+        query=q,
+        limit=limit,
+        offset=offset,
+    )
+    breakdown = await container.seed_repository.get_breakdown()
+    return {
+        "seeds": [seed_payload(s) for s in seeds],
+        "total": total,
+        "breakdown": seed_breakdown_payload(breakdown),
+    }
+
+
+@router.delete("/catalog/seeds/{name:path}")
+async def delete_seed(
+    name: str,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Delete a seed by artist name."""
+    deleted = await container.seed_repository.delete_by_name(name)
+    return {"name": name, "deleted": deleted}
+
+
+@router.post("/catalog/seeds/purge")
+async def purge_seeds(
+    payload: SeedPurgeRequest,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Purge seeds matching criteria (e.g. failed or pending from a source)."""
+    purged = await container.seed_repository.purge_seeds(
+        status=payload.status,
+        source=payload.source,
+        category=payload.category,
+    )
+    return {"purged": purged}
 
 
 __all__ = ["router"]

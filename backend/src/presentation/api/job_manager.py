@@ -304,6 +304,9 @@ class JobManager:
             tracks_per_term=config["tracks_per_term"],
             expand_compilations=config["expand_compilations"],
             save_tracks=config["save_tracks"],
+            min_year=config.get("min_year"),
+            electronic_only=config.get("electronic_only", False),
+            allowed_genres=config.get("allowed_genres"),
             progress=on_progress,
         )
         job.result = {
@@ -334,6 +337,9 @@ class JobManager:
             artists_limit=config["artists_limit"],
             tracks_per_artist=config["tracks_per_artist"],
             retry_failed=config["retry_failed"],
+            min_year=config.get("min_year"),
+            electronic_only=config.get("electronic_only", False),
+            allowed_genres=config.get("allowed_genres"),
             progress=on_progress,
         )
         job.result = {
@@ -394,6 +400,9 @@ class JobManager:
                 auto_index=config["auto_index"],
                 discover_related=config["discover_related"],
                 related_limit=config["related_limit"],
+                min_year=config.get("min_year"),
+                electronic_only=config.get("electronic_only", False),
+                allowed_genres=config.get("allowed_genres"),
                 progress=on_progress,
             )
             total_found += res.tracks_found
@@ -659,6 +668,9 @@ class JobManager:
             ),
             "expand_compilations": _as_bool(params, "expand_compilations", True),
             "save_tracks": _as_bool(params, "save_tracks", True),
+            "min_year": _as_optional_year(params, "min_year"),
+            "electronic_only": _as_bool(params, "electronic_only", False),
+            "allowed_genres": _as_genres_tuple(params, "allowed_genres"),
         }
 
     @staticmethod
@@ -671,6 +683,9 @@ class JobManager:
                 params, "tracks_per_artist", 200, minimum=1, maximum=200
             ),
             "retry_failed": _as_bool(params, "retry_failed", False),
+            "min_year": _as_optional_year(params, "min_year"),
+            "electronic_only": _as_bool(params, "electronic_only", False),
+            "allowed_genres": _as_genres_tuple(params, "allowed_genres"),
         }
 
     @staticmethod
@@ -690,6 +705,9 @@ class JobManager:
             "related_limit": _as_int(
                 params, "related_limit", 10, minimum=0, maximum=100
             ),
+            "min_year": _as_optional_year(params, "min_year"),
+            "electronic_only": _as_bool(params, "electronic_only", False),
+            "allowed_genres": _as_genres_tuple(params, "allowed_genres"),
         }
 
     @staticmethod
@@ -753,6 +771,34 @@ def _as_bool(params: dict[str, Any], key: str, default: bool) -> bool:
     if not isinstance(raw, bool):
         raise JobParamError(f"{key} must be a boolean")
     return raw
+
+
+def _as_optional_year(params: dict[str, Any], key: str = "min_year") -> int | None:
+    raw = params.get(key)
+    if raw is None or raw == "" or raw == 0:
+        return None
+    if isinstance(raw, str) and raw.isdigit():
+        raw = int(raw)
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise JobParamError(f"{key} must be an integer year")
+    if not (1900 <= raw <= 2100):
+        raise JobParamError(f"{key} must be between 1900 and 2100")
+    return raw
+
+
+def _as_genres_tuple(
+    params: dict[str, Any], key: str = "allowed_genres"
+) -> tuple[str, ...] | None:
+    raw = params.get(key)
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        return tuple(parts) if parts else None
+    if isinstance(raw, (list, tuple)):
+        parts = [str(p).strip() for p in raw if str(p).strip()]
+        return tuple(parts) if parts else None
+    return None
 
 
 def _sse(event: dict[str, Any]) -> str:

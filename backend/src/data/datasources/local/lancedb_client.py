@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import lancedb
+import numpy as np
 import pyarrow as pa
 from lancedb.index import IvfPq
 
@@ -188,6 +189,76 @@ class LanceDBClient:
         if not rows:
             return None
         return tuple(float(value) for value in rows[0]["vector"])
+
+    async def compute_similarity_to_seed_ids(
+        self,
+        seed_track_ids: Sequence[str],
+        batch_size: int = 2048,
+    ) -> dict[str, float]:
+        """Compute cosine similarity percent against the mean vector of ``seed_track_ids``.
+
+        Streams dataset batches so peak RAM usage remains small and bounded.
+        Returns a mapping of track_id to similarity percentage (0.0 to 100.0).
+        """
+        if not seed_track_ids:
+            return {}
+        if await self.count() == 0:
+            return {}
+        table = await self._ensure_table()
+        return await asyncio.to_thread(
+            self._compute_similarity_sync, table, seed_track_ids, batch_size
+        )
+
+    def _compute_similarity_sync(
+        self,
+        table: Any,
+        seed_track_ids: Sequence[str],
+        batch_size: int,
+    ) -> dict[str, float]:
+        lance_ds = table.to_lance()
+        seed_vecs: list[list[float]] = []
+        for i in range(0, len(seed_track_ids), 500):
+            chunk = seed_track_ids[i : i + 500]
+            quoted_chunk = ", ".join(self._quote(tid) for tid in chunk)
+            try:
+                seed_table = lance_ds.to_table(
+                    filter=f"id IN ({quoted_chunk})",
+                    columns=["id", "vector"],
+                )
+                rows = seed_table.to_pylist()
+                for r in rows:
+                    if r.get("vector") is not None:
+                        seed_vecs.append(r["vector"])
+            except Exception:  # noqa: BLE001, S112
+                continue
+
+        if not seed_vecs:
+            return {}
+
+        arr = np.array(seed_vecs, dtype=np.float32)
+        mean_vec = np.mean(arr, axis=0)
+        norm = np.linalg.norm(mean_vec)
+        if norm <= 1e-9:
+            return {}
+        taste_vec = mean_vec / norm
+
+        results: dict[str, float] = {}
+        scanner = lance_ds.scanner(columns=["id", "vector"], batch_size=batch_size)
+        for record_batch in scanner.to_batches():
+            ids = record_batch.column("id").to_pylist()
+            raw_vectors = record_batch.column("vector").to_pylist()
+            if not ids or not raw_vectors:
+                continue
+            batch_arr = np.array(raw_vectors, dtype=np.float32)
+            row_norms = np.linalg.norm(batch_arr, axis=1, keepdims=True)
+            row_norms[row_norms <= 1e-9] = 1.0
+            normed_batch = batch_arr / row_norms
+            dots = np.dot(normed_batch, taste_vec)
+            for track_id, dot in zip(ids, dots, strict=False):
+                pct = round(float(max(0.0, min(1.0, dot))) * 100.0, 1)
+                results[str(track_id)] = pct
+
+        return results
 
     async def count(self) -> int:
         """Return the number of vector rows without loading them."""

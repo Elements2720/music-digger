@@ -19,6 +19,13 @@ from .entities import (
     TrackReference,
     TrackVibe,
 )
+from .genres import (
+    ELECTRONIC_ALLOWED_GENRE_TOKENS,
+    NON_ELECTRONIC_BLOCKED_GENRE_TOKENS,
+    TECHNO_SUBGENRE_PRESETS,
+    track_matches_genre_guard,
+    track_matches_year,
+)
 from .interfaces import (
     IAudioDecoder,
     IAudioEmbedder,
@@ -44,8 +51,11 @@ from .value_objects import (
 
 __all__ = [
     "BPM",
+    "ELECTRONIC_ALLOWED_GENRE_TOKENS",
+    "NON_ELECTRONIC_BLOCKED_GENRE_TOKENS",
     "SEED_CATEGORIES",
     "SEED_STATUSES",
+    "TECHNO_SUBGENRE_PRESETS",
     "AudioBuffer",
     "AudioFeatures",
     "CamelotKey",
@@ -74,4 +84,6 @@ __all__ = [
     "TrackMatch",
     "TrackReference",
     "TrackVibe",
+    "track_matches_genre_guard",
+    "track_matches_year",
 ]

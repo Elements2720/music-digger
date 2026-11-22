@@ -62,6 +62,7 @@ export const api = {
     }),
 
   catalogAnalytics: () => request("/api/catalog/analytics"),
+  genrePresets: () => request("/api/catalog/genre-presets"),
   artistsSummary: (params = {}) =>
     request("/api/catalog/artists", { params }),
   artistTracks: (artistName, params = {}) =>
@@ -85,6 +86,17 @@ export const api = {
   removeBlacklist: (entryId) =>
     request(`/api/catalog/blacklist/${encodeURIComponent(entryId)}`, {
       method: "DELETE",
+    }),
+  seeds: (params = {}) =>
+    request("/api/catalog/seeds", { params }),
+  deleteSeed: (name) =>
+    request(`/api/catalog/seeds/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+  purgeSeeds: (payload = {}) =>
+    request("/api/catalog/seeds/purge", {
+      method: "POST",
+      body: payload,
     }),
 
   currentJob: () => request("/api/jobs/current"),

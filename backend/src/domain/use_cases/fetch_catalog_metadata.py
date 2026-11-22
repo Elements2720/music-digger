@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from .._validation import normalize_artist_key
 from ..entities.track import SeedArtist
+from ..genres import track_matches_genre_guard, track_matches_year
 from ..interfaces.catalog import ICatalogProvider
 from ..interfaces.repositories import (
     IBlacklistRepository,
@@ -59,6 +60,9 @@ class FetchCatalogMetadata:
         # paid a rate-limited request for.
         tracks_per_artist: int = 200,
         retry_failed: bool = False,
+        min_year: int | None = None,
+        electronic_only: bool = False,
+        allowed_genres: Sequence[str] | None = None,
         progress: Callable[[SeedArtist, int, int], None] | None = None,
     ) -> FetchMetadataResult:
         """Fetch metadata for up to ``artists_limit`` seeds.
@@ -95,7 +99,22 @@ class FetchCatalogMetadata:
                     limit=tracks_per_artist,
                 )
                 tracks_found += len(tracks)
-                tracks_saved += await self._track_repository.upsert_many(tracks)
+                if min_year is not None or electronic_only or allowed_genres:
+                    filtered_tracks = [
+                        t
+                        for t in tracks
+                        if track_matches_year(t.release_year, min_year=min_year)
+                        and track_matches_genre_guard(
+                            t.genre,
+                            allowed_genres=allowed_genres or (),
+                            electronic_only=electronic_only,
+                        )
+                    ]
+                else:
+                    filtered_tracks = tracks
+                tracks_saved += await self._track_repository.upsert_many(
+                    filtered_tracks
+                )
                 await self._seed_repository.update_status(seed.name, "fetched")
                 processed += 1
             except Exception:

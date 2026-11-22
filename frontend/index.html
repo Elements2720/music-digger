@@ -117,6 +117,9 @@
               <label class="field inline"><span>Genre</span>
                 <input class="input" type="text" id="dig-genre" placeholder="exact genre">
               </label>
+              <label class="field inline"><span>Min Year</span>
+                <input class="input mono" type="number" id="dig-min-year" min="1900" max="2100" placeholder="any" style="width: 80px;">
+              </label>
               <label class="check"><input type="checkbox" id="dig-harmonic"> harmonic</label>
               <label class="check"><input type="checkbox" id="dig-exclude-heard"> hide heard</label>
               <button class="btn primary" type="submit">DIG &gt;</button>
@@ -244,6 +247,13 @@
         </div>
       </div>
 
+      <!-- Stats Subtabs: Artists Explorer | Pending Seeds | Blacklist Manager -->
+      <div class="subtabs" id="stats-subtabs" style="margin-top: 16px;">
+        <button class="subtab active" data-subtab="artists" type="button">ARTISTS EXPLORER</button>
+        <button class="subtab" data-subtab="seeds" type="button">PENDING SEEDS</button>
+        <button class="subtab" data-subtab="blacklist" type="button">BLACKLIST MANAGER</button>
+      </div>
+
       <!-- Artists Explorer & Manager -->
       <div class="panel" id="panel-artists">
         <div class="panel-head">
@@ -255,10 +265,16 @@
               <option value="local">Local Library</option>
               <option value="itunes">iTunes</option>
             </select>
+            <select class="input" id="artists-genre-filter">
+              <option value="">All Genres</option>
+            </select>
+            <input class="input mono" id="artists-min-year" type="number" min="1900" max="2100" placeholder="Min Year" style="width: 90px;">
             <select class="input" id="artists-sort">
               <option value="tracks_desc">Most Tracks</option>
               <option value="embedded_desc">Most Embedded</option>
               <option value="artist_asc">Artist (A-Z)</option>
+              <option value="taste_desc">Highest Taste Match</option>
+              <option value="taste_asc">Lowest Taste Match</option>
             </select>
             <button class="btn tiny primary" id="artists-fetch-btn" type="button">+ FETCH ARTIST</button>
           </div>
@@ -270,13 +286,15 @@
                 <th>Artist</th>
                 <th>Tracks</th>
                 <th>Embedded</th>
+                <th>Years</th>
                 <th>Genres</th>
+                <th>Taste</th>
                 <th>Sources</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody id="artists-tbody">
-              <tr><td colspan="6" class="empty">Loading…</td></tr>
+              <tr><td colspan="8" class="empty">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -285,19 +303,63 @@
           <span class="page-info" id="artists-page-info">Page 1</span>
           <button class="btn tiny ghost" id="artists-next" type="button">NEXT →</button>
         </div>
+      </div>
 
-        <!-- Inline Drawer for Artist Tracks -->
-        <div class="artist-tracks-drawer hidden" id="artist-tracks-drawer">
-          <div class="drawer-head">
-            <h3 id="drawer-artist-name">—</h3>
-            <button class="btn tiny ghost" id="drawer-close" type="button">✕ CLOSE</button>
+      <!-- Pending Seeds Queue Explorer & Cleanup Manager -->
+      <div class="panel hidden" id="panel-seeds">
+        <div class="panel-head">
+          <div>
+            <h2>Pending Seeds Queue</h2>
+            <div class="cell-badges" id="seeds-source-pills" style="margin-top: 6px;"></div>
           </div>
-          <div class="list" id="drawer-tracks-list"></div>
+          <div class="filter-row">
+            <button class="btn tiny danger" id="seeds-purge-failed-btn" type="button">PURGE FAILED</button>
+            <button class="btn tiny danger ghost" id="seeds-purge-pending-btn" type="button">PURGE ALL PENDING</button>
+          </div>
+        </div>
+        <div class="filter-row" style="margin-top: 10px;">
+          <input class="input" id="seeds-search" type="search" placeholder="Search seed artist…">
+          <select class="input" id="seeds-status-filter">
+            <option value="">All Statuses</option>
+            <option value="pending" selected>Pending</option>
+            <option value="fetched">Fetched</option>
+            <option value="failed">Failed</option>
+          </select>
+          <select class="input" id="seeds-source-filter">
+            <option value="">All Sources</option>
+          </select>
+          <select class="input" id="seeds-category-filter">
+            <option value="">All Categories</option>
+            <option value="electronic">Electronic</option>
+            <option value="general">General</option>
+          </select>
+        </div>
+        <div class="table-container" id="seeds-table-container">
+          <table class="data-table" id="seeds-table">
+            <thead>
+              <tr>
+                <th>Artist</th>
+                <th>Category</th>
+                <th>Source</th>
+                <th>Priority</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="seeds-tbody">
+              <tr><td colspan="6" class="empty">Loading seeds…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="seeds-pagination">
+          <button class="btn tiny ghost" id="seeds-prev" type="button">← PREV</button>
+          <span class="page-info" id="seeds-page-info">Page 1</span>
+          <button class="btn tiny ghost" id="seeds-next" type="button">NEXT →</button>
         </div>
       </div>
 
       <!-- Blacklist Manager -->
-      <div class="panel" id="panel-blacklist">
+      <div class="panel hidden" id="panel-blacklist">
         <div class="panel-head">
           <h2>Blacklist Manager</h2>
           <div class="filter-row">
@@ -389,6 +451,14 @@
             </div>
           </label>
           <div class="params">
+            <label class="field inline" style="margin-bottom: 8px;">
+              <span>Min Year</span>
+              <input class="input mono" id="fetch-artist-min-year" type="number" min="1900" max="2100" placeholder="e.g. 2018" style="width: 100px;">
+            </label>
+            <label class="check">
+              <input type="checkbox" id="fetch-artist-electronic-only">
+              Electronic only (block pop/rock/jazz)
+            </label>
             <label class="check">
               <input type="checkbox" id="fetch-artist-auto-index" checked>
               Auto-index audio embeddings immediately
@@ -404,6 +474,28 @@
           <button class="btn primary" type="submit" id="modal-fetch-artist-submit">FETCH NOW</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ----------------------------------------------- MODAL: ARTIST TRACKS -->
+  <div class="modal-backdrop hidden" id="modal-artist-tracks">
+    <div class="modal-dialog modal-tracks-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-artist-tracks-title">
+      <div class="modal-head sticky-head">
+        <div class="modal-title-group">
+          <h3 id="modal-artist-tracks-title">—</h3>
+          <span class="modal-subtitle dim mono" id="modal-artist-tracks-count">0 tracks</span>
+        </div>
+        <div class="modal-head-actions">
+          <input class="input compact" id="modal-artist-tracks-filter" type="search" placeholder="Filter tracks…">
+          <button class="btn tiny primary" id="modal-artist-tracks-fetch" type="button">+ FETCH MORE</button>
+          <button class="btn tiny ghost" id="modal-artist-tracks-close" type="button" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div class="modal-body scrollable-body">
+        <div class="list" id="modal-artist-tracks-list">
+          <div class="empty">Loading tracks…</div>
+        </div>
+      </div>
     </div>
   </div>
 
