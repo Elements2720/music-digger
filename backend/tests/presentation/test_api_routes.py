@@ -199,3 +199,21 @@ async def test_hardware_probe_is_exposed(client: httpx.AsyncClient) -> None:
     assert body["gpu_name"] == "GTX 1660 Super"
     assert body["gpu_ready"] is True
     assert body["has_ffmpeg"] is True
+
+
+async def test_seed_itunes_job_params_validation_and_start(
+    client: httpx.AsyncClient,
+) -> None:
+    bad = await client.post(
+        "/api/jobs",
+        json={"kind": "seed-itunes", "params": {"tracks_per_term": 500}},
+    )
+    assert bad.status_code == 422
+
+    good = await client.post(
+        "/api/jobs",
+        json={"kind": "seed-itunes", "params": {"tracks_per_term": 50}},
+    )
+    assert good.status_code == 200
+    assert good.json()["job"]["kind"] == "seed-itunes"
+

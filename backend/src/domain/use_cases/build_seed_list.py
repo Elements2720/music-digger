@@ -6,13 +6,23 @@ clients are injected by the composition root.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from ..entities.track import SeedArtist
 from ..interfaces.catalog import ISeedDiscovery
 from ..interfaces.llm import ILLMService
 from ..interfaces.repositories import ISeedRepository
+
+
+@dataclass(frozen=True, slots=True)
+class CrawlProgress:
+    """Progress event emitted during seed discovery."""
+
+    stage: str
+    name: str
+    depth: int | None
+    found: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +65,7 @@ class BuildSeedList:
         llm_genres: Sequence[str] = (),
         llm_count: int = 0,
         exclude_artists: Sequence[str] = (),
+        progress: Callable[[CrawlProgress], None] | None = None,
     ) -> BuildSeedListResult:
         """Discover seeds, persist them, and return the resulting counts.
 
@@ -77,6 +88,7 @@ class BuildSeedList:
                 electronic_limit=electronic_limit,
                 general_limit=general_limit,
                 max_depth=max_depth,
+                progress=progress,
             )
 
         llm_generated: Sequence[SeedArtist] = ()
@@ -92,6 +104,11 @@ class BuildSeedList:
             written += await self._seed_repository.record_discovery(discovered)
         if llm_generated:
             written += await self._seed_repository.upsert_many(llm_generated)
+
+        if progress is not None:
+            progress(
+                CrawlProgress(stage="writing", name="", depth=None, found=written)
+            )
 
         return BuildSeedListResult(
             discovered=len(discovered),

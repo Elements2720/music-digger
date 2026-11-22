@@ -33,6 +33,7 @@ from data.repositories.track_repository import HybridTrackRepository
 from domain.use_cases import (
     AnalyzeDJSet,
     BuildSeedList,
+    CrawlITunesSeeds,
     DigSimilarTracks,
     FetchCatalogMetadata,
     FindSimilarForSet,
@@ -221,6 +222,7 @@ class Container:
         self.analyze_dj_set: AnalyzeDJSet | None = None
         self.find_similar_for_set: FindSimilarForSet | None = None
         self.build_seed_list: BuildSeedList | None = None
+        self.crawl_itunes_seeds: CrawlITunesSeeds | None = None
         self.fetch_catalog_metadata: FetchCatalogMetadata | None = None
         self.index_catalog: IndexCatalog | None = None
         self.dig_similar_tracks: DigSimilarTracks | None = None
@@ -301,6 +303,11 @@ class Container:
             discovery=deezer_crawler,
             seed_repository=seed_repository,
             llm_service=llm_service,
+        )
+        self.crawl_itunes_seeds = CrawlITunesSeeds(
+            catalog_provider=itunes_provider,
+            track_repository=track_repository,
+            seed_repository=seed_repository,
         )
         self.fetch_catalog_metadata = FetchCatalogMetadata(
             seed_repository=seed_repository,

@@ -300,6 +300,18 @@ class FakeBuildSeedList:
 
     async def execute(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(
+                SimpleNamespace(
+                    stage="electronic", name="Solomun", depth=0, found=1
+                )
+            )
+            progress(
+                SimpleNamespace(
+                    stage="writing", name="", depth=None, found=15
+                )
+            )
         return SimpleNamespace(
             discovered=10,
             llm_generated=5,
@@ -321,6 +333,26 @@ class FakeFetchMetadata:
             artists_skipped=0,
             tracks_found=20,
             tracks_saved=18,
+        )
+
+
+class FakeCrawlITunesSeeds:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def execute(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        progress = kwargs.get("progress")
+        terms = kwargs.get("terms") or ("hypnotic techno", "Drumcode")
+        if progress is not None:
+            for idx, term in enumerate(terms, start=1):
+                progress(term, idx, len(terms), 10)
+        return SimpleNamespace(
+            terms_processed=len(terms),
+            terms_failed=0,
+            tracks_found=len(terms) * 10,
+            tracks_saved=len(terms) * 8,
+            artists_discovered=len(terms) * 4,
         )
 
 
@@ -445,6 +477,7 @@ def make_container(
         ),
         index_catalog=index_catalog or FakeIndexCatalog(),
         build_seed_list=FakeBuildSeedList(),
+        crawl_itunes_seeds=FakeCrawlITunesSeeds(),
         fetch_catalog_metadata=FakeFetchMetadata(),
         analyze_dj_set=FakeAnalyzeDJSet(dj_set),
         set_downloader=FakeDownloader(),

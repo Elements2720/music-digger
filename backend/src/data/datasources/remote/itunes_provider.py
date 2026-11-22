@@ -204,6 +204,88 @@ class ITunesProvider(ICatalogProvider):
         tracks = await self._search_all(artist_name)
         return tracks[:limit]
 
+    async def crawl_keyword(
+        self,
+        keyword: str,
+        *,
+        limit: int = 200,
+        expand_compilations: bool = True,
+    ) -> Sequence[Track]:
+        """Search tracks by keyword/label and optionally expand VA compilations."""
+        if not isinstance(keyword, str):
+            raise TypeError("keyword must be a string")
+        keyword = keyword.strip()
+        if not keyword:
+            raise ValueError("keyword must not be empty")
+        if limit <= 0:
+            return ()
+
+        search_limit = min(limit, ITUNES_SEARCH_LIMIT)
+        payload = await self._request_json(
+            f"{self._base_url}/search",
+            {
+                "term": keyword,
+                "entity": "song",
+                "limit": search_limit,
+                "country": self._country,
+            },
+        )
+        raw_results: list[dict[str, Any]] = [
+            item for item in payload.get("results", []) if isinstance(item, Mapping)
+        ]
+
+        if expand_compilations:
+            collections_artists: dict[int | str, set[str]] = {}
+            collections_names: dict[int | str, str] = {}
+            for item in raw_results:
+                cid = item.get("collectionId")
+                if not cid or isinstance(cid, bool):
+                    continue
+                artist_name = item.get("artistName")
+                if isinstance(artist_name, str) and artist_name.strip():
+                    collections_artists.setdefault(cid, set()).add(
+                        artist_name.strip().casefold()
+                    )
+                cname = item.get("collectionName")
+                if isinstance(cname, str) and cname.strip():
+                    collections_names[cid] = cname.strip()
+
+            candidate_cids: list[int | str] = []
+            keyword_lower = keyword.casefold()
+            for cid, artists in collections_artists.items():
+                cname = collections_names.get(cid, "")
+                cname_lower = cname.casefold()
+                is_va_name = (
+                    "various" in cname_lower
+                    or re.search(r"\bva\b", cname_lower) is not None
+                    or "v.a." in cname_lower
+                    or keyword_lower in cname_lower
+                )
+                if len(artists) >= 2 or is_va_name:
+                    candidate_cids.append(cid)
+                    if len(candidate_cids) >= 3:
+                        break
+
+            for cid in candidate_cids:
+                lookup_payload = await self._request_json(
+                    f"{self._base_url}/lookup",
+                    {
+                        "id": str(cid),
+                        "entity": "song",
+                        "limit": ITUNES_SEARCH_LIMIT,
+                        "country": self._country,
+                    },
+                )
+                lookup_results = lookup_payload.get("results", [])
+                if isinstance(lookup_results, list):
+                    for item in lookup_results:
+                        if isinstance(item, Mapping):
+                            raw_results.append(item)
+
+        tracks = self._filter_and_dedup(raw_results)
+        await self._discover_from_tracks(tracks, seed_name=None)
+        return tuple(tracks[:limit])
+
     async def fetch_preview(self, track: Track) -> bytes | None:
         if not isinstance(track, Track):
             raise TypeError("track must be a Track")

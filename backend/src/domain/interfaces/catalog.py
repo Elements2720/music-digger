@@ -7,9 +7,13 @@ iTunes ceiling of **18 metadata requests per minute** documented in AGENTS.md.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from typing import TYPE_CHECKING
 
 from ..entities.track import SeedArtist, Track
+
+if TYPE_CHECKING:
+    from ..use_cases.build_seed_list import CrawlProgress
 
 
 class ICatalogProvider(ABC):
@@ -43,6 +47,16 @@ class ICatalogProvider(ABC):
         interface must never retain preview audio.
         """
 
+    async def crawl_keyword(
+        self,
+        keyword: str,
+        *,
+        limit: int = 200,
+        expand_compilations: bool = True,
+    ) -> Sequence[Track]:
+        """Keyword/label/compilation crawl. Default: unsupported."""
+        return ()
+
 
 class ISeedDiscovery(ABC):
     """Discovers artist names that should become catalog crawl seeds.
@@ -59,8 +73,13 @@ class ISeedDiscovery(ABC):
         electronic_limit: int = 1000,
         general_limit: int = 300,
         max_depth: int = 2,
+        progress: Callable[[CrawlProgress], None] | None = None,
     ) -> Sequence[SeedArtist]:
-        """Return deduplicated seeds across electronic and general categories."""
+        """Return deduplicated seeds across electronic and general categories.
+
+        An optional ``progress`` callback receives a :class:`CrawlProgress` event
+        as discovery proceeds.
+        """
 
 
 class ISeedCrawler(ABC):

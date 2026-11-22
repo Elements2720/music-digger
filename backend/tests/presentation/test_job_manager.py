@@ -64,6 +64,43 @@ async def test_index_job_streams_progress_and_finishes() -> None:
     assert manager.active is False
 
 
+async def test_seed_crawl_job_streams_progress_and_finishes() -> None:
+    container = make_container()
+    manager = make_manager(container)
+    stream = manager.stream(FakeRequest())
+    await stream.__anext__()  # initial state
+
+    await manager.start("seed-crawl", {"electronic_limit": 50, "general_limit": 10})
+    events = []
+    async for frame in stream:
+        event = parse_frame(frame)
+        if event is not None:
+            events.append(event)
+
+    assert [event["type"] for event in events][-1] == "done"
+    progress = [event for event in events if event["type"] == "progress"]
+    assert len(progress) == 2
+    assert progress[0]["job"]["stage"] == "crawling Deezer"
+    assert progress[0]["job"]["message"] == "Solomun"
+    assert progress[0]["job"]["total"] == 60
+    assert progress[0]["job"]["processed"] == 1
+    assert progress[1]["job"]["stage"] == "writing"
+    assert progress[1]["job"]["total"] == 60
+    assert progress[1]["job"]["processed"] == 15
+
+    snapshot = manager.snapshot()
+    assert snapshot is not None
+    assert snapshot["status"] == "done"
+    assert snapshot["result"] == {
+        "discovered": 10,
+        "llm_generated": 5,
+        "written": 15,
+        "electronic_total": 100,
+        "general_total": 40,
+    }
+    assert manager.active is False
+
+
 async def test_only_one_job_at_a_time_and_cancel() -> None:
     catalog = FakeIndexCatalog()
     container = make_container(index_catalog=catalog)
@@ -90,6 +127,12 @@ async def test_invalid_parameters_are_rejected_before_starting() -> None:
         await manager.start("index", {"batch_size": 99})
     with pytest.raises(JobParamError):
         await manager.start("seed-llm", {"genre": "   "})
+    with pytest.raises(JobParamError):
+        await manager.start("seed-itunes", {"tracks_per_term": 500})
+    with pytest.raises(JobParamError):
+        await manager.start("seed-itunes", {"terms": []})
+    with pytest.raises(JobParamError):
+        await manager.start("seed-itunes", {"terms": "   "})
     with pytest.raises(JobParamError):
         await manager.start("nope", {})
 
@@ -212,3 +255,42 @@ async def test_wait_is_safe_when_no_job_ran() -> None:
     manager = make_manager(make_container())
     await asyncio.wait_for(manager.wait(), timeout=1)
     assert manager.snapshot() is None
+
+
+async def test_seed_itunes_job_streams_progress_and_finishes() -> None:
+    container = make_container()
+    manager = make_manager(container)
+    stream = manager.stream(FakeRequest())
+    await stream.__anext__()  # initial state
+
+    await manager.start(
+        "seed-itunes",
+        {"terms": ["hypnotic techno", "Drumcode"], "tracks_per_term": 50},
+    )
+    events = []
+    async for frame in stream:
+        event = parse_frame(frame)
+        if event is not None:
+            events.append(event)
+
+    assert [event["type"] for event in events][-1] == "done"
+    progress = [event for event in events if event["type"] == "progress"]
+    assert len(progress) == 2
+    assert progress[0]["job"]["stage"] == "crawling iTunes keywords"
+    assert progress[0]["job"]["total"] == 2
+    assert progress[0]["job"]["processed"] == 0
+    assert "hypnotic techno" in progress[0]["job"]["message"]
+    assert progress[1]["job"]["processed"] == 1
+    assert "Drumcode" in progress[1]["job"]["message"]
+
+    snapshot = manager.snapshot()
+    assert snapshot is not None
+    assert snapshot["status"] == "done"
+    assert snapshot["result"] == {
+        "terms_processed": 2,
+        "terms_failed": 0,
+        "tracks_found": 20,
+        "tracks_saved": 16,
+        "artists_discovered": 8,
+    }
+

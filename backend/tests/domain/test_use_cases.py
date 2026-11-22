@@ -92,6 +92,7 @@ class FakeDiscovery(ISeedDiscovery):
         electronic_limit: int = 1000,
         general_limit: int = 300,
         max_depth: int = 2,
+        progress: object = None,
     ) -> Sequence[SeedArtist]:
         self.calls.append(
             {

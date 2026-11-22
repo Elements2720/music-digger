@@ -22,6 +22,12 @@ const FIELDS = {
     { key: "genre", label: "Genre focus", type: "text", value: "Melodic Techno & Afro House", placeholder: "comma-separated genres" },
     { key: "count", label: "Artists to request", type: "number", value: 100, min: 1, max: 1000 },
   ],
+  "seed-itunes": [
+    { key: "terms", label: "Keywords / labels (comma-separated, blank = built-in techno list)", type: "text", placeholder: "hypnotic techno, Drumcode, PoleGroup..." },
+    { key: "tracks_per_term", label: "Tracks per term (max 200)", type: "number", value: 200, min: 1, max: 200 },
+    { key: "expand_compilations", label: "Expand VA compilations", type: "checkbox", value: true },
+    { key: "save_tracks", label: "Save tracks immediately (ready for index)", type: "checkbox", value: true },
+  ],
   "fetch-metadata": [
     { key: "artists_limit", label: "Artists this run", type: "number", value: 50, min: 1 },
     { key: "tracks_per_artist", label: "Tracks per artist (max 200)", type: "number", value: 200, min: 1, max: 200 },

@@ -8,6 +8,7 @@ from fakes import FakeClock
 
 from data.datasources.remote.deezer_seed_crawler import DeezerSeedCrawler
 from domain.entities.track import SeedArtist
+from domain.use_cases.build_seed_list import CrawlProgress
 
 
 def _handler(request: httpx.Request) -> httpx.Response:
@@ -211,3 +212,31 @@ async def test_discover_rejects_negative_limits(fake_clock: FakeClock) -> None:
             await crawler.discover(electronic_limit=-1)
     finally:
         await crawler.aclose()
+
+
+async def test_discover_emits_progress_events(fake_clock: FakeClock) -> None:
+    crawler = _make_crawler(fake_clock)
+    events: list[CrawlProgress] = []
+    try:
+        await crawler.discover(
+            electronic_limit=10,
+            general_limit=2,
+            max_depth=1,
+            progress=events.append,
+        )
+    finally:
+        await crawler.aclose()
+
+    assert len(events) >= 3
+    assert events[0].stage == "electronic"
+    assert events[0].name == "Seed DJ"
+    assert events[0].depth == 0
+    electronic_events = [e for e in events if e.stage == "electronic"]
+    assert any(e.name == "Related A" for e in electronic_events)
+    assert any(e.name == "Related B" for e in electronic_events)
+    general_events = [e for e in events if e.stage == "general"]
+    assert len(general_events) == 1
+    assert general_events[0].name == "Pop"
+    founds = [e.found for e in events]
+    assert founds == sorted(founds)
+

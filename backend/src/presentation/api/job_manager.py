@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from domain.use_cases import IndexCatalog
+from domain.use_cases import DEFAULT_TECHNO_TERMS, IndexCatalog
 
 from .schemas import set_summary_payload
 
@@ -251,11 +251,26 @@ class JobManager:
         self, job: JobState, container: Any, config: dict[str, Any]
     ) -> None:
         job.stage = "crawling Deezer"
+        total = config["electronic_limit"] + config["general_limit"]
+        job.total = total
+
+        def on_progress(event: Any) -> None:
+            stage = "crawling Deezer" if event.stage == "electronic" else event.stage
+            self._progress(
+                job,
+                stage=stage,
+                processed=event.found,
+                total=total,
+                message=event.name,
+                memory=self._memory(container),
+            )
+
         result = await container.build_seed_list.execute(
             electronic_limit=config["electronic_limit"],
             general_limit=config["general_limit"],
             max_depth=config["max_depth"],
             use_deezer=True,
+            progress=on_progress,
         )
         job.result = _seed_result(result)
 
@@ -270,6 +285,37 @@ class JobManager:
             llm_count=config["count"],
         )
         job.result = _seed_result(result)
+
+    async def _run_seed_itunes(
+        self, job: JobState, container: Any, config: dict[str, Any]
+    ) -> None:
+        job.stage = "crawling iTunes keywords"
+        job.total = len(config["terms"])
+
+        def on_progress(term: str, index: int, total: int, tracks_found: int) -> None:
+            self._progress(
+                job,
+                stage="crawling iTunes keywords",
+                processed=index - 1,
+                total=total,
+                message=f"{term} - {tracks_found} tracks",
+                memory=self._memory(container),
+            )
+
+        result = await container.crawl_itunes_seeds.execute(
+            terms=config["terms"],
+            tracks_per_term=config["tracks_per_term"],
+            expand_compilations=config["expand_compilations"],
+            save_tracks=config["save_tracks"],
+            progress=on_progress,
+        )
+        job.result = {
+            "terms_processed": result.terms_processed,
+            "terms_failed": result.terms_failed,
+            "tracks_found": result.tracks_found,
+            "tracks_saved": result.tracks_saved,
+            "artists_discovered": result.artists_discovered,
+        }
 
     async def _run_fetch_metadata(
         self, job: JobState, container: Any, config: dict[str, Any]
@@ -416,6 +462,7 @@ class JobManager:
             "index": self._validate_index,
             "seed-crawl": self._validate_seed_crawl,
             "seed-llm": self._validate_seed_llm,
+            "seed-itunes": self._validate_seed_itunes,
             "fetch-metadata": self._validate_fetch_metadata,
             "analyze-set": self._validate_analyze_set,
         }
@@ -454,6 +501,39 @@ class JobManager:
             "genre": raw_genre.strip(),
             "genres": genres,
             "count": _as_int(params, "count", 100, minimum=1, maximum=1000),
+        }
+
+    @staticmethod
+    def _validate_seed_itunes(params: dict[str, Any]) -> dict[str, Any]:
+        raw_terms = params.get("terms")
+        if raw_terms is None:
+            terms: tuple[str, ...] = DEFAULT_TECHNO_TERMS
+        elif isinstance(raw_terms, str):
+            parts = [p.strip() for p in raw_terms.split(",") if p.strip()]
+            if not parts:
+                raise JobParamError("terms must not be empty")
+            terms = tuple(parts)
+        elif isinstance(raw_terms, (list, tuple)):
+            if len(raw_terms) == 0:
+                raise JobParamError("terms must not be empty")
+            parts = []
+            for item in raw_terms:
+                if not isinstance(item, str) or not item.strip():
+                    raise JobParamError("terms must contain non-empty strings")
+                parts.append(item.strip())
+            terms = tuple(parts)
+        else:
+            raise JobParamError(
+                "terms must be a list of strings or comma-separated string"
+            )
+
+        return {
+            "terms": terms,
+            "tracks_per_term": _as_int(
+                params, "tracks_per_term", 200, minimum=1, maximum=200
+            ),
+            "expand_compilations": _as_bool(params, "expand_compilations", True),
+            "save_tracks": _as_bool(params, "save_tracks", True),
         }
 
     @staticmethod

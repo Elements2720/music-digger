@@ -110,6 +110,8 @@ async def test_search_filters_duration_preview_and_genre(
     finally:
         await provider.aclose()
 
+
+
     assert [track.external_id for track in tracks] == ["1", "7", "8"]
     assert all(track.preview_url for track in tracks)
     assert all(track.duration_seconds is not None for track in tracks)
@@ -138,6 +140,8 @@ async def test_search_dedups_by_track_id_and_normalized_key(
         tracks = await provider.search_tracks("Artist")
     finally:
         await provider.aclose()
+
+
     assert [track.external_id for track in tracks] == ["1", "3"]
 
 
@@ -163,6 +167,8 @@ async def test_search_snowballs_collaborators_into_pending_seeds(
         await provider.search_tracks("Solomun")
     finally:
         await provider.aclose()
+
+
 
     discovered = {seed.name for seed in seed_repository.discovery_calls}
     assert "Miss Monique" in discovered
@@ -198,6 +204,8 @@ async def test_metadata_requests_are_serialized_to_18_per_minute(
         await provider.search_tracks("B")
     finally:
         await provider.aclose()
+
+
     assert fake_clock.sleeps == [pytest.approx(60 / 18, rel=1e-6)]
 
 
@@ -222,6 +230,8 @@ async def test_provider_backs_off_on_429_and_retries(
         tracks = await provider.search_tracks("Artist")
     finally:
         await provider.aclose()
+
+
     assert len(requests) == 2
     assert fake_clock.sleeps == [2.0]
     assert tracks[0].external_id == "1"
@@ -246,6 +256,8 @@ async def test_provider_raises_after_repeated_rate_limits(
         await provider.aclose()
 
 
+
+
 async def test_lookup_track_returns_filtered_track(
     fake_clock: FakeClock,
     seed_repository: InMemorySeedRepository,
@@ -261,6 +273,8 @@ async def test_lookup_track_returns_filtered_track(
         missing = await provider.lookup_track("999")
     finally:
         await provider.aclose()
+
+
     assert track is not None and track.external_id == "42"
     assert missing is None
     assert requests[0].url.path.endswith("/lookup")
@@ -291,6 +305,8 @@ async def test_fetch_preview_downloads_bytes(
         missing = await provider.fetch_preview(Track(id="x", title="t", artist="a"))
     finally:
         await provider.aclose()
+
+
     assert payload == b"\x00\x01\x02"
     assert missing is None
 
@@ -307,5 +323,189 @@ async def test_search_requires_non_empty_query(
     try:
         with pytest.raises(ValueError, match="query"):
             await provider.search_tracks("   ")
+    finally:
+        await provider.aclose()
+
+
+async def test_crawl_keyword_sends_no_attribute_param(
+    fake_clock: FakeClock,
+    seed_repository: InMemorySeedRepository,
+) -> None:
+    requests: list[httpx.Request] = []
+    results = [_track_item(1, title="Peak", artist="Adam Beyer")]
+    provider = _make_provider(
+        _ok_handler(results, requests),
+        fake_clock=fake_clock,
+        seed_repository=seed_repository,
+    )
+    try:
+        tracks = await provider.crawl_keyword("Drumcode", limit=50)
+    finally:
+        await provider.aclose()
+
+    assert len(tracks) == 1
+    assert tracks[0].external_id == "1"
+    assert len(requests) == 1
+    assert requests[0].url.params["term"] == "Drumcode"
+    assert requests[0].url.params["entity"] == "song"
+    assert "attribute" not in requests[0].url.params
+
+
+async def test_crawl_keyword_va_compilation_expansion(
+    fake_clock: FakeClock,
+    seed_repository: InMemorySeedRepository,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/search"):
+            return httpx.Response(
+                200,
+                json={
+                    "resultCount": 2,
+                    "results": [
+                        _track_item(
+                            1,
+                            title="Comp Track 1",
+                            artist="Artist A",
+                            collectionId=555,
+                            collectionName="Techno VA Vol 1",
+                        ),
+                        _track_item(
+                            2,
+                            title="Comp Track 2",
+                            artist="Artist B",
+                            collectionId=555,
+                            collectionName="Techno VA Vol 1",
+                        ),
+                    ],
+                },
+            )
+        if request.url.path.endswith("/lookup"):
+            return httpx.Response(
+                200,
+                json={
+                    "resultCount": 3,
+                    "results": [
+                        {"wrapperType": "collection", "collectionId": 555},
+                        _track_item(
+                            1,
+                            title="Comp Track 1",
+                            artist="Artist A",
+                            collectionId=555,
+                        ),
+                        _track_item(
+                            3,
+                            title="Comp Track 3",
+                            artist="Artist C",
+                            collectionId=555,
+                        ),
+                    ],
+                },
+            )
+        return httpx.Response(404)
+
+    provider = _make_provider(
+        httpx.MockTransport(handler),
+        fake_clock=fake_clock,
+        seed_repository=seed_repository,
+    )
+    try:
+        tracks = await provider.crawl_keyword("techno", limit=100, expand_compilations=True)
+    finally:
+        await provider.aclose()
+
+    lookup_requests = [r for r in requests if r.url.path.endswith("/lookup")]
+    assert len(lookup_requests) == 1
+    assert lookup_requests[0].url.params["id"] == "555"
+
+    assert [t.external_id for t in tracks] == ["1", "2", "3"]
+
+
+async def test_crawl_keyword_filters_preview_duration_and_genre(
+    fake_clock: FakeClock,
+    seed_repository: InMemorySeedRepository,
+) -> None:
+    requests: list[httpx.Request] = []
+    results = [
+        _track_item(1, title="Valid", artist="Artist 1"),
+        _track_item(2, title="No Preview", preview_url=None),
+        _track_item(3, title="Short", duration_ms=60_000),
+        _track_item(4, title="Podcast", genre="Podcasts"),
+    ]
+    provider = _make_provider(
+        _ok_handler(results, requests),
+        fake_clock=fake_clock,
+        seed_repository=seed_repository,
+    )
+    try:
+        tracks = await provider.crawl_keyword("techno", limit=50, expand_compilations=False)
+    finally:
+        await provider.aclose()
+
+    assert [t.external_id for t in tracks] == ["1"]
+
+
+async def test_crawl_keyword_serializes_through_rate_limiter(
+    fake_clock: FakeClock,
+    seed_repository: InMemorySeedRepository,
+) -> None:
+    bucket = AsyncTokenBucket(
+        rate_per_second=1.0,
+        capacity=1.0,
+        clock=fake_clock,
+        sleep=fake_clock.sleep,
+    )
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/search"):
+            return httpx.Response(
+                200,
+                json={
+                    "resultCount": 2,
+                    "results": [
+                        _track_item(1, artist="A", collectionId=10),
+                        _track_item(2, artist="B", collectionId=10),
+                    ],
+                },
+            )
+        return httpx.Response(200, json={"resultCount": 0, "results": []})
+
+    provider = _make_provider(
+        httpx.MockTransport(handler),
+        fake_clock=fake_clock,
+        seed_repository=seed_repository,
+        rate_limiter=bucket,
+    )
+    try:
+        await provider.crawl_keyword("test", limit=50, expand_compilations=True)
+    finally:
+        await provider.aclose()
+
+    assert len(requests) == 2
+    # Second request had to sleep because bucket rate is 1/sec
+    assert len(fake_clock.sleeps) >= 1
+    assert fake_clock.now >= 1.0
+
+
+async def test_crawl_keyword_validates_inputs(
+    fake_clock: FakeClock,
+    seed_repository: InMemorySeedRepository,
+) -> None:
+    provider = _make_provider(
+        _ok_handler([], []),
+        fake_clock=fake_clock,
+        seed_repository=seed_repository,
+    )
+    try:
+        with pytest.raises(TypeError, match="keyword must be a string"):
+            await provider.crawl_keyword(123)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="keyword must not be empty"):
+            await provider.crawl_keyword("   ")
+        empty = await provider.crawl_keyword("techno", limit=0)
+        assert empty == ()
     finally:
         await provider.aclose()

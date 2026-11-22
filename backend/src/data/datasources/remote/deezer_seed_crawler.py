@@ -11,7 +11,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -19,6 +19,7 @@ import httpx
 
 from domain.entities.track import SeedArtist, Track
 from domain.interfaces.catalog import ISeedCrawler, ISeedDiscovery
+from domain.use_cases.build_seed_list import CrawlProgress
 
 from ...errors import ProviderError, ProviderRateLimitError
 from .rate_limiter import (
@@ -164,6 +165,7 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
         electronic_limit: int = 1000,
         general_limit: int = 300,
         max_depth: int = 2,
+        progress: Callable[[CrawlProgress], None] | None = None,
     ) -> Sequence[SeedArtist]:
         if electronic_limit < 0:
             raise ValueError("electronic_limit must not be negative")
@@ -181,12 +183,14 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
                 discovery_counts,
                 electronic_limit=electronic_limit,
                 max_depth=max_depth,
+                progress=progress,
             )
         if general_limit > 0:
             await self._discover_general(
                 seeds,
                 discovery_counts,
                 general_limit=general_limit,
+                progress=progress,
             )
 
         ordered = sorted(
@@ -202,10 +206,20 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
         *,
         electronic_limit: int,
         max_depth: int,
+        progress: Callable[[CrawlProgress], None] | None = None,
     ) -> None:
         queue: deque[tuple[str, int, str | None]] = deque(
             (name, 0, None) for name in self._core_artists
         )
+        if progress is not None and self._core_artists:
+            progress(
+                CrawlProgress(
+                    stage="electronic",
+                    name=self._core_artists[0],
+                    depth=0,
+                    found=len(seeds),
+                )
+            )
         visited: set[str] = set()
 
         while queue and len(seeds) < electronic_limit:
@@ -229,6 +243,15 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
                 external_id=artist_id,
                 source="deezer-graph",
             )
+            if progress is not None:
+                progress(
+                    CrawlProgress(
+                        stage="electronic",
+                        name=name,
+                        depth=depth,
+                        found=len(seeds),
+                    )
+                )
             if len(seeds) >= electronic_limit or depth >= max_depth:
                 continue
             if artist_id is None:
@@ -247,6 +270,7 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
         discovery_counts: dict[str, int],
         *,
         general_limit: int,
+        progress: Callable[[CrawlProgress], None] | None = None,
     ) -> None:
         general_count = 0
         for genre_id, genre_name in self._general_genres:
@@ -273,6 +297,15 @@ class DeezerSeedCrawler(ISeedDiscovery, ISeedCrawler):
                     source=f"deezer-chart:{genre_name}",
                 )
                 general_count += 1
+            if progress is not None:
+                progress(
+                    CrawlProgress(
+                        stage="general",
+                        name=genre_name,
+                        depth=None,
+                        found=len(seeds),
+                    )
+                )
 
     @staticmethod
     def _add_seed(

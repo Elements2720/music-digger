@@ -17,6 +17,7 @@ JobKind = Literal[
     "seed-llm",
     "fetch-metadata",
     "analyze-set",
+    "seed-itunes",
 ]
 
 

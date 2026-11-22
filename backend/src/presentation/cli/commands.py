@@ -24,6 +24,7 @@ from rich.table import Table
 from container import Container
 from domain.entities.search import SearchFilter
 from domain.use_cases import (
+    DEFAULT_TECHNO_TERMS,
     SetNotEmbeddedError,
     SetNotFoundError,
     TrackNotEmbeddedError,
@@ -702,12 +703,34 @@ def seed_crawl(
     async def run() -> None:
         async with Container() as container:
             assert container.build_seed_list is not None
-            result = await container.build_seed_list.execute(
-                electronic_limit=electronic_limit,
-                general_limit=general_limit,
-                max_depth=max_depth,
-                use_deezer=True,
-            )
+            total = electronic_limit + general_limit
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Crawling Deezer", total=total)
+
+                def on_progress(event: Any) -> None:
+                    desc = f"[cyan]{event.stage}[/]"
+                    if event.name:
+                        desc = f"[cyan]{event.stage}[/] {event.name}"
+                    progress.update(
+                        task,
+                        completed=event.found,
+                        description=desc,
+                    )
+
+                result = await container.build_seed_list.execute(
+                    electronic_limit=electronic_limit,
+                    general_limit=general_limit,
+                    max_depth=max_depth,
+                    use_deezer=True,
+                    progress=on_progress,
+                )
             _print_seed_result(result)
 
     _run(run())
@@ -740,6 +763,90 @@ def seed_llm(
                 llm_count=count,
             )
             _print_seed_result(result)
+
+    _run(run())
+
+
+@app.command("seed-itunes")
+def seed_itunes(
+    terms: str | None = typer.Option(
+        None,
+        "--terms",
+        "-t",
+        help="Comma-separated keywords/labels to crawl (omitted = built-in techno list).",
+    ),
+    tracks_per_term: int = typer.Option(
+        200,
+        "--tracks-per-term",
+        min=1,
+        max=200,
+        help="Maximum tracks per keyword (iTunes limit 200).",
+    ),
+    expand_compilations: bool = typer.Option(
+        True,
+        "--expand-compilations/--no-expand-compilations",
+        help="Expand multi-artist compilation albums into full tracklists.",
+    ),
+    save_tracks: bool = typer.Option(
+        True,
+        "--save-tracks/--no-save-tracks",
+        help="Persist tracks immediately into track repository.",
+    ),
+) -> None:
+    """Crawl underground techno terms, labels, and compilations on iTunes."""
+
+    async def run() -> None:
+        async with Container() as container:
+            assert container.crawl_itunes_seeds is not None
+            parsed_terms: tuple[str, ...] | None = None
+            if terms is not None:
+                parts = tuple(p.strip() for p in terms.split(",") if p.strip())
+                if not parts:
+                    console.print("[red]Error:[/] --terms must not be empty")
+                    raise typer.Exit(1)
+                parsed_terms = parts
+            effective_terms = (
+                parsed_terms if parsed_terms is not None else DEFAULT_TECHNO_TERMS
+            )
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    "Crawling iTunes keywords", total=len(effective_terms)
+                )
+
+                def on_progress(
+                    term: str, index: int, total: int, tracks_found: int
+                ) -> None:
+                    progress.update(
+                        task,
+                        total=total,
+                        completed=index,
+                        description=f"[cyan]{term}[/] ({tracks_found} tracks)",
+                    )
+
+                result = await container.crawl_itunes_seeds.execute(
+                    terms=parsed_terms,
+                    tracks_per_term=tracks_per_term,
+                    expand_compilations=expand_compilations,
+                    save_tracks=save_tracks,
+                    progress=on_progress,
+                )
+
+            table = Table(title="iTunes keyword crawl")
+            table.add_column("Metric")
+            table.add_column("Value", justify="right")
+            table.add_row("Terms processed", str(result.terms_processed))
+            table.add_row("Terms failed", str(result.terms_failed))
+            table.add_row("Tracks found", str(result.tracks_found))
+            table.add_row("Tracks saved", str(result.tracks_saved))
+            table.add_row("Artists discovered", str(result.artists_discovered))
+            console.print(table)
 
     _run(run())
 
