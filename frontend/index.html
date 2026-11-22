@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>DigDeeper Local — Mission Control</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Ctext%20x='2'%20y='13'%20font-size='13'%20fill='%23ff4d1a'%3E%E2%97%88%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">◈</span>
+      <span class="brand-name">DIGDEEPER</span>
+      <span class="brand-sub">LOCAL</span>
+    </div>
+    <nav class="tabs" id="tabs" aria-label="Sections">
+      <button class="tab active" data-tab="run" type="button">RUN</button>
+      <button class="tab" data-tab="dig" type="button">DIG</button>
+      <button class="tab" data-tab="sets" type="button">SETS</button>
+      <button class="tab" data-tab="stats" type="button">STATS</button>
+    </nav>
+    <div class="topbar-meta" id="topbar-meta">
+      <span class="status-dot" id="health-dot" title="API status"></span>
+      <span id="health-label">connecting</span>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ------------------------------------------------------------- RUN -->
+    <section class="tab-panel active" id="tab-run">
+      <div class="panel-grid two">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Launch a job</h2>
+            <span class="hint">same flags as the CLI</span>
+          </div>
+          <label class="field">
+            <span>Job</span>
+            <select id="job-kind">
+              <option value="index">index — embed pending previews</option>
+              <option value="seed-crawl">seed-crawl — Deezer related artists</option>
+              <option value="seed-llm">seed-llm — curated artists from the LLM</option>
+              <option value="fetch-metadata">fetch-metadata — iTunes catalog</option>
+              <option value="analyze-set">analyze-set — DJ set tracklist</option>
+            </select>
+          </label>
+          <form id="job-form" class="job-form" autocomplete="off">
+            <div id="job-params" class="params"></div>
+            <div class="form-actions">
+              <button type="submit" class="btn primary" id="job-start">Start job</button>
+              <span class="error" id="job-error"></span>
+            </div>
+          </form>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Live progress</h2>
+            <button class="btn tiny ghost hidden" id="job-cancel" type="button">CANCEL</button>
+          </div>
+          <div id="job-idle" class="empty">No job running. Pick one on the left.</div>
+          <div id="job-live" class="hidden">
+            <div class="job-headline">
+              <span class="job-kind" id="job-kind-label">—</span>
+              <span class="badge" id="job-status-badge">idle</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill" id="job-progress"></div></div>
+            <div class="job-metrics">
+              <div><span class="metric-label">STAGE</span><span id="job-stage">—</span></div>
+              <div><span class="metric-label">DONE</span><span class="mono" id="job-processed">0</span></div>
+              <div><span class="metric-label">FAILED</span><span class="mono" id="job-failed">0</span></div>
+              <div><span class="metric-label">SPEED</span><span class="mono" id="job-speed">—</span></div>
+              <div><span class="metric-label">VRAM</span><span class="mono" id="job-vram">—</span></div>
+              <div><span class="metric-label">RAM</span><span class="mono" id="job-ram">—</span></div>
+            </div>
+            <p class="job-message" id="job-message"></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="job-result-panel">
+        <div class="panel-head"><h2>Last result</h2></div>
+        <div id="job-result"></div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------------- DIG -->
+    <section class="tab-panel" id="tab-dig">
+      <div class="dig-layout">
+        <aside class="panel dig-picker">
+          <div class="panel-head"><h2>Reference track</h2></div>
+          <input class="input" id="track-search" type="search"
+                 placeholder="Search title or artist…" autocomplete="off">
+          <div class="list picker-list" id="track-results"></div>
+          <div class="reference-card hidden" id="reference-card"></div>
+        </aside>
+
+        <div class="dig-main">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Dig similar</h2>
+              <span class="hint" id="dig-hint">pick a reference first</span>
+            </div>
+            <form class="filters" id="dig-form">
+              <label class="field inline"><span>Limit</span>
+                <input class="input mono" type="number" id="dig-limit" min="1" max="500" value="20">
+              </label>
+              <label class="field inline"><span>BPM ±</span>
+                <input class="input mono" type="number" id="dig-bpm-tolerance" min="0" step="1" placeholder="any">
+              </label>
+              <label class="field inline"><span>Genre</span>
+                <input class="input" type="text" id="dig-genre" placeholder="exact genre">
+              </label>
+              <label class="check"><input type="checkbox" id="dig-harmonic"> harmonic</label>
+              <label class="check"><input type="checkbox" id="dig-exclude-heard"> hide heard</label>
+              <button class="btn primary" type="submit">DIG &gt;</button>
+            </form>
+            <div class="results" id="dig-results">
+              <div class="empty">Similar tracks appear here.</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Vibe search</h2>
+              <span class="hint">describe a sound, not a title</span>
+            </div>
+            <form class="vibe-form" id="vibe-form">
+              <input class="input" id="vibe-query" type="text"
+                     placeholder="dark hypnotic peak-time techno…">
+              <label class="field inline"><span>Limit</span>
+                <input class="input mono" type="number" id="vibe-limit" min="1" max="500" value="20">
+              </label>
+              <label class="field inline"><span>Genre</span>
+                <input class="input" type="text" id="vibe-genre" placeholder="optional">
+              </label>
+              <label class="check"><input type="checkbox" id="vibe-exclude-heard"> hide heard</label>
+              <button class="btn" type="submit">SEARCH</button>
+            </form>
+            <div class="results" id="vibe-results">
+              <div class="empty">Text-to-audio results appear here.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------------ SETS -->
+    <section class="tab-panel" id="tab-sets">
+      <div class="panel-grid two">
+        <div class="panel">
+          <div class="panel-head"><h2>Analyze a set</h2></div>
+          <form id="analyze-form" class="job-form" autocomplete="off">
+            <label class="field"><span>URL or local file</span>
+              <input class="input" id="set-source" type="text"
+                     placeholder="https://youtube.com/watch?v=… or D:\sets\set.mp3" required>
+            </label>
+            <div class="params">
+              <label class="check"><input type="checkbox" id="set-shazam" checked> Shazam unidentified passages</label>
+              <label class="check"><input type="checkbox" id="set-comments" checked> parse tracklist from comments</label>
+              <label class="check"><input type="checkbox" id="set-keep-audio"> keep downloaded audio</label>
+              <label class="field"><span>cookies.txt (optional)</span>
+                <input class="input" id="set-cookies-file" type="text" placeholder="C:\path\cookies.txt">
+              </label>
+              <label class="field"><span>cookies from browser (optional)</span>
+                <input class="input" id="set-cookies-browser" type="text" placeholder="firefox, edge, chrome…">
+              </label>
+            </div>
+            <div class="form-actions">
+              <button class="btn primary" type="submit">ANALYZE</button>
+              <span class="hint">progress opens in RUN</span>
+            </div>
+          </form>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Stored sets</h2>
+            <button class="btn tiny ghost" id="sets-refresh" type="button">REFRESH</button>
+          </div>
+          <div class="list" id="sets-list"><div class="empty">Loading…</div></div>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="set-detail">
+        <div class="set-detail-head">
+          <button class="btn tiny ghost" id="set-back" type="button">← BACK</button>
+          <div>
+            <h2 id="set-title">—</h2>
+            <div class="set-meta mono" id="set-meta"></div>
+          </div>
+        </div>
+        <div class="subtabs" id="set-subtabs">
+          <button class="subtab active" data-view="tracklist" type="button">TRACKLIST</button>
+          <button class="subtab" data-view="tracks" type="button">SIMILAR TRACKS</button>
+          <button class="subtab" data-view="sets" type="button">SIMILAR SETS</button>
+        </div>
+        <div class="filters hidden" id="set-track-filters">
+          <label class="field inline"><span>Limit</span>
+            <input class="input mono" type="number" id="set-track-limit" min="1" max="500" value="30">
+          </label>
+          <label class="field inline"><span>BPM ±</span>
+            <input class="input mono" type="number" id="set-bpm-tolerance" min="0" step="1" placeholder="any">
+          </label>
+          <label class="field inline"><span>Genre</span>
+            <input class="input" type="text" id="set-track-genre" placeholder="exact genre">
+          </label>
+          <label class="check"><input type="checkbox" id="set-exclude-heard"> hide heard</label>
+          <button class="btn tiny" id="set-track-apply" type="button">APPLY</button>
+        </div>
+        <div class="results" id="set-detail-body"></div>
+      </div>
+    </section>
+
+    <!-- ----------------------------------------------------------- STATS -->
+    <section class="tab-panel" id="tab-stats">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Library</h2>
+          <button class="btn tiny ghost" id="stats-refresh" type="button">REFRESH</button>
+        </div>
+        <div class="cards" id="stats-cards"><div class="empty">Loading…</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Hardware</h2></div>
+        <div id="hardware-table"><div class="empty">Loading…</div></div>
+      </div>
+
+      <div class="panel danger">
+        <div class="panel-head"><h2>Danger zone</h2></div>
+        <p class="hint">Drops every stored embedding but keeps track metadata.
+          The next <code>index</code> run re-embeds the catalog.</p>
+        <button class="btn danger" id="reset-embeddings" type="button">RESET EMBEDDINGS</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- --------------------------------------------------------- PLAYER BAR -->
+  <footer class="player hidden" id="player">
+    <div class="player-track">
+      <img class="player-art" id="player-art" alt="" width="40" height="40">
+      <div class="player-labels">
+        <div class="player-title" id="player-title">—</div>
+        <div class="player-artist" id="player-artist">—</div>
+      </div>
+    </div>
+    <div class="player-controls">
+      <button class="player-toggle" id="player-toggle" type="button" aria-label="Play or pause">▶</button>
+      <span class="mono time" id="player-current">0:00</span>
+      <input class="seek" id="player-seek" type="range" min="0" max="30" step="0.1" value="0" aria-label="Seek">
+      <span class="mono time" id="player-duration">0:30</span>
+    </div>
+    <div class="player-extra">
+      <input class="volume" id="player-volume" type="range" min="0" max="1" step="0.01" value="0.9" aria-label="Volume">
+      <a class="link" id="player-store" href="#" target="_blank" rel="noopener">STORE ↗</a>
+      <button class="btn tiny" id="player-dig" type="button">DIG &gt;</button>
+    </div>
+  </footer>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

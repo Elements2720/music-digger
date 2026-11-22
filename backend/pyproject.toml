@@ -1,0 +1,78 @@
+[project]
+name = "digdeeper-local-backend"
+version = "0.1.0"
+description = "DigDeeper Local backend: local DJ set analysis and audio similarity engine."
+requires-python = ">=3.11"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.115",
+    "httpx>=0.28.1",
+    "lancedb>=0.41.0",
+    "librosa>=0.11.0",
+    "numpy>=1.26",
+    "pyarrow>=26.0.1",
+    "pylance>=14.0.3",
+    "python-dotenv>=1.2.4",
+    "rich>=15.0.0",
+    "shazamio>=0.7",
+    "torch>=2.6.0",
+    "transformers>=4.45",
+    "typer>=0.29.2",
+    "uvicorn>=0.30",
+    "yt-dlp>=2025.1.15",
+]
+
+[project.scripts]
+dig = "presentation.cli.commands:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=1.5.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = ["container"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+package = true
+
+# CUDA-enabled PyTorch wheels for the GTX 1660 Super (Turing sm_75).
+# Without this pin uv would install the CPU-only wheel on Windows.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu124" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+
+# typer's Option/Argument factories return fresh, immutable info objects, so
+# they are safe in parameter defaults; without this, B008 fires on every
+# option whose annotation is mutable (e.g. `Path | None`). FastAPI's Depends
+# and Query factories are likewise immutable and idiomatic in signatures.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "typer.Option",
+    "typer.Argument",
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+]
