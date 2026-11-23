@@ -3,7 +3,7 @@
 import { api } from "../api.js";
 import { currentTrack, isAudioPlaying, playTrack } from "../player.js";
 import { emit, on, state } from "../state.js";
-import { artwork, chips, el, renderMatches } from "../ui.js";
+import { artwork, camelotBadge, chips, el, renderMatches } from "../ui.js";
 
 let mounted = false;
 let searchTimer = null;
@@ -48,7 +48,7 @@ function pickerItem(track) {
         track.bpm !== null
           ? el("span", { class: "chip bpm", text: String(Math.round(track.bpm)) })
           : null,
-        track.key ? el("span", { class: "chip key", text: track.key }) : null,
+        track.key ? camelotBadge(track.key, "chip") : null,
       ]),
     ]
   );

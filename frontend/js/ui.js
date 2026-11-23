@@ -3,7 +3,9 @@
 import { api } from "./api.js";
 import { emit } from "./state.js";
 import { playTrack } from "./player.js";
-import { PLACEHOLDER, fmtBpm } from "./format.js";
+import { PLACEHOLDER, fmtBpm, camelotMeta, camelotAttrs } from "./format.js";
+
+export { camelotMeta, camelotAttrs };
 
 export function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
@@ -40,6 +42,28 @@ export function artwork(url, className = "row-art") {
   return image;
 }
 
+export function camelotBadge(key, extraClass = "", extraChildren = null) {
+  const meta = camelotMeta(key);
+  const cls = [meta.classes, extraClass].filter(Boolean).join(" ");
+  const attrs = {
+    class: cls,
+    title: meta.title,
+  };
+  if (meta.valid) {
+    attrs.dataset = {
+      camelotNum: meta.number,
+      camelotMode: meta.mode,
+    };
+  }
+  const children = [el("strong", { class: "ck-code", text: meta.code })];
+  if (extraChildren) {
+    for (const child of [].concat(extraChildren)) {
+      if (child !== null && child !== undefined) children.push(child);
+    }
+  }
+  return el("span", attrs, children);
+}
+
 export function chips(track, { exact = false } = {}) {
   const wrap = el("div", { class: "track-meta" });
   if (track.source === "local" || track.local_path) {
@@ -47,7 +71,7 @@ export function chips(track, { exact = false } = {}) {
   }
   const bpm = fmtBpm(track.bpm);
   if (bpm) wrap.append(el("span", { class: "chip bpm", text: bpm }));
-  if (track.key) wrap.append(el("span", { class: "chip key", text: track.key }));
+  if (track.key) wrap.append(camelotBadge(track.key, "chip"));
   if (exact) wrap.append(el("span", { class: "chip", text: "ID" }));
   return wrap;
 }

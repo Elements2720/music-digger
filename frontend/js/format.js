@@ -47,3 +47,95 @@ export function fmtNumber(n) {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return "0";
   return Number(n).toLocaleString();
 }
+
+const CAMELOT_KEYS = {
+  "1A": "Abm",
+  "1B": "B",
+  "2A": "Ebm",
+  "2B": "F#",
+  "3A": "Bbm",
+  "3B": "Db",
+  "4A": "Fm",
+  "4B": "Ab",
+  "5A": "Cm",
+  "5B": "Eb",
+  "6A": "Gm",
+  "6B": "Bb",
+  "7A": "Dm",
+  "7B": "F",
+  "8A": "Am",
+  "8B": "C",
+  "9A": "Em",
+  "9B": "G",
+  "10A": "Bm",
+  "10B": "D",
+  "11A": "F#m",
+  "11B": "A",
+  "12A": "C#m",
+  "12B": "E",
+};
+
+export function camelotMeta(key) {
+  if (!key || typeof key !== "string") {
+    return {
+      valid: false,
+      code: key ? String(key).trim() : "—",
+      number: null,
+      mode: null,
+      letter: null,
+      musicalKey: null,
+      compatible: null,
+      title: key ? `Key: ${key}` : "No key detected",
+      classes: "camelot-chip ck-unknown",
+    };
+  }
+
+  const trimmed = key.trim();
+  const match = trimmed.match(/^(1[0-2]|[1-9])([abAB])$/);
+  if (!match) {
+    return {
+      valid: false,
+      code: trimmed,
+      number: null,
+      mode: null,
+      letter: null,
+      musicalKey: null,
+      compatible: null,
+      title: `Key: ${trimmed}`,
+      classes: "camelot-chip ck-unknown",
+    };
+  }
+
+  const num = parseInt(match[1], 10);
+  const letter = match[2].toUpperCase();
+  const mode = letter.toLowerCase();
+  const code = `${num}${letter}`;
+  const musicalKey = CAMELOT_KEYS[code] || "";
+
+  const prev = num === 1 ? 12 : num - 1;
+  const next = num === 12 ? 1 : num + 1;
+  const relMode = letter === "A" ? "B" : "A";
+  const compatible = `${prev}${letter}, ${num}${letter}, ${next}${letter}, ${num}${relMode}`;
+  const title = `${code} (${musicalKey}) · Mix with: ${compatible}`;
+
+  return {
+    valid: true,
+    code,
+    number: num,
+    mode,
+    letter,
+    musicalKey,
+    compatible,
+    title,
+    classes: `camelot-chip ck-${num} ck-${mode}`,
+  };
+}
+
+export function camelotAttrs(key, extraClass = "") {
+  const meta = camelotMeta(key);
+  const cls = [meta.classes, extraClass].filter(Boolean).join(" ");
+  if (meta.valid) {
+    return `class="${cls}" data-camelot-num="${meta.number}" data-camelot-mode="${meta.mode}" title="${meta.title}"`;
+  }
+  return `class="${cls}" title="${meta.title}"`;
+}

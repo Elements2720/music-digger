@@ -377,6 +377,103 @@ select { cursor: pointer; }
   background: rgba(192, 132, 252, 0.08);
 }
 
+/* Camelot Wheel Harmonic Key Badges */
+.camelot-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 4px;
+  padding: 2px 5px;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+  box-sizing: border-box;
+  letter-spacing: 0.04em;
+  transition: filter 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.camelot-chip:hover {
+  filter: brightness(1.22);
+}
+
+.camelot-chip .ck-code {
+  font-weight: 700;
+}
+
+/* 12-Step Harmonic Hues */
+.ck-1  { --ck-h: 170; } /* Teal / Turquoise */
+.ck-2  { --ck-h: 140; } /* Mint / Bright Aqua */
+.ck-3  { --ck-h: 95;  } /* Green */
+.ck-4  { --ck-h: 52;  } /* Lime / Yellow-Green */
+.ck-5  { --ck-h: 28;  } /* Gold / Orange-Yellow */
+.ck-6  { --ck-h: 6;   } /* Red-Orange */
+.ck-7  { --ck-h: 342; } /* Coral / Red-Pink */
+.ck-8  { --ck-h: 312; } /* Pink / Magenta */
+.ck-9  { --ck-h: 278; } /* Violet / Purple */
+.ck-10 { --ck-h: 242; } /* Indigo / Deep Purple */
+.ck-11 { --ck-h: 214; } /* Royal / Cobalt Blue */
+.ck-12 { --ck-h: 192; } /* Sky / Ocean Blue */
+
+/* Minor mode (A) - Deep tone with crisp glowing accent */
+.camelot-chip.ck-a {
+  background: hsla(var(--ck-h), 75%, 45%, 0.16) !important;
+  border: 1px solid hsla(var(--ck-h), 80%, 55%, 0.38) !important;
+  color: hsl(var(--ck-h), 90%, 75%) !important;
+}
+
+/* Major mode (B) - Brighter, punchier tone with elevated contrast */
+.camelot-chip.ck-b {
+  background: hsla(var(--ck-h), 85%, 55%, 0.22) !important;
+  border: 1px solid hsla(var(--ck-h), 90%, 65%, 0.52) !important;
+  color: hsl(var(--ck-h), 95%, 84%) !important;
+}
+
+/* Unknown / Missing Key fallback */
+.camelot-chip.ck-unknown {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-dim) !important;
+  font-weight: 500;
+}
+
+/* Compact chip variant (e.g. in track rows, lists, search) */
+.chip.camelot-chip,
+.camelot-chip.chip {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  padding: 1px 4px;
+}
+
+/* Stats view key-pill variant */
+.key-pill.camelot-chip,
+.camelot-chip.key-pill {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.key-pill.camelot-chip .dim,
+.camelot-chip.key-pill .dim {
+  color: inherit;
+  opacity: 0.72;
+  font-weight: 400;
+}
+
+/* Transition badge inline camelot chip */
+.transition-harmonic .camelot-chip {
+  font-size: 9.5px;
+  padding: 1px 4px;
+  vertical-align: middle;
+  margin: 0 1px;
+}
+
 .reference-card {
   margin-top: 14px;
   border-top: 1px solid var(--border-soft);

@@ -2,7 +2,7 @@
 
 import { api } from "../api.js";
 import { emit, on } from "../state.js";
-import { el, renderKv, trackRow } from "../ui.js";
+import { camelotBadge, el, renderKv, trackRow } from "../ui.js";
 import { fmtMemory, fmtNumber } from "../format.js";
 
 let mounted = false;
@@ -125,10 +125,11 @@ async function loadAnalytics() {
     } else {
       chartKeys.replaceChildren(
         ...analytics.top_keys.slice(0, 16).map((k) =>
-          el("span", { class: "chip key-pill" }, [
-            el("strong", { text: k.camelot_key }),
-            el("span", { class: "dim", text: ` (${fmtNumber(k.track_count)})` }),
-          ])
+          camelotBadge(
+            k.camelot_key,
+            "key-pill",
+            el("span", { class: "dim", text: ` (${fmtNumber(k.track_count)})` })
+          )
         )
       );
     }

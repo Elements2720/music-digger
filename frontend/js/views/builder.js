@@ -3,7 +3,7 @@
 import { api } from "../api.js";
 import { currentTrack, isAudioPlaying, playTrack } from "../player.js";
 import { emit, on } from "../state.js";
-import { artwork, el } from "../ui.js";
+import { artwork, camelotBadge, el } from "../ui.js";
 import { fmtBpm, fmtNumber } from "../format.js";
 
 let mounted = false;
@@ -419,7 +419,6 @@ function buildTrackRow(track, index, isSelected) {
   });
 
   const bpmText = fmtBpm(track.bpm) || "—";
-  const keyText = track.key || "—";
 
   const row = el(
     "div",
@@ -440,7 +439,7 @@ function buildTrackRow(track, index, isSelected) {
           ? el("span", { class: "chip local", text: "LOCAL" })
           : null,
         el("span", { class: "chip bpm", text: bpmText }),
-        el("span", { class: "chip key", text: keyText }),
+        camelotBadge(track.key, "chip"),
       ]),
       el("div", { class: "builder-track-controls" }, [upBtn, downBtn, removeBtn]),
     ]
@@ -457,7 +456,7 @@ function buildTrackRow(track, index, isSelected) {
 
 function buildTransitionPill(trackA, trackB, indexA, ev) {
   let scorePill;
-  let moveLabel = "Calculating…";
+  let harmonicChildren = ["Calculating…"];
   let bpmDeltaLabel = "";
 
   if (ev) {
@@ -476,9 +475,18 @@ function buildTransitionPill(trackA, trackB, indexA, ev) {
       clash: "Clash",
       unknown: "Key Unknown",
     };
-    moveLabel = moveMap[ev.camelot_move] || ev.camelot_move;
+    const moveName = moveMap[ev.camelot_move] || ev.camelot_move;
     if (trackA.key && trackB.key) {
-      moveLabel += ` (${trackA.key} → ${trackB.key})`;
+      harmonicChildren = [
+        moveName,
+        " (",
+        camelotBadge(trackA.key),
+        " → ",
+        camelotBadge(trackB.key),
+        ")",
+      ];
+    } else {
+      harmonicChildren = [moveName];
     }
 
     const delta = ev.bpm_delta;
@@ -491,6 +499,7 @@ function buildTransitionPill(trackA, trackB, indexA, ev) {
     }
   } else {
     scorePill = el("span", { class: "chip taste-mid", text: "—" });
+    harmonicChildren = ["—"];
   }
 
   const bridgeBtn = el("button", {
@@ -508,7 +517,7 @@ function buildTransitionPill(trackA, trackB, indexA, ev) {
     el("div", { class: "transition-line" }),
     el("div", { class: "transition-badge" }, [
       scorePill,
-      el("span", { class: "transition-harmonic dim", text: moveLabel }),
+      el("span", { class: "transition-harmonic dim" }, harmonicChildren),
       bpmDeltaLabel ? el("span", { class: "transition-bpm mono dim", text: bpmDeltaLabel }) : null,
       bridgeBtn,
     ]),
@@ -816,7 +825,7 @@ function buildSuggestionCard(suggestion, fromTrack) {
             ? el("span", { class: "chip local", text: "LOCAL" })
             : null,
           el("span", { class: "chip bpm", text: fmtBpm(track.bpm) }),
-          el("span", { class: "chip key", text: track.key || "—" }),
+          camelotBadge(track.key, "chip"),
           scorePill,
         ]),
         el(
@@ -925,7 +934,7 @@ function buildBridgeCard(bridge, insertIdx) {
             ? el("span", { class: "chip local", text: "LOCAL" })
             : null,
           el("span", { class: "chip bpm", text: fmtBpm(track.bpm) }),
-          el("span", { class: "chip key", text: track.key || "—" }),
+          camelotBadge(track.key, "chip"),
           scorePill,
         ]),
         el(
@@ -997,7 +1006,7 @@ async function searchCatalogToAdd() {
                   ? el("span", { class: "chip local", text: "LOCAL" })
                   : null,
                 el("span", { class: "chip bpm", text: fmtBpm(t.bpm) }),
-                el("span", { class: "chip key", text: t.key || "—" }),
+                camelotBadge(t.key, "chip"),
               ]),
             ]),
           ]),

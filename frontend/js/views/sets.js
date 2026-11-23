@@ -2,7 +2,7 @@
 
 import { api } from "../api.js";
 import { emit } from "../state.js";
-import { el, renderMatches, setRow } from "../ui.js";
+import { camelotBadge, el, renderMatches, setRow } from "../ui.js";
 import { fmtClock, fmtRange, fmtBpm } from "../format.js";
 import { launch } from "./run.js";
 
@@ -49,7 +49,7 @@ function chipsFor(passage) {
   const wrap = el("div", { class: "track-meta" });
   const bpm = fmtBpm(passage.bpm);
   if (bpm) wrap.append(el("span", { class: "chip bpm", text: bpm }));
-  if (passage.key) wrap.append(el("span", { class: "chip key", text: passage.key }));
+  if (passage.key) wrap.append(camelotBadge(passage.key, "chip"));
   if (passage.exact_id_source) {
     wrap.append(el("span", { class: "chip", text: passage.exact_id_source }));
   }
