@@ -24,6 +24,12 @@ coverage.xml
 
 # Runtime storage (audio previews, LanceDB, SQLite, downloads)
 storage/
+
+# Audio files (never commit media)
+*.m4a
+*.mp3
+*.wav
+*.flac
 *.sqlite
 *.sqlite3
 *.db
