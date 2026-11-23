@@ -454,6 +454,37 @@ async def test_similar_liked_artists_endpoint(client: httpx.AsyncClient) -> None
     assert "items" in data
 
 
+async def test_set_helper_scores_are_percent_scale(client: httpx.AsyncClient) -> None:
+    """Contract for the Set Builder UI: every similarity score arrives on a
+    0-100 percent scale, never 0-1. A 0-1 value here is silently rendered as
+    '5190%' by any consumer that trusts the percent unit."""
+    eval_res = await client.post(
+        "/api/set-helper/evaluate",
+        json={"track_ids": ["itunes:1", "itunes:2"], "flow": "steady"},
+    )
+    assert eval_res.status_code == 200
+    transitions = eval_res.json()["transitions"]
+    for transition in transitions:
+        for field in ("score", "harmonic_score", "bpm_score", "audio_score"):
+            assert 0 <= transition[field] <= 100, f"{field}={transition[field]}"
+
+    suggest_res = await client.post(
+        "/api/set-helper/suggest-next",
+        json={"from_track_id": "itunes:1", "limit": 5, "flow": "steady"},
+    )
+    assert suggest_res.status_code == 200
+    for suggestion in suggest_res.json()["suggestions"]:
+        assert 0 <= suggestion["evaluation"]["score"] <= 100
+
+    bridge_res = await client.post(
+        "/api/set-helper/bridge",
+        json={"track_a_id": "itunes:1", "track_b_id": "itunes:2", "limit": 5},
+    )
+    assert bridge_res.status_code == 200
+    for bridge in bridge_res.json()["bridges"]:
+        assert 0 <= bridge["combined_score"] <= 100
+
+
 async def test_set_helper_endpoints(client: httpx.AsyncClient) -> None:
     # 1. Suggest next track
     suggest_res = await client.post(
