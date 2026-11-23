@@ -202,6 +202,25 @@ class SQLiteSeedRepository(ISeedRepository):
         )
         return (cursor.rowcount or 0) > 0
 
+    async def delete_by_names(self, names: Sequence[str]) -> int:
+        """Delete seeds matching any of the artist names, returning total removed."""
+        if not names:
+            return 0
+        total_removed = 0
+        chunk_size = 100
+        for i in range(0, len(names), chunk_size):
+            chunk = names[i : i + chunk_size]
+            clauses: list[str] = []
+            params: list[str] = []
+            for name in chunk:
+                norm = normalize_seed_name(name)
+                clauses.append("(name_normalized = ? OR name = ? COLLATE NOCASE)")
+                params.extend([norm, name])
+            sql = f"DELETE FROM seed_artists WHERE {' OR '.join(clauses)}"
+            cursor = await self._sqlite.execute(sql, tuple(params))
+            total_removed += cursor.rowcount or 0
+        return total_removed
+
     async def list_seeds(
         self,
         *,

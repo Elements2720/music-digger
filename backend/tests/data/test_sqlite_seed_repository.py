@@ -188,6 +188,21 @@ async def test_delete_by_name(repository: SQLiteSeedRepository) -> None:
     assert not await repository.delete_by_name("Nonexistent Artist")
 
 
+async def test_delete_by_names(repository: SQLiteSeedRepository) -> None:
+    await repository.upsert_many(
+        [
+            SeedArtist("Artist One", 0.9, "electronic"),
+            SeedArtist("Artist Two", 0.8, "electronic"),
+            SeedArtist("Artist Three", 0.7, "electronic"),
+        ]
+    )
+    assert await repository.count() == 3
+    deleted = await repository.delete_by_names(["Artist One", "artist two"])
+    assert deleted == 2
+    assert await repository.count() == 1
+    assert await repository.get_by_name("Artist Three") is not None
+
+
 async def test_blacklist_filters_upsert_and_discovery(
     sqlite_client: SQLiteClient,
 ) -> None:

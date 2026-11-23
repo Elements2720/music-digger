@@ -422,6 +422,42 @@ class HybridTrackRepository(ITrackRepository):
         count = await self.delete_by_ids(track_ids)
         return (count, track_ids)
 
+    async def delete_by_artists(
+        self, artist_names: Sequence[str]
+    ) -> tuple[int, tuple[str, ...]]:
+        """Delete all tracks by artist names, returning (count_deleted, deleted_ids)."""
+        if not artist_names:
+            return (0, ())
+        all_track_ids: list[str] = []
+        chunk_size = 50
+        for i in range(0, len(artist_names), chunk_size):
+            chunk = artist_names[i : i + chunk_size]
+            clauses: list[str] = []
+            params: list[str] = []
+            for name in chunk:
+                norm_artist = normalize_text(name)
+                pattern = f"{norm_artist}|%"
+                clauses.append("(artist = ? COLLATE NOCASE OR normalized_key LIKE ?)")
+                params.extend([name, pattern])
+            sql = f"SELECT id FROM tracks WHERE {' OR '.join(clauses)}"
+            rows = await self._sqlite.fetchall(sql, tuple(params))
+            for row in rows:
+                all_track_ids.append(str(row["id"]))
+
+        if not all_track_ids:
+            return (0, ())
+
+        unique_ids = tuple(dict.fromkeys(all_track_ids))
+        deleted_count = await self.delete_by_ids(unique_ids)
+        return (deleted_count, unique_ids)
+
+    async def get_artists_with_local_tracks(self) -> frozenset[str]:
+        """Return normalized artist keys for artists who have local tracks."""
+        rows = await self._sqlite.fetchall(
+            "SELECT DISTINCT artist FROM tracks WHERE source = 'local' OR local_path IS NOT NULL"
+        )
+        return frozenset(normalize_artist_key(str(r["artist"])) for r in rows)
+
     async def list_by_artist(
         self, artist_name: str, *, limit: int = 200, offset: int = 0
     ) -> Sequence[Track]:

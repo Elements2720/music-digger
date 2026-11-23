@@ -77,6 +77,32 @@ class BlacklistCreateRequest(BaseModel):
     reason: str | None = None
 
 
+class BulkDeleteArtistsRequest(BaseModel):
+    """Payload to bulk-delete artists."""
+
+    artist_names: list[str] = Field(..., min_length=1)
+    blacklist: bool = False
+    reason: str | None = None
+
+
+class BulkCleanupCriteriaRequest(BaseModel):
+    """Payload to filter catalog artists for bulk cleanup."""
+
+    max_taste_percent: float | None = Field(default=None, ge=0.0, le=100.0)
+    taste_mode: Literal["both", "local", "liked"] = "both"
+    genre: str | None = None
+    source: str | None = None
+    protect_liked: bool = True
+    protect_local: bool = True
+
+
+class BulkCleanupExecuteRequest(BulkCleanupCriteriaRequest):
+    """Payload to execute bulk cleanup."""
+
+    blacklist: bool = True
+    reason: str | None = None
+
+
 class SuggestNextRequest(BaseModel):
     """Request next track recommendations following a reference track."""
 
@@ -331,6 +357,17 @@ def blacklist_entry_payload(entry: Any) -> dict[str, Any]:
         "track_title": entry.track_title,
         "reason": entry.reason,
         "created_at": entry.created_at,
+    }
+
+
+def bulk_delete_artists_result_payload(result: Any) -> dict[str, Any]:
+    return {
+        "artists_requested": result.artists_requested,
+        "artists_deleted": result.artists_deleted,
+        "tracks_deleted": result.tracks_deleted,
+        "seeds_removed": result.seeds_removed,
+        "blacklisted_count": result.blacklisted_count,
+        "skipped_protected": result.skipped_protected,
     }
 
 

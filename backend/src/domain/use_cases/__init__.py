@@ -38,7 +38,14 @@ from .import_local_library import (
     ImportLocalResult,
 )
 from .index_catalog import IndexCatalog, IndexProgress, IndexResult
-from .manage_catalog import DeleteArtistResult, DeleteTrackResult, ManageCatalog
+from .manage_catalog import (
+    BulkCleanupCriteria,
+    BulkCleanupPreview,
+    BulkDeleteArtistsResult,
+    DeleteArtistResult,
+    DeleteTrackResult,
+    ManageCatalog,
+)
 from .vibe_search import VibeSearch
 
 __all__ = [
@@ -47,6 +54,9 @@ __all__ = [
     "AnalyzeEvent",
     "BuildSeedList",
     "BuildSeedListResult",
+    "BulkCleanupCriteria",
+    "BulkCleanupPreview",
+    "BulkDeleteArtistsResult",
     "CrawlITunesResult",
     "CrawlITunesSeeds",
     "CrawlProgress",

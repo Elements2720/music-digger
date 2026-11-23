@@ -79,6 +79,21 @@ export const api = {
       method: "DELETE",
       params: { blacklist, reason },
     }),
+  bulkDeleteArtists: (artistNames, blacklist = false, reason = null) =>
+    request("/api/catalog/artists/bulk-delete", {
+      method: "POST",
+      body: { artist_names: artistNames, blacklist, reason },
+    }),
+  previewBulkCleanup: (criteria) =>
+    request("/api/catalog/artists/bulk-cleanup/preview", {
+      method: "POST",
+      body: criteria,
+    }),
+  executeBulkCleanup: (payload) =>
+    request("/api/catalog/artists/bulk-cleanup", {
+      method: "POST",
+      body: payload,
+    }),
   blacklist: (params = {}) =>
     request("/api/catalog/blacklist", { params }),
   addBlacklist: (payload) =>

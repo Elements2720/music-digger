@@ -7,14 +7,25 @@ from dataclasses import replace
 
 import pytest
 
+from domain.entities.analytics import ArtistSummary
 from domain.entities.search import SearchFilter
-from domain.entities.track import BlacklistEntry, SeedArtist, SeedStatus, Track
+from domain.entities.track import (
+    BlacklistEntry,
+    LikedArtist,
+    SeedArtist,
+    SeedStatus,
+    Track,
+)
 from domain.interfaces.repositories import (
     IBlacklistRepository,
+    ILikedArtistRepository,
     ISeedRepository,
     ITrackRepository,
 )
-from domain.use_cases.manage_catalog import ManageCatalog
+from domain.use_cases.manage_catalog import (
+    BulkCleanupCriteria,
+    ManageCatalog,
+)
 from domain.value_objects.audio_features import EmbeddingVector
 
 
@@ -105,6 +116,25 @@ class FakeTrackRepository(ITrackRepository):
         count = await self.delete_by_ids(matching)
         return (count, tuple(matching))
 
+    async def delete_by_artists(
+        self, artist_names: Sequence[str]
+    ) -> tuple[int, tuple[str, ...]]:
+        names_lower = {a.casefold() for a in artist_names}
+        matching = [
+            tid for tid, t in self.tracks.items() if t.artist.casefold() in names_lower
+        ]
+        count = await self.delete_by_ids(matching)
+        return (count, tuple(matching))
+
+    async def get_artists_with_local_tracks(self) -> frozenset[str]:
+        from domain._validation import normalize_artist_key
+
+        return frozenset(
+            normalize_artist_key(t.artist)
+            for t in self.tracks.values()
+            if t.source == "local" or t.local_path is not None
+        )
+
     async def list_by_artist(
         self, artist_name: str, *, limit: int = 200, offset: int = 0
     ) -> Sequence[Track]:
@@ -113,6 +143,62 @@ class FakeTrackRepository(ITrackRepository):
             for t in self.tracks.values()
             if t.artist.casefold() == artist_name.casefold()
         )[offset : offset + limit]
+
+    async def list_artists_summary(
+        self,
+        *,
+        query: str | None = None,
+        genre: str | None = None,
+        source: str | None = None,
+        min_year: int | None = None,
+        sort: str = "tracks_desc",
+        limit: int = 50,
+        offset: int = 0,
+        taste_mode: str = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        liked_only: bool = False,
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        from domain._validation import normalize_artist_key
+
+        by_artist: dict[str, list[Track]] = {}
+        for t in self.tracks.values():
+            by_artist.setdefault(t.artist, []).append(t)
+
+        summaries: list[ArtistSummary] = []
+        for artist, trks in by_artist.items():
+            norm_k = normalize_artist_key(artist)
+            is_liked = norm_k in liked_artist_keys
+            if liked_only and not is_liked:
+                continue
+            if query and query.casefold() not in artist.casefold():
+                continue
+            if genre and not any(
+                t.genre and t.genre.casefold() == genre.casefold() for t in trks
+            ):
+                continue
+            if source and not any(t.source == source for t in trks):
+                continue
+            genres = tuple({t.genre for t in trks if t.genre})
+            sources = tuple({t.source for t in trks if t.source})
+            years = [t.release_year for t in trks if t.release_year is not None]
+            emb_cnt = sum(1 for t in trks if t.embedding is not None)
+            taste_val = getattr(self, "artist_taste_map", {}).get(artist)
+            summaries.append(
+                ArtistSummary(
+                    artist=artist,
+                    track_count=len(trks),
+                    embedded_count=emb_cnt,
+                    genres=genres,
+                    sources=sources,
+                    sample_track_id=trks[0].id if trks else None,
+                    sample_track_title=trks[0].title if trks else None,
+                    year_min=min(years) if years else None,
+                    year_max=max(years) if years else None,
+                    taste_match_percent=taste_val,
+                    is_liked=is_liked,
+                )
+            )
+        return tuple(summaries[offset : offset + limit]), len(summaries)
 
 
 class FakeSeedRepository(ISeedRepository):
@@ -157,6 +243,57 @@ class FakeSeedRepository(ISeedRepository):
             del self.seeds[name.casefold()]
             return True
         return False
+
+    async def delete_by_names(self, names: Sequence[str]) -> int:
+        count = 0
+        for n in names:
+            if await self.delete_by_name(n):
+                count += 1
+        return count
+
+
+class FakeLikedArtistRepository(ILikedArtistRepository):
+    def __init__(self, liked_names: Sequence[str] = ()) -> None:
+        from domain._validation import normalize_artist_key
+
+        self.liked: dict[str, LikedArtist] = {
+            normalize_artist_key(n): LikedArtist(
+                artist_name=n,
+                normalized_key=normalize_artist_key(n),
+                created_at="2026-11-22",
+            )
+            for n in liked_names
+        }
+
+    async def like(self, artist_name: str) -> LikedArtist:
+        from domain._validation import normalize_artist_key
+
+        k = normalize_artist_key(artist_name)
+        entry = LikedArtist(
+            artist_name=artist_name, normalized_key=k, created_at="2026-11-22"
+        )
+        self.liked[k] = entry
+        return entry
+
+    async def unlike(self, artist_name: str) -> bool:
+        from domain._validation import normalize_artist_key
+
+        k = normalize_artist_key(artist_name)
+        return self.liked.pop(k, None) is not None
+
+    async def is_liked(self, artist_name: str) -> bool:
+        from domain._validation import normalize_artist_key
+
+        return normalize_artist_key(artist_name) in self.liked
+
+    async def get_liked_keys(self) -> frozenset[str]:
+        return frozenset(self.liked.keys())
+
+    async def list_all(self) -> Sequence[LikedArtist]:
+        return tuple(self.liked.values())
+
+    async def count(self) -> int:
+        return len(self.liked)
 
 
 class FakeBlacklistRepository(IBlacklistRepository):
@@ -367,3 +504,175 @@ async def test_direct_blacklist_operations() -> None:
     removed = await manage.remove_blacklist_entry(artist_entry.id)
     assert removed
     assert await manage.count_blacklist() == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_artists_basic() -> None:
+    t1 = Track(id="t1", title="Trk1", artist="Artist Alpha")
+    t2 = Track(id="t2", title="Trk2", artist="Artist Alpha")
+    t3 = Track(id="t3", title="Trk3", artist="Artist Beta")
+    t4 = Track(id="t4", title="Trk4", artist="Artist Gamma")
+    track_repo = FakeTrackRepository([t1, t2, t3, t4])
+    seed_repo = FakeSeedRepository()
+    await seed_repo.upsert_many(
+        [
+            SeedArtist("Artist Alpha", 0.8, "electronic"),
+            SeedArtist("Artist Beta", 0.6, "electronic"),
+            SeedArtist("Artist Gamma", 0.4, "electronic"),
+        ]
+    )
+    blacklist_repo = FakeBlacklistRepository()
+    manage = ManageCatalog(
+        track_repository=track_repo,
+        seed_repository=seed_repo,
+        blacklist_repository=blacklist_repo,
+    )
+
+    result = await manage.bulk_delete_artists(
+        ["Artist Alpha", "Artist Beta"],
+        blacklist=True,
+        reason="Test purge",
+    )
+
+    assert result.artists_requested == 2
+    assert result.artists_deleted == 2
+    assert result.tracks_deleted == 3
+    assert result.seeds_removed == 2
+    assert result.blacklisted_count == 2
+    assert result.skipped_protected == 0
+
+    # Artist Gamma is untouched
+    assert await track_repo.count() == 1
+    assert await track_repo.get_by_id("t4") is not None
+    assert await seed_repo.count() == 1
+
+    # Blacklist contains the 2 deleted artists
+    assert await blacklist_repo.count(kind="artist") == 2
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_artists_protect_liked_and_local() -> None:
+    t_liked = Track(id="t1", title="Liked Track", artist="Liked Guy", source="itunes")
+    t_local = Track(
+        id="t2",
+        title="Local Track",
+        artist="Local Hero",
+        source="local",
+        local_path="C:/music/track.mp3",
+    )
+    t_other = Track(id="t3", title="Other Track", artist="Delete Me", source="itunes")
+    track_repo = FakeTrackRepository([t_liked, t_local, t_other])
+    seed_repo = FakeSeedRepository()
+    blacklist_repo = FakeBlacklistRepository()
+    liked_repo = FakeLikedArtistRepository(["Liked Guy"])
+
+    manage = ManageCatalog(
+        track_repository=track_repo,
+        seed_repository=seed_repo,
+        blacklist_repository=blacklist_repo,
+        liked_artist_repository=liked_repo,
+    )
+
+    result = await manage.bulk_delete_artists(
+        ["Liked Guy", "Local Hero", "Delete Me"],
+        blacklist=True,
+        protect_liked=True,
+        protect_local=True,
+    )
+
+    assert result.artists_requested == 3
+    assert result.skipped_protected == 2
+    assert result.artists_deleted == 1
+    assert result.tracks_deleted == 1
+    assert result.blacklisted_count == 1
+
+    # Protected artists preserved
+    assert await track_repo.get_by_id("t1") is not None
+    assert await track_repo.get_by_id("t2") is not None
+    assert await track_repo.get_by_id("t3") is None
+    # Local audio files on disk are NEVER touched
+    local_trk = await track_repo.get_by_id("t2")
+    assert local_trk is not None and local_trk.local_path == "C:/music/track.mp3"
+
+
+def test_bulk_cleanup_criteria_validation() -> None:
+    # Empty criteria rejected
+    with pytest.raises(ValueError, match="At least one criteria"):
+        BulkCleanupCriteria()
+
+    with pytest.raises(ValueError, match="At least one criteria"):
+        BulkCleanupCriteria(genre="   ", max_taste_percent=None)
+
+    # Out of range taste rejected
+    with pytest.raises(ValueError, match="between 0.0 and 100.0"):
+        BulkCleanupCriteria(max_taste_percent=105.0)
+
+    with pytest.raises(ValueError, match="between 0.0 and 100.0"):
+        BulkCleanupCriteria(max_taste_percent=-5.0)
+
+    # Invalid taste mode rejected
+    with pytest.raises(ValueError, match="Invalid taste_mode"):
+        BulkCleanupCriteria(genre="Techno", taste_mode="invalid")  # type: ignore
+
+    # Valid criteria works
+    c1 = BulkCleanupCriteria(genre="Ambient")
+    assert c1.genre == "Ambient"
+    assert c1.max_taste_percent is None
+
+    c2 = BulkCleanupCriteria(max_taste_percent=60.0, protect_liked=False)
+    assert c2.max_taste_percent == 60.0
+    assert not c2.protect_liked
+
+
+@pytest.mark.asyncio
+async def test_bulk_cleanup_preview_and_execute() -> None:
+    t1 = Track(id="t1", title="Trk1", artist="Ambient Guy", genre="Ambient")
+    t2 = Track(id="t2", title="Trk2", artist="Pop Star", genre="Pop")
+    t3 = Track(id="t3", title="Trk3", artist="Techno Master", genre="Techno")
+    t4 = Track(id="t4", title="Trk4", artist="Ambient Good", genre="Ambient")
+
+    track_repo = FakeTrackRepository([t1, t2, t3, t4])
+    track_repo.artist_taste_map = {  # type: ignore
+        "Ambient Guy": 40.0,
+        "Pop Star": 30.0,
+        "Techno Master": 85.0,
+        "Ambient Good": 75.0,
+    }
+    seed_repo = FakeSeedRepository()
+    blacklist_repo = FakeBlacklistRepository()
+    manage = ManageCatalog(
+        track_repository=track_repo,
+        seed_repository=seed_repo,
+        blacklist_repository=blacklist_repo,
+    )
+
+    # 1. Preview by genre Ambient -> matches Ambient Guy and Ambient Good
+    p_genre = await manage.preview_bulk_cleanup(BulkCleanupCriteria(genre="Ambient"))
+    assert p_genre.artist_count == 2
+    assert {a.artist for a in p_genre.sample_artists} == {"Ambient Guy", "Ambient Good"}
+
+    # 2. Preview by taste < 50% -> matches Ambient Guy (40%) and Pop Star (30%)
+    p_taste = await manage.preview_bulk_cleanup(
+        BulkCleanupCriteria(max_taste_percent=50.0)
+    )
+    assert p_taste.artist_count == 2
+    assert {a.artist for a in p_taste.sample_artists} == {"Ambient Guy", "Pop Star"}
+
+    # 3. Preview by BOTH genre Ambient AND taste < 50% -> matches ONLY Ambient Guy
+    criteria = BulkCleanupCriteria(genre="Ambient", max_taste_percent=50.0)
+    p_both = await manage.preview_bulk_cleanup(criteria)
+    assert p_both.artist_count == 1
+    assert p_both.track_count == 1
+    assert p_both.sample_artists[0].artist == "Ambient Guy"
+
+    # 4. Execute cleanup with the exact same criteria
+    res = await manage.execute_bulk_cleanup(criteria, blacklist=True)
+    assert res.artists_deleted == p_both.artist_count
+    assert res.tracks_deleted == p_both.track_count
+    assert res.blacklisted_count == 1
+
+    # Ambient Guy is deleted; others remain
+    assert await track_repo.get_by_id("t1") is None
+    assert await track_repo.get_by_id("t2") is not None
+    assert await track_repo.get_by_id("t3") is not None
+    assert await track_repo.get_by_id("t4") is not None

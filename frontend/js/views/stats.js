@@ -17,6 +17,11 @@ let similarSearchTimer = null;
 let openFetchModalFn = null;
 let artistsLikedOnlyActive = false;
 let likedArtistsSet = new Set();
+let cachedAnalytics = null;
+const selectedArtists = new Set();
+let currentPageArtists = [];
+let cleanupPreviewTimer = null;
+let currentCleanupPreview = null;
 
 async function refreshLikedArtists() {
   try {
@@ -54,6 +59,7 @@ async function loadAnalytics() {
       api.stats(),
       api.catalogAnalytics(),
     ]);
+    cachedAnalytics = analytics;
 
     const embeddedPct = analytics.total_tracks
       ? Math.round((analytics.total_embedded / analytics.total_tracks) * 100)
@@ -134,7 +140,7 @@ async function loadAnalytics() {
 async function loadArtists(page = 1) {
   artistPage = Math.max(1, page);
   const tbody = $("artists-tbody");
-  tbody.replaceChildren(el("tr", {}, [el("td", { colspan: 8, class: "empty", text: "Loading artists…" })]));
+  tbody.replaceChildren(el("tr", {}, [el("td", { colspan: 9, class: "empty", text: "Loading artists…" })]));
 
   const q = $("artists-search").value.trim();
   const source = $("artists-source-filter").value;
@@ -161,6 +167,7 @@ async function loadArtists(page = 1) {
 
     const total = data.total;
     const artists = data.artists;
+    currentPageArtists = artists || [];
 
     const totalPages = Math.max(1, Math.ceil(total / ARTIST_PAGE_SIZE));
     $("artists-page-info").textContent = `Page ${artistPage} of ${totalPages} (${total} artists)`;
@@ -169,8 +176,10 @@ async function loadArtists(page = 1) {
 
     if (artists.length === 0) {
       tbody.replaceChildren(
-        el("tr", {}, [el("td", { colspan: 8, class: "empty", text: "No matching artists found." })])
+        el("tr", {}, [el("td", { colspan: 9, class: "empty", text: "No matching artists found." })])
       );
+      updateMasterCheckbox();
+      updateArtistsBulkBar();
       return;
     }
 
@@ -178,6 +187,23 @@ async function loadArtists(page = 1) {
       ...artists.map((artist) => {
         const isLiked = artist.is_liked || likedArtistsSet.has(artist.artist.toLowerCase());
         if (artist.is_liked) likedArtistsSet.add(artist.artist.toLowerCase());
+
+        const selectCheckbox = el("input", {
+          class: "artist-select-checkbox",
+          type: "checkbox",
+          checked: selectedArtists.has(artist.artist),
+          title: `Select ${artist.artist}`,
+        });
+        selectCheckbox.addEventListener("change", () => {
+          if (selectCheckbox.checked) {
+            selectedArtists.add(artist.artist);
+          } else {
+            selectedArtists.delete(artist.artist);
+          }
+          updateArtistsBulkBar();
+          updateMasterCheckbox();
+        });
+        const selectTd = el("td", { class: "select-col" }, [selectCheckbox]);
 
         const heartBtn = el("button", {
           class: `heart-btn${isLiked ? " liked" : ""}`,
@@ -249,6 +275,8 @@ async function loadArtists(page = 1) {
           delBtn.disabled = true;
           try {
             await api.deleteArtist(artist.artist, alsoBlacklist);
+            selectedArtists.delete(artist.artist);
+            updateArtistsBulkBar();
             emit("toast", `Deleted artist "${artist.artist}"${alsoBlacklist ? " (blacklisted)" : ""}`);
             await Promise.all([loadAnalytics(), loadArtists(artistPage)]);
           } catch (err) {
@@ -299,6 +327,7 @@ async function loadArtists(page = 1) {
           : 0;
 
         return el("tr", {}, [
+          selectTd,
           el("td", { class: "artist-name-cell" }, [
             el("div", { class: "artist-name-group" }, [
               heartBtn,
@@ -318,8 +347,251 @@ async function loadArtists(page = 1) {
         ]);
       })
     );
+    updateMasterCheckbox();
+    updateArtistsBulkBar();
   } catch (error) {
-    tbody.replaceChildren(el("tr", {}, [el("td", { colspan: 8, class: "empty", text: error.message })]));
+    tbody.replaceChildren(el("tr", {}, [el("td", { colspan: 9, class: "empty", text: error.message })]));
+    updateMasterCheckbox();
+    updateArtistsBulkBar();
+  }
+}
+
+function updateArtistsBulkBar() {
+  const bar = $("artists-bulk-bar");
+  const countBadge = $("artists-selected-count");
+  const delBtn = $("artists-bulk-delete-btn");
+  const alsoBlacklist = $("bulk-select-blacklist")?.checked;
+  if (!bar) return;
+
+  if (selectedArtists.size === 0) {
+    bar.classList.add("hidden");
+    return;
+  }
+
+  bar.classList.remove("hidden");
+  if (countBadge) {
+    countBadge.textContent = `${selectedArtists.size} artist${selectedArtists.size === 1 ? "" : "s"} selected`;
+  }
+  if (delBtn) {
+    delBtn.textContent = alsoBlacklist
+      ? `DELETE & BLOCK SELECTED (${selectedArtists.size})`
+      : `DELETE SELECTED (${selectedArtists.size})`;
+  }
+}
+
+function updateMasterCheckbox() {
+  const master = $("artists-select-all");
+  if (!master) return;
+  if (!currentPageArtists || currentPageArtists.length === 0) {
+    master.checked = false;
+    master.indeterminate = false;
+    return;
+  }
+  const selectedOnPage = currentPageArtists.filter((a) => selectedArtists.has(a.artist)).length;
+  if (selectedOnPage === currentPageArtists.length) {
+    master.checked = true;
+    master.indeterminate = false;
+  } else if (selectedOnPage > 0) {
+    master.checked = false;
+    master.indeterminate = true;
+  } else {
+    master.checked = false;
+    master.indeterminate = false;
+  }
+}
+
+function openBulkDeleteConfirmModal() {
+  if (selectedArtists.size === 0) return;
+  const modal = $("modal-bulk-delete-confirm");
+  const countSpan = $("bulk-delete-confirm-count");
+  const notice = $("bulk-delete-blacklist-notice");
+  const confirmBtn = $("modal-bulk-delete-confirm-btn");
+  const alsoBlacklist = $("bulk-select-blacklist")?.checked;
+
+  if (countSpan) countSpan.textContent = String(selectedArtists.size);
+  if (notice) notice.classList.toggle("hidden", !alsoBlacklist);
+  if (confirmBtn) {
+    confirmBtn.textContent = alsoBlacklist
+      ? `DELETE & BLOCK ${selectedArtists.size} ARTISTS`
+      : `DELETE ${selectedArtists.size} ARTISTS`;
+  }
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeBulkDeleteConfirmModal() {
+  const modal = $("modal-bulk-delete-confirm");
+  if (modal) modal.classList.add("hidden");
+}
+
+function openBulkCleanupModal() {
+  const modal = $("modal-bulk-cleanup");
+  if (!modal) return;
+
+  // Populate genres dropdown from current analytics
+  const genreSelect = $("bulk-cleanup-genre");
+  if (genreSelect && cachedAnalytics?.genres) {
+    const curVal = genreSelect.value;
+    genreSelect.replaceChildren(
+      el("option", { value: "", text: "Any Genre" }),
+      ...cachedAnalytics.genres.map((g) =>
+        el("option", { value: g.genre, text: `${g.genre} (${g.track_count} tracks)` })
+      )
+    );
+    if (curVal) genreSelect.value = curVal;
+  }
+
+  // Pre-sync with current explorer genre if filtered
+  const explorerGenre = $("artists-genre-filter")?.value;
+  if (explorerGenre && genreSelect && !genreSelect.value) {
+    genreSelect.value = explorerGenre;
+  }
+
+  modal.classList.remove("hidden");
+  scheduleCleanupPreview(0);
+}
+
+function closeBulkCleanupModal() {
+  const modal = $("modal-bulk-cleanup");
+  if (modal) modal.classList.add("hidden");
+}
+
+function scheduleCleanupPreview(delay = 250) {
+  clearTimeout(cleanupPreviewTimer);
+  cleanupPreviewTimer = setTimeout(runCleanupPreview, delay);
+}
+
+async function runCleanupPreview() {
+  const tasteInput = $("bulk-cleanup-taste");
+  const genreSelect = $("bulk-cleanup-genre");
+  const protectLiked = $("bulk-cleanup-protect-liked")?.checked ?? true;
+  const protectLocal = $("bulk-cleanup-protect-local")?.checked ?? true;
+  const alsoBlacklist = $("bulk-cleanup-blacklist")?.checked ?? true;
+  const banner = $("bulk-cleanup-banner");
+  const list = $("bulk-cleanup-preview-list");
+  const submitBtn = $("modal-bulk-cleanup-submit");
+  const tasteMode = $("artists-taste-mode-select")?.value || "both";
+
+  const tasteVal = tasteInput?.value?.trim();
+  const genreVal = genreSelect?.value?.trim();
+
+  if (!tasteVal && !genreVal) {
+    currentCleanupPreview = null;
+    if (banner) {
+      banner.textContent = "Set a Taste % threshold or pick a Genre to preview";
+      banner.classList.remove("active");
+    }
+    if (list) {
+      list.replaceChildren(el("div", { class: "empty", text: "No criteria specified yet." }));
+    }
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = alsoBlacklist ? "DELETE & BLOCK 0 ARTISTS" : "DELETE 0 ARTISTS";
+    }
+    return;
+  }
+
+  if (banner) {
+    banner.textContent = "Loading preview…";
+    banner.classList.remove("active");
+  }
+
+  try {
+    const criteria = {
+      max_taste_percent: tasteVal ? Number(tasteVal) : null,
+      taste_mode: tasteMode,
+      genre: genreVal || null,
+      protect_liked: protectLiked,
+      protect_local: protectLocal,
+    };
+    const data = await api.previewBulkCleanup(criteria);
+    currentCleanupPreview = data;
+
+    if (banner) {
+      banner.textContent = `Will remove ${data.artist_count} artists (${data.track_count} tracks)`;
+      banner.classList.toggle("active", data.artist_count > 0);
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = data.artist_count === 0;
+      submitBtn.textContent = data.artist_count === 0
+        ? "NO MATCHING ARTISTS"
+        : `${alsoBlacklist ? "DELETE & BLOCK" : "DELETE"} ${data.artist_count} ARTISTS`;
+    }
+
+    if (list) {
+      if (!data.sample_artists || data.sample_artists.length === 0) {
+        list.replaceChildren(el("div", { class: "empty", text: "No artists match the specified criteria." }));
+      } else {
+        list.replaceChildren(
+          ...data.sample_artists.map((a) => {
+            const leftEl = el("div", { class: "cleanup-preview-row-left" }, [
+              el("strong", { text: a.artist }),
+              el("span", { class: "dim mono", text: `${a.track_count} trk${a.track_count === 1 ? "" : "s"}` }),
+            ]);
+
+            const rightChips = [];
+            if (a.genres && a.genres.length > 0) {
+              rightChips.push(el("span", { class: "chip genre-chip", text: a.genres[0] }));
+            }
+            if (a.taste_match_percent !== null && a.taste_match_percent !== undefined) {
+              const score = Math.round(a.taste_match_percent);
+              const tier = score >= 80 ? "taste-high" : score >= 65 ? "taste-mid" : "taste-low";
+              rightChips.push(el("span", { class: `chip ${tier}`, text: `${score}%` }));
+            }
+            const rightEl = el("div", { class: "cleanup-preview-row-right" }, rightChips);
+
+            return el("div", { class: "cleanup-preview-row" }, [leftEl, rightEl]);
+          })
+        );
+      }
+    }
+  } catch (err) {
+    if (banner) {
+      banner.textContent = `Preview error: ${err.message}`;
+      banner.classList.remove("active");
+    }
+  }
+}
+
+async function executeBulkCleanup() {
+  const tasteInput = $("bulk-cleanup-taste");
+  const genreSelect = $("bulk-cleanup-genre");
+  const protectLiked = $("bulk-cleanup-protect-liked")?.checked ?? true;
+  const protectLocal = $("bulk-cleanup-protect-local")?.checked ?? true;
+  const alsoBlacklist = $("bulk-cleanup-blacklist")?.checked ?? true;
+  const reasonInput = $("bulk-cleanup-reason");
+  const submitBtn = $("modal-bulk-cleanup-submit");
+  const tasteMode = $("artists-taste-mode-select")?.value || "both";
+
+  const tasteVal = tasteInput?.value?.trim();
+  const genreVal = genreSelect?.value?.trim();
+  const reasonVal = reasonInput?.value?.trim();
+
+  if (!tasteVal && !genreVal) return;
+  if (!currentCleanupPreview || currentCleanupPreview.artist_count === 0) return;
+
+  submitBtn.disabled = true;
+  try {
+    const payload = {
+      max_taste_percent: tasteVal ? Number(tasteVal) : null,
+      taste_mode: tasteMode,
+      genre: genreVal || null,
+      protect_liked: protectLiked,
+      protect_local: protectLocal,
+      blacklist: alsoBlacklist,
+      reason: reasonVal || null,
+    };
+    const res = await api.executeBulkCleanup(payload);
+    closeBulkCleanupModal();
+    emit("toast", `Bulk cleanup: deleted ${res.artists_deleted} artists (${res.tracks_deleted} tracks)${res.blacklisted_count ? ` [${res.blacklisted_count} blacklisted]` : ""}${res.skipped_protected ? ` [${res.skipped_protected} protected]` : ""}`);
+    selectedArtists.clear();
+    updateArtistsBulkBar();
+    updateMasterCheckbox();
+    await Promise.all([loadAnalytics(), loadArtists(1), loadSeeds(1), loadBlacklist()]);
+  } catch (err) {
+    emit("toast", err.message);
+  } finally {
+    submitBtn.disabled = false;
   }
 }
 
@@ -949,6 +1221,113 @@ export function mount() {
 
   populateGenreFilter();
 
+  // Bulk selection bar listeners
+  $("artists-select-all")?.addEventListener("change", (e) => {
+    const isChecked = e.target.checked;
+    for (const a of currentPageArtists) {
+      if (isChecked) {
+        selectedArtists.add(a.artist);
+      } else {
+        selectedArtists.delete(a.artist);
+      }
+    }
+    for (const cb of document.querySelectorAll(".artist-select-checkbox")) {
+      cb.checked = isChecked;
+    }
+    updateArtistsBulkBar();
+    updateMasterCheckbox();
+  });
+
+  $("artists-clear-selection-btn")?.addEventListener("click", () => {
+    selectedArtists.clear();
+    for (const cb of document.querySelectorAll(".artist-select-checkbox")) {
+      cb.checked = false;
+    }
+    updateArtistsBulkBar();
+    updateMasterCheckbox();
+  });
+
+  $("bulk-select-blacklist")?.addEventListener("change", () => {
+    updateArtistsBulkBar();
+  });
+
+  $("artists-bulk-delete-btn")?.addEventListener("click", openBulkDeleteConfirmModal);
+
+  // Bulk delete confirmation modal wiring
+  const bulkDeleteModal = $("modal-bulk-delete-confirm");
+  $("modal-bulk-delete-close")?.addEventListener("click", closeBulkDeleteConfirmModal);
+  $("modal-bulk-delete-cancel")?.addEventListener("click", closeBulkDeleteConfirmModal);
+  bulkDeleteModal?.addEventListener("click", (e) => {
+    if (e.target === bulkDeleteModal) closeBulkDeleteConfirmModal();
+  });
+
+  $("modal-bulk-delete-confirm-btn")?.addEventListener("click", async () => {
+    if (selectedArtists.size === 0) return;
+    const alsoBlacklist = $("bulk-select-blacklist")?.checked ?? false;
+    const confirmBtn = $("modal-bulk-delete-confirm-btn");
+    if (confirmBtn) confirmBtn.disabled = true;
+    try {
+      const res = await api.bulkDeleteArtists(Array.from(selectedArtists), alsoBlacklist);
+      closeBulkDeleteConfirmModal();
+      selectedArtists.clear();
+      updateArtistsBulkBar();
+      updateMasterCheckbox();
+      emit("toast", `Deleted ${res.artists_deleted} artists (${res.tracks_deleted} tracks)${res.blacklisted_count ? ` [${res.blacklisted_count} blacklisted]` : ""}${res.skipped_protected ? ` [${res.skipped_protected} protected]` : ""}`);
+      await Promise.all([loadAnalytics(), loadArtists(artistPage), loadSeeds(1), loadBlacklist()]);
+    } catch (err) {
+      emit("toast", err.message);
+    } finally {
+      if (confirmBtn) confirmBtn.disabled = false;
+    }
+  });
+
+  // Bulk cleanup modal wiring
+  const bulkCleanupModal = $("modal-bulk-cleanup");
+  $("artists-bulk-cleanup-btn")?.addEventListener("click", openBulkCleanupModal);
+  $("modal-bulk-cleanup-close")?.addEventListener("click", closeBulkCleanupModal);
+  $("modal-bulk-cleanup-cancel")?.addEventListener("click", closeBulkCleanupModal);
+  bulkCleanupModal?.addEventListener("click", (e) => {
+    if (e.target === bulkCleanupModal) closeBulkCleanupModal();
+  });
+
+  $("bulk-cleanup-genre")?.addEventListener("change", () => scheduleCleanupPreview(50));
+  $("bulk-cleanup-taste")?.addEventListener("input", () => {
+    const val = $("bulk-cleanup-taste").value;
+    const presets = $("bulk-cleanup-taste-presets");
+    if (presets) {
+      for (const b of presets.querySelectorAll(".preset-btn")) {
+        b.classList.toggle("active", b.dataset.val === val);
+      }
+    }
+    scheduleCleanupPreview(250);
+  });
+  $("bulk-cleanup-taste-presets")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".preset-btn");
+    if (!btn) return;
+    const val = btn.dataset.val;
+    const input = $("bulk-cleanup-taste");
+    if (input) input.value = val;
+    const presets = $("bulk-cleanup-taste-presets");
+    if (presets) {
+      for (const b of presets.querySelectorAll(".preset-btn")) {
+        b.classList.toggle("active", b === btn);
+      }
+    }
+    scheduleCleanupPreview(0);
+  });
+  $("bulk-cleanup-protect-liked")?.addEventListener("change", () => scheduleCleanupPreview(50));
+  $("bulk-cleanup-protect-local")?.addEventListener("change", () => scheduleCleanupPreview(50));
+  $("bulk-cleanup-blacklist")?.addEventListener("change", () => {
+    const alsoBlacklist = $("bulk-cleanup-blacklist")?.checked ?? true;
+    const submitBtn = $("modal-bulk-cleanup-submit");
+    if (submitBtn && currentCleanupPreview) {
+      submitBtn.textContent = currentCleanupPreview.artist_count === 0
+        ? "NO MATCHING ARTISTS"
+        : `${alsoBlacklist ? "DELETE & BLOCK" : "DELETE"} ${currentCleanupPreview.artist_count} ARTISTS`;
+    }
+  });
+  $("modal-bulk-cleanup-submit")?.addEventListener("click", executeBulkCleanup);
+
   function updateSeedsPurgeFilteredBtn() {
     const btn = $("seeds-purge-filtered-btn");
     if (!btn) return;
@@ -1181,6 +1560,15 @@ export function mount() {
       }
       if (similarModal && !similarModal.classList.contains("hidden")) {
         closeSimilarArtistsModal();
+        return;
+      }
+      if (bulkDeleteModal && !bulkDeleteModal.classList.contains("hidden")) {
+        closeBulkDeleteConfirmModal();
+        return;
+      }
+      if (bulkCleanupModal && !bulkCleanupModal.classList.contains("hidden")) {
+        closeBulkCleanupModal();
+        return;
       }
     }
   });

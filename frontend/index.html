@@ -396,12 +396,27 @@
             <button class="btn tiny ghost" id="artists-liked-only-btn" type="button" title="Filter to liked artists only">♥ LIKED ONLY</button>
             <button class="btn tiny ghost" id="artists-similar-liked-btn" type="button" title="Discover artists similar to liked artists">SIMILAR TO LIKED</button>
             <button class="btn tiny primary" id="artists-fetch-btn" type="button">+ FETCH ARTIST</button>
+            <button class="btn tiny danger-outline" id="artists-bulk-cleanup-btn" type="button">BULK CLEANUP</button>
+          </div>
+        </div>
+        <div class="bulk-bar hidden" id="artists-bulk-bar">
+          <div class="bulk-bar-left">
+            <span class="badge count-badge" id="artists-selected-count">0 artists selected</span>
+            <button class="btn tiny ghost" id="artists-clear-selection-btn" type="button">Clear</button>
+          </div>
+          <div class="bulk-bar-right">
+            <label class="check bulk-blacklist-label">
+              <input type="checkbox" id="bulk-select-blacklist">
+              <span>Also Blacklist (Block)</span>
+            </label>
+            <button class="btn tiny danger" id="artists-bulk-delete-btn" type="button">DELETE SELECTED</button>
           </div>
         </div>
         <div class="table-container" id="artists-table-container">
           <table class="data-table" id="artists-table">
             <thead>
               <tr>
+                <th class="select-col"><input type="checkbox" id="artists-select-all" title="Select all on current page"></th>
                 <th>Artist</th>
                 <th>Tracks</th>
                 <th>Embedded</th>
@@ -413,7 +428,7 @@
               </tr>
             </thead>
             <tbody id="artists-tbody">
-              <tr><td colspan="8" class="empty">Loading…</td></tr>
+              <tr><td colspan="9" class="empty">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -657,6 +672,95 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- --------------------------------------- MODAL: BULK DELETE SELECTED -->
+  <div class="modal-backdrop hidden" id="modal-bulk-delete-confirm">
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-bulk-delete-title">
+      <div class="modal-head">
+        <h3 id="modal-bulk-delete-title">Delete Selected Artists</h3>
+        <button class="btn tiny ghost" id="modal-bulk-delete-close" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom: 12px;">Are you sure you want to delete <strong id="bulk-delete-confirm-count">0</strong> selected artists and all their tracks from the catalog?</p>
+        <div class="notice-pill warning hidden" id="bulk-delete-blacklist-notice" style="margin-bottom: 12px;">
+          <span>⚠ These artists will also be added to the <strong>Blacklist</strong> to block future indexing/fetching.</span>
+        </div>
+        <p class="hint">Local audio files on disk will <strong>NOT</strong> be deleted (only database rows and vectors).</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" id="modal-bulk-delete-cancel" type="button">CANCEL</button>
+        <button class="btn danger" id="modal-bulk-delete-confirm-btn" type="button">DELETE ARTISTS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ----------------------------------------- MODAL: BULK CLEANUP RULES -->
+  <div class="modal-backdrop hidden" id="modal-bulk-cleanup">
+    <div class="modal-dialog modal-cleanup-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-bulk-cleanup-title">
+      <div class="modal-head sticky-head">
+        <div class="modal-title-group">
+          <h3 id="modal-bulk-cleanup-title">Rule-Based Bulk Cleanup</h3>
+          <span class="modal-subtitle dim mono">Filter, preview, and delete low-taste or off-genre artists</span>
+        </div>
+        <button class="btn tiny ghost" id="modal-bulk-cleanup-close" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body scrollable-body">
+        <div class="cleanup-grid">
+          <div class="cleanup-rules-pane">
+            <div class="panel-subhead">Filter Criteria</div>
+            <label class="field">
+              <span>Genre</span>
+              <select class="input" id="bulk-cleanup-genre">
+                <option value="">Any Genre</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Taste Match below (%)</span>
+              <input class="input mono" id="bulk-cleanup-taste" type="number" min="0" max="100" placeholder="e.g. 55">
+              <div class="preset-buttons" id="bulk-cleanup-taste-presets">
+                <button class="preset-btn" type="button" data-val="50">&lt; 50%</button>
+                <button class="preset-btn" type="button" data-val="60">&lt; 60%</button>
+                <button class="preset-btn" type="button" data-val="70">&lt; 70%</button>
+              </div>
+            </label>
+            <div class="panel-subhead" style="margin-top: 14px;">Safety Guards</div>
+            <label class="check">
+              <input type="checkbox" id="bulk-cleanup-protect-liked" checked>
+              <span>Protect Liked Artists (♥)</span>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="bulk-cleanup-protect-local" checked>
+              <span>Protect Artists with LOCAL files</span>
+            </label>
+            <div class="panel-subhead" style="margin-top: 14px;">Blacklist Action</div>
+            <label class="check">
+              <input type="checkbox" id="bulk-cleanup-blacklist" checked>
+              <span>Also Blacklist matched artists (never fetch again)</span>
+            </label>
+            <label class="field" style="margin-top: 6px;">
+              <span>Reason (optional)</span>
+              <input class="input" id="bulk-cleanup-reason" type="text" placeholder="e.g. Ambient &amp; non-techno cleanup">
+            </label>
+          </div>
+          <div class="cleanup-preview-pane">
+            <div class="panel-subhead">Live Preview</div>
+            <div class="cleanup-banner" id="bulk-cleanup-banner">
+              Set a Taste % threshold or pick a Genre to preview
+            </div>
+            <div class="cleanup-preview-list-wrapper">
+              <div class="cleanup-preview-list" id="bulk-cleanup-preview-list">
+                <div class="empty">No criteria specified yet.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" id="modal-bulk-cleanup-cancel" type="button">CANCEL</button>
+        <button class="btn danger" id="modal-bulk-cleanup-submit" type="button" disabled>DELETE &amp; BLOCK 0 ARTISTS</button>
       </div>
     </div>
   </div>

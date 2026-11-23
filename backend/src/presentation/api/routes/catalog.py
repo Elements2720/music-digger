@@ -13,16 +13,24 @@ from domain.entities.analytics import SimilarArtistMatch
 from domain.entities.search import SearchFilter
 from domain.entities.track import SeedArtist
 from domain.genres import ELECTRONIC_ALLOWED_GENRE_TOKENS, TECHNO_SUBGENRE_PRESETS
-from domain.use_cases import TrackNotEmbeddedError, TrackNotFoundError
+from domain.use_cases import (
+    BulkCleanupCriteria,
+    TrackNotEmbeddedError,
+    TrackNotFoundError,
+)
 
 from ..schemas import (
     BlacklistCreateRequest,
+    BulkCleanupCriteriaRequest,
+    BulkCleanupExecuteRequest,
+    BulkDeleteArtistsRequest,
     HeardRequest,
     ResetEmbeddingsRequest,
     SeedPurgeRequest,
     VibeSearchRequest,
     artist_summary_payload,
     blacklist_entry_payload,
+    bulk_delete_artists_result_payload,
     catalog_analytics_payload,
     liked_artist_payload,
     match_payload,
@@ -307,6 +315,91 @@ async def delete_track(
         "track_id": track_id,
         "blacklisted": result.blacklisted,
     }
+
+
+@router.post("/catalog/artists/bulk-delete")
+async def bulk_delete_artists_endpoint(
+    req: BulkDeleteArtistsRequest,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Bulk delete multiple artists, optionally blacklisting them.
+
+    Never deletes user audio files on disk (only DB rows).
+    """
+    res = await container.manage_catalog.bulk_delete_artists(
+        req.artist_names,
+        blacklist=req.blacklist,
+        reason=req.reason,
+    )
+    return bulk_delete_artists_result_payload(res)
+
+
+@router.post("/catalog/artists/bulk-cleanup/preview")
+async def preview_bulk_cleanup_endpoint(
+    req: BulkCleanupCriteriaRequest,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Preview catalog artists matching cleanup rules."""
+    has_taste = req.max_taste_percent is not None
+    has_genre = req.genre is not None and bool(req.genre.strip())
+    if not has_taste and not has_genre:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one criteria (max_taste_percent or genre) must be provided",
+        )
+    try:
+        criteria = BulkCleanupCriteria(
+            max_taste_percent=req.max_taste_percent,
+            taste_mode=req.taste_mode,
+            genre=req.genre,
+            source=req.source,
+            protect_liked=req.protect_liked,
+            protect_local=req.protect_local,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
+
+    preview = await container.manage_catalog.preview_bulk_cleanup(
+        criteria, sample_limit=25
+    )
+    return {
+        "artist_count": preview.artist_count,
+        "track_count": preview.track_count,
+        "sample_artists": [artist_summary_payload(a) for a in preview.sample_artists],
+    }
+
+
+@router.post("/catalog/artists/bulk-cleanup")
+async def execute_bulk_cleanup_endpoint(
+    req: BulkCleanupExecuteRequest,
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Execute bulk deletion for catalog artists matching cleanup rules."""
+    has_taste = req.max_taste_percent is not None
+    has_genre = req.genre is not None and bool(req.genre.strip())
+    if not has_taste and not has_genre:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one criteria (max_taste_percent or genre) must be provided",
+        )
+    try:
+        criteria = BulkCleanupCriteria(
+            max_taste_percent=req.max_taste_percent,
+            taste_mode=req.taste_mode,
+            genre=req.genre,
+            source=req.source,
+            protect_liked=req.protect_liked,
+            protect_local=req.protect_local,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
+
+    res = await container.manage_catalog.execute_bulk_cleanup(
+        criteria,
+        blacklist=req.blacklist,
+        reason=req.reason,
+    )
+    return bulk_delete_artists_result_payload(res)
 
 
 @router.delete("/catalog/artists/{artist_name}")

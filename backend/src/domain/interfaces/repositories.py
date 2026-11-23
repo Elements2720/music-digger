@@ -148,6 +148,16 @@ class ITrackRepository(ABC):
         """Delete all tracks by artist name, returning (count_deleted, deleted_ids)."""
         return (0, ())
 
+    async def delete_by_artists(
+        self, artist_names: Sequence[str]
+    ) -> tuple[int, tuple[str, ...]]:
+        """Delete all tracks by artist names, returning (count_deleted, deleted_ids)."""
+        return (0, ())
+
+    async def get_artists_with_local_tracks(self) -> frozenset[str]:
+        """Return normalized artist keys for artists who have local tracks."""
+        return frozenset()
+
     async def list_by_artist(
         self, artist_name: str, *, limit: int = 200, offset: int = 0
     ) -> Sequence[Track]:
@@ -303,6 +313,14 @@ class ISeedRepository(ABC):
     async def delete_by_name(self, name: str) -> bool:
         """Delete a seed by artist name, returning True if deleted."""
         return False
+
+    async def delete_by_names(self, names: Sequence[str]) -> int:
+        """Delete seeds matching any of the artist names, returning total removed."""
+        count = 0
+        for name in names:
+            if await self.delete_by_name(name):
+                count += 1
+        return count
 
     async def list_seeds(
         self,

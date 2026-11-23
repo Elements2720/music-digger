@@ -48,7 +48,7 @@ backend/
         find_similar_for_set.py                   # FindSimilarForSet (set-to-set & passage-to-track similarity)
         import_local_library.py                   # ImportLocalLibrary (local folder import, middle-window decode, artist seeding)
         index_catalog.py                          # IndexCatalog (streaming audio decode, librosa analysis, CLAP embed)
-        manage_catalog.py                         # ManageCatalog (safe track/artist delete without disk deletion, blacklist CRUD)
+        manage_catalog.py                         # ManageCatalog (safe track/artist delete, bulk delete, rule-based cleanup, blacklist CRUD)
         vibe_search.py                            # VibeSearch (natural language query -> CLAP text embedding)
     data/
       __init__.py
@@ -106,7 +106,7 @@ backend/
         schemas.py                                # Pydantic schemas, JobKind literal, Blacklist schemas, SetHelper schemas & analytics serializers
         routes/
           __init__.py
-          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig, analytics, artists, blacklist, liked-artists)
+          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig, analytics, artists, bulk delete, bulk cleanup, blacklist, liked-artists)
           hardware.py                             # /api/hardware endpoints (GPU, VRAM, RAM, FFmpeg probe)
           jobs.py                                 # /api/jobs endpoints (start, cancel, snapshot, SSE stream)
           set_helper.py                           # /api/set-helper endpoints (suggest-next, bridge, auto-sequence, evaluate, sets CRUD, export.m3u8)
@@ -177,7 +177,7 @@ frontend/
       dig.js                                      # Dig view (track-to-track similarity, audio preview, harmonic filter)
       run.js                                      # Run view (job configuration, live progress, speed, recent messages log)
       sets.js                                     # Sets view (analyzed DJ set browser, tracklist, passage timeline)
-      stats.js                                    # Stats view (rich Library Overview & Manager, KPI cards, visual distribution bars, searchable artists drawer, blacklist tab, liked artists)
+      stats.js                                    # Stats view (rich Library Overview & Manager, KPI cards, visual distribution bars, searchable artists drawer, bulk selection bar, bulk cleanup modal, blacklist tab, liked artists)
 ```
 
 ### 1.2 Python Version & Key Dependencies

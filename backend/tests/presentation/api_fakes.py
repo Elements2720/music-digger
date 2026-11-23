@@ -206,6 +206,25 @@ class FakeTrackRepository(ITrackRepository):
         count = await self.delete_by_ids(matching)
         return (count, tuple(matching))
 
+    async def delete_by_artists(
+        self, artist_names: Sequence[str]
+    ) -> tuple[int, tuple[str, ...]]:
+        names_lower = {a.casefold() for a in artist_names}
+        matching = [
+            tid for tid, t in self.tracks.items() if t.artist.casefold() in names_lower
+        ]
+        count = await self.delete_by_ids(matching)
+        return (count, tuple(matching))
+
+    async def get_artists_with_local_tracks(self) -> frozenset[str]:
+        from domain._validation import normalize_artist_key
+
+        return frozenset(
+            normalize_artist_key(t.artist)
+            for t in self.tracks.values()
+            if t.source == "local" or t.local_path is not None
+        )
+
     async def list_by_artist(
         self, artist_name: str, *, limit: int = 200, offset: int = 0
     ) -> Sequence[Track]:
@@ -460,6 +479,12 @@ class FakeSeedRepository:
         before = len(self.seeds)
         self.seeds = [s for s in self.seeds if s.name.lower() != name.lower()]
         return len(self.seeds) < before
+
+    async def delete_by_names(self, names: Sequence[str]) -> int:
+        names_lower = {n.lower() for n in names}
+        before = len(self.seeds)
+        self.seeds = [s for s in self.seeds if s.name.lower() not in names_lower]
+        return before - len(self.seeds)
 
     async def list_seeds(
         self,

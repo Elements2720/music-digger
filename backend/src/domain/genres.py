@@ -62,8 +62,6 @@ ELECTRONIC_ALLOWED_GENRE_TOKENS: frozenset[str] = frozenset(
         "jungle",
         "dubstep",
         "electro",
-        "ambient",
-        "downtempo",
         "idm",
     }
 )
@@ -81,6 +79,11 @@ NON_ELECTRONIC_BLOCKED_GENRE_TOKENS: frozenset[str] = frozenset(
         "country",
         "jazz",
         "classical",
+        "ambient",
+        "downtempo",
+        "new age",
+        "chillout",
+        "meditation",
         "latin",
         "reggae",
         "metal",

@@ -37,6 +37,11 @@ def test_track_matches_genre_guard_electronic_only() -> None:
     assert track_matches_genre_guard("Melodic Trance", electronic_only=True)
     assert not track_matches_genre_guard("Pop / Rock", electronic_only=True)
     assert not track_matches_genre_guard("Hip-Hop / Rap", electronic_only=True)
+    assert not track_matches_genre_guard("Ambient", electronic_only=True)
+    assert not track_matches_genre_guard("Downtempo Chill", electronic_only=True)
+    assert not track_matches_genre_guard("Meditation & New Age", electronic_only=True)
+    # Explicit allowed_genres still works even for ambient
+    assert track_matches_genre_guard("Ambient", allowed_genres=("Ambient",))
     # None/blank preserves local rips
     assert track_matches_genre_guard(None, electronic_only=True)
     assert track_matches_genre_guard("", electronic_only=True)

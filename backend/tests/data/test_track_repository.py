@@ -36,6 +36,7 @@ def _track(
     title: str = "Song",
     artist: str = "Artist",
     embedding: EmbeddingVector | None = None,
+    source: str = "itunes",
     preview_url: str | None = "https://example.test/preview.m4a",
     **extra: object,
 ) -> Track:
@@ -44,7 +45,7 @@ def _track(
         title=title,
         artist=artist,
         embedding=embedding,
-        source="itunes",
+        source=source,
         external_id=track_id.replace("itunes:", ""),
         preview_url=preview_url,
         duration_seconds=300.0,
@@ -486,6 +487,35 @@ async def test_delete_by_artist_and_list_by_artist(
     assert set(deleted_ids) == {"itunes:a1", "itunes:a2"}
     assert await repository.count() == 1
     assert len(await repository.list_by_artist("Artbat")) == 0
+
+
+async def test_delete_by_artists_and_local_protection(
+    repository: HybridTrackRepository,
+) -> None:
+    t1 = _track("itunes:b1", title="Track 1", artist="Artist Alpha")
+    t2 = _track("itunes:b2", title="Track 2", artist="Artist Beta")
+    t3 = _track(
+        "local:b3",
+        title="Track 3",
+        artist="Artist Gamma",
+        source="local",
+        local_path="C:/music/gamma.mp3",
+    )
+    await repository.upsert_many([t1, t2, t3])
+
+    local_artists = await repository.get_artists_with_local_tracks()
+    from domain._validation import normalize_artist_key
+
+    assert normalize_artist_key("Artist Gamma") in local_artists
+    assert normalize_artist_key("Artist Alpha") not in local_artists
+
+    count, deleted_ids = await repository.delete_by_artists(
+        ["Artist Alpha", "Artist Beta"]
+    )
+    assert count == 2
+    assert set(deleted_ids) == {"itunes:b1", "itunes:b2"}
+    assert await repository.count() == 1
+    assert (await repository.get_by_id("local:b3")) is not None
 
 
 async def test_list_artists_summary_and_catalog_analytics(

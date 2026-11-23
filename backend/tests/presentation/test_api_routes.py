@@ -531,3 +531,62 @@ async def test_set_helper_endpoints(client: httpx.AsyncClient) -> None:
     del_res = await client.delete(f"/api/set-helper/sets/{set_id}")
     assert del_res.status_code == 200
     assert del_res.json()["deleted"] is True
+
+
+async def test_bulk_delete_artists_api(client: httpx.AsyncClient) -> None:
+    res = await client.post(
+        "/api/catalog/artists/bulk-delete",
+        json={
+            "artist_names": ["Solomun", "Tale Of Us"],
+            "blacklist": True,
+            "reason": "Test API bulk delete",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["artists_requested"] == 2
+    assert data["artists_deleted"] == 2
+    assert data["tracks_deleted"] == 2
+    assert data["blacklisted_count"] == 2
+
+    # Blacklist contains the artists
+    bl_res = await client.get("/api/catalog/blacklist")
+    assert bl_res.status_code == 200
+    blocked_names = [e["artist_name"] for e in bl_res.json()["entries"]]
+    assert "Solomun" in blocked_names
+    assert "Tale Of Us" in blocked_names
+
+
+async def test_bulk_cleanup_preview_and_execute_api(
+    client: httpx.AsyncClient,
+) -> None:
+    # 422 when empty
+    err_res = await client.post(
+        "/api/catalog/artists/bulk-cleanup/preview",
+        json={},
+    )
+    assert err_res.status_code == 422
+
+    # Valid preview
+    prev_res = await client.post(
+        "/api/catalog/artists/bulk-cleanup/preview",
+        json={"max_taste_percent": 90.0, "genre": None},
+    )
+    assert prev_res.status_code == 200
+    prev_data = prev_res.json()
+    assert "artist_count" in prev_data
+    assert "track_count" in prev_data
+    assert "sample_artists" in prev_data
+
+    # Execute
+    exec_res = await client.post(
+        "/api/catalog/artists/bulk-cleanup",
+        json={
+            "max_taste_percent": 90.0,
+            "blacklist": True,
+            "reason": "Clean low taste",
+        },
+    )
+    assert exec_res.status_code == 200
+    exec_data = exec_res.json()
+    assert exec_data["artists_deleted"] == prev_data["artist_count"]
