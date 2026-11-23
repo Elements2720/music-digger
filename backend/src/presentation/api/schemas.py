@@ -336,6 +336,7 @@ def artist_summary_payload(summary: Any) -> dict[str, Any]:
         "year_min": getattr(summary, "year_min", None),
         "year_max": getattr(summary, "year_max", None),
         "taste_match_percent": getattr(summary, "taste_match_percent", None),
+        "artwork_url": getattr(summary, "artwork_url", None),
         "is_liked": getattr(summary, "is_liked", False),
     }
 

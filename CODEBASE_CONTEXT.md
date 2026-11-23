@@ -930,6 +930,36 @@ DataLayerError
 4. **Domain Purity**:
    - `backend/src/domain/` imports exclusively from the Python standard library. Enforced via AST scan in `test_domain_purity.py`.
 
+### 5.3 ML-REFACTOR Cleanup (2026-11)
+
+1. **am-dl resolver dead code removed**: `amdl_resolver.cjs` and the
+   `_DEFAULT_RESOLVER` / `node_binary` / `resolver_script` plumbing were deleted
+   from `AmdlHttpTrackDownloader` (the Playwright downloader never used them).
+   No endpoint, CLI command, or DB column changed.
+2. **Windows audio-scrub noise silenced**: `presentation/api/app.py` installs a
+   `win32`-only asyncio loop exception handler in the lifespan that drops
+   `ConnectionResetError` (winerror 10054) from `_ProactorBasePipeTransport`
+   during `206` audio-range scrubbing. All other exceptions keep the previous
+   handling. Non-Windows platforms are untouched.
+3. **Additive SQLite indexes**: `idx_tracks_embedded_{artist,bpm,camelot,genre}`
+   composite indexes were added to the schema (tracks-table-only, no partial
+   predicates) to keep dashboard and artist-summary aggregates index-only scans.
+4. **New dashboard endpoint**: `GET /api/catalog/dashboard` bundles stats,
+   analytics, and recently-indexed tracks in one round trip (additive; the
+   existing `/stats` and `/catalog/analytics` responses are unchanged).
+5. **Route decomposition**: the ~115-line
+   `GET /api/catalog/liked-artists/similar` handler was split into
+   `_resolve_seed_artists`, `_seed_track_ids`, `_embedded_artist_rows`, and
+   `_score_similar_artists` helpers. Behaviour is byte-identical.
+6. **Frontend rebuilt ("DJ Command Center", Studio Console direction)**: pure
+   vanilla ES modules, zero npm/CDN. `index.html` + `css/style.css` (design
+   tokens) + `js/` (`api.js` 1:1 endpoint client, `events.js` pub/sub,
+   `charts.js` SVG Camelot wheel + BPM histogram, `player.js` mini deck,
+   `ui.js` states/toasts, `views/{dashboard,dig,builder,mix,library,pipeline}.js`).
+   Six workspaces (Dashboard, Dig 3-mode switcher, Set Builder, Mix Analyzer,
+   Library & Cleanup, Pipeline) + persistent bottom mini deck + keyboard
+   shortcuts (1–6, Space, /, ?). Legacy `state.js`/`format.js` were removed.
+
 ---
 
 ## 6. Critical Source Files (Verbatim)

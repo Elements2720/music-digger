@@ -1,167 +1,170 @@
-/* Persistent bottom audio player: iTunes preview_url streams directly. */
+/* Mini deck: persistent bottom player with transport, seek, volume, cue state,
+ * artwork, LOCAL/PREVIEW chip, Camelot badge, + Set and download buttons.
+ * The deck listens on the event bus; any view can call `loadTrack`. */
 
-import { emit } from "./state.js";
-import { PLACEHOLDER, fmtTime } from "./format.js";
+import { api } from "./api.js";
+import { emit, on } from "./events.js";
+import { esc, toast } from "./ui.js";
+import { iconPlay, iconPause, iconPrev, iconNext, iconDownload } from "./icons.js";
 
 const audio = new Audio();
-audio.preload = "none";
-audio.volume = 0.9;
+let queue = [];
+let queueIndex = -1;
+let currentTrack = null;
 
-let current = null;
-let ready = false;
+const el = (id) => document.getElementById(id);
 
-function $(id) {
-  return document.getElementById(id);
+/** Playback clock as M:SS (e.g. 0:24) — never raw decimal seconds. */
+function fmt(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return "0:00";
+  return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}`;
 }
 
-function setArtwork(url) {
-  const art = $("player-art");
-  if (!art) return;
-  art.onerror = () => {
-    art.onerror = null;
-    art.src = PLACEHOLDER;
-  };
-  art.src = url || PLACEHOLDER;
+function renderDeck() {
+  const t = currentTrack;
+  if (!t) return;
+
+  const art = el("deck-art");
+  if (t.artwork_url) {
+    art.src = t.artwork_url;
+    art.hidden = false;
+  } else {
+    art.hidden = true;
+  }
+
+  el("np-title").textContent = t.title;
+  el("np-title").classList.remove("placeholder");
+  el("np-artist").textContent = t.artist;
+  el("np-artist").classList.remove("placeholder");
+
+  const chip = el("np-chip");
+  chip.hidden = false;
+  if (t.has_local_file) {
+    chip.textContent = "LOCAL";
+    chip.className = "chip chip-ok";
+  } else {
+    chip.textContent = "PREVIEW";
+    chip.className = "chip";
+  }
+
+  const bpm = Number(t.bpm);
+  el("cue-bpm").textContent =
+    t.bpm != null && Number.isFinite(bpm) ? String(bpm) : "—";
+  el("cue-key").textContent = t.key || "—";
+
+  const dl = el("deck-download");
+  dl.hidden = t.has_local_file;
+  dl.dataset.id = t.id;
+
+  const add = el("deck-add-set");
+  add.hidden = false;
+  add.dataset.id = t.id;
 }
 
-function syncToggle() {
-  const toggle = $("player-toggle");
-  if (toggle) toggle.textContent = audio.paused ? "▶" : "❚❚";
+function playIndex(i) {
+  if (i < 0 || i >= queue.length) return;
+  queueIndex = i;
+  loadTrack(queue[i], queue);
 }
 
-function syncSeek() {
-  const seek = $("player-seek");
-  const currentLabel = $("player-current");
-  const durationLabel = $("player-duration");
-  if (!seek) return;
-  const duration = Number.isFinite(audio.duration) ? audio.duration : 30;
-  seek.max = String(duration);
-  if (!seek.matches(":active")) seek.value = String(audio.currentTime || 0);
-  if (currentLabel) currentLabel.textContent = fmtTime(audio.currentTime);
-  if (durationLabel) durationLabel.textContent = fmtTime(duration);
+export function loadTrack(track, queueTracks = null) {
+  currentTrack = track;
+  if (Array.isArray(queueTracks) && queueTracks.length) queue = queueTracks;
+  queueIndex = queue.findIndex((t) => t.id === track.id);
+
+  const url = track.local_path
+    ? `/api/catalog/tracks/${encodeURIComponent(track.id)}/audio`
+    : track.preview_url;
+  if (!url) {
+    toast("No preview or local file for this track", "error");
+    return;
+  }
+
+  renderDeck();
+  audio.src = url;
+  audio.play().catch(() => {
+    el("deck-play").innerHTML = iconPlay();
+    toast("Playback blocked or failed — press play", "error");
+  });
+  el("deck-play").innerHTML = iconPause();
+  emit("deck:track", track);
 }
 
 export function setupPlayer() {
-  if (ready) return;
-  ready = true;
+  const playBtn = el("deck-play");
+  const seek = el("deck-seek");
+  const vol = el("deck-vol");
+  vol.value = String(audio.volume * 100);
 
-  $("player-toggle")?.addEventListener("click", () => {
-    if (!current) return;
+  playBtn.addEventListener("click", () => {
+    if (!audio.src) return toast("Load a track first — dig one in the Dig tab", "error");
     if (audio.paused) {
-      audio.play().catch(() => emit("toast", "Preview could not play"));
+      audio.play().catch(() => toast("Playback failed", "error"));
+      playBtn.innerHTML = iconPause();
     } else {
       audio.pause();
+      playBtn.innerHTML = iconPlay();
     }
   });
 
-  $("player-seek")?.addEventListener("input", (event) => {
-    audio.currentTime = Number(event.target.value);
-    syncSeek();
-  });
+  el("deck-prev").innerHTML = iconPrev();
+  el("deck-next").innerHTML = iconNext();
+  el("deck-play").innerHTML = iconPlay();
+  el("deck-download").innerHTML = iconDownload();
 
-  $("player-volume")?.addEventListener("input", (event) => {
-    audio.volume = Number(event.target.value);
-  });
+  el("deck-prev").addEventListener("click", () => playIndex(queueIndex - 1));
+  el("deck-next").addEventListener("click", () => playIndex(queueIndex + 1));
 
-  $("player-dig")?.addEventListener("click", () => {
-    if (current) emit("dig:track", current);
+  audio.addEventListener("timeupdate", () => {
+    if (!Number.isFinite(audio.duration) || audio.duration === 0) return;
+    el("deck-time").textContent = `${fmt(audio.currentTime)} / ${fmt(audio.duration)}`;
+    seek.value = String((audio.currentTime / audio.duration) * 100);
   });
-
-  audio.addEventListener("play", () => {
-    syncToggle();
-    emit("player:state", { track: current, playing: true });
+  seek.addEventListener("input", () => {
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      audio.currentTime = (Number(seek.value) / 100) * audio.duration;
+    }
   });
-  audio.addEventListener("pause", () => {
-    syncToggle();
-    emit("player:state", { track: current, playing: false });
+  vol.addEventListener("input", () => {
+    audio.volume = Number(vol.value) / 100;
   });
+  audio.addEventListener("ended", () => playIndex(queueIndex + 1));
   audio.addEventListener("error", () => {
-    const err = audio.error;
-    let detail = "Playback error";
-    if (err) {
-      switch (err.code) {
-        case 1: // MEDIA_ERR_ABORTED
-          detail = "Audio playback aborted";
-          break;
-        case 2: // MEDIA_ERR_NETWORK
-          detail = "Network error loading audio";
-          break;
-        case 3: // MEDIA_ERR_DECODE
-          detail = "Audio decode failed (file corrupted or unsupported format)";
-          break;
-        case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
-          detail = "Audio format or source not supported";
-          break;
-        default:
-          detail = err.message ? `Playback error: ${err.message}` : "Playback error";
-      }
-    }
-    emit("toast", detail);
-    syncToggle();
-    syncSeek();
-    emit("player:state", { track: current, playing: false });
-  });
-  audio.addEventListener("timeupdate", syncSeek);
-  audio.addEventListener("durationchange", syncSeek);
-  audio.addEventListener("ended", () => {
-    audio.currentTime = 0;
-    syncToggle();
-    syncSeek();
-    emit("player:state", { track: current, playing: false });
+    if (audio.src) toast("Audio stream failed", "error");
   });
 
-  syncToggle();
-  syncSeek();
-}
-
-export function playTrack(track) {
-  setupPlayer();
-  if (!track?.preview_url) {
-    emit("toast", "No preview URL for this track");
-    return;
-  }
-  if (current?.id === track.id) {
-    if (audio.paused) {
-      audio.play().catch((err) => {
-        if (err.name !== "AbortError") {
-          emit("toast", `Playback failed: ${err.message || "cannot play"}`);
-        }
-      });
-    } else {
-      audio.pause();
-    }
-    return;
-  }
-
-  current = track;
-  $("player")?.classList.remove("hidden");
-  setArtwork(track.artwork_url);
-  $("player-title").textContent = track.title;
-  $("player-artist").textContent = track.artist;
-
-  const store = $("player-store");
-  if (store) {
-    store.href = track.store_url || "#";
-    store.classList.toggle("hidden", !track.store_url);
-  }
-
-  audio.src = track.preview_url;
-  audio.currentTime = 0;
-  audio.load();
-  audio
-    .play()
-    .catch((error) => {
-      if (error.name !== "AbortError") {
-        emit("toast", `Playback failed: ${error.message || "cannot play"}`);
+  el("deck-download").addEventListener("click", async (e) => {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return;
+    e.currentTarget.disabled = true;
+    try {
+      await api.downloadTrack(id);
+      if (currentTrack && currentTrack.id === id) {
+        currentTrack.has_local_file = true;
+        renderDeck();
       }
-    });
-  emit("player:play", track);
-}
+      toast("Downloaded to local storage", "ok");
+    } catch (err) {
+      toast(err.message, "error", 8000);
+    } finally {
+      e.currentTarget.disabled = false;
+    }
+  });
 
-export function currentTrack() {
-  return current;
-}
+  el("deck-add-set").addEventListener("click", (e) => {
+    const id = e.currentTarget.dataset.id;
+    const track = currentTrack && currentTrack.id === id ? currentTrack : queue.find((t) => t.id === id);
+    if (track) {
+      emit("set:add-track", track);
+      toast(`Added "${track.title}" to Set Builder playlist`);
+    }
+  });
 
-export function isAudioPlaying() {
-  return !!(current && !audio.paused && !audio.ended);
+  // Views can refresh the deck chip after a download completes elsewhere.
+  on("track:downloaded", () => {
+    if (currentTrack) {
+      currentTrack.has_local_file = true;
+      renderDeck();
+    }
+  });
 }

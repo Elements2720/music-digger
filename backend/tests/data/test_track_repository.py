@@ -321,6 +321,35 @@ async def test_list_embedded_returns_recently_indexed_first(
     assert await repository.list_embedded(limit=10, offset=2) == ()
 
 
+async def test_list_embedded_features_first_puts_extracted_tracks_on_top(
+    repository: HybridTrackRepository,
+) -> None:
+    await repository.upsert_many(
+        [_track("itunes:1", title="NoFeatures", embedding=_embedding(), key=None)]
+    )
+    await repository.upsert_many(
+        [
+            _track(
+                "itunes:2",
+                title="Analysed",
+                embedding=_embedding(),
+                bpm=128.0,
+                key="8A",
+            )
+        ]
+    )
+
+    # Default order is untouched: newest first regardless of features.
+    plain = await repository.list_embedded(limit=10)
+    assert [track.id for track in plain] == ["itunes:2", "itunes:1"]
+
+    # features_first pushes rows without BPM/key below analysed rows.
+    ranked = await repository.list_embedded(limit=10, features_first=True)
+    assert [track.id for track in ranked] == ["itunes:2", "itunes:1"]
+    assert ranked[0].bpm is not None and ranked[0].bpm.value == 128.0
+    assert ranked[0].key is not None and str(ranked[0].key) == "8A"
+
+
 async def test_updating_features_keeps_embedding_flag(
     repository: HybridTrackRepository,
 ) -> None:

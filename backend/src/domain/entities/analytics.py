@@ -99,6 +99,7 @@ class ArtistSummary:
     year_min: int | None = None
     year_max: int | None = None
     taste_match_percent: float | None = None
+    artwork_url: str | None = None
     is_liked: bool = False
 
     def __post_init__(self) -> None:

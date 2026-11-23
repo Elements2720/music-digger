@@ -168,9 +168,11 @@ class FakeTrackRepository(ITrackRepository):
         return ()
 
     async def list_embedded(
-        self, limit: int = 20, *, offset: int = 0
+        self, limit: int = 20, *, offset: int = 0, features_first: bool = False
     ) -> Sequence[Track]:
         embedded = [t for t in self.tracks.values() if t.embedding is not None]
+        if features_first:
+            embedded = sorted(embedded, key=lambda t: t.bpm is not None, reverse=True)
         return embedded[offset : offset + max(0, limit)]
 
     async def mark_index_failed(self, track_id: str) -> None:

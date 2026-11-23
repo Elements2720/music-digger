@@ -85,6 +85,42 @@ async def search_tracks(
     }
 
 
+@router.get("/catalog/filter")
+async def filter_catalog(
+    q: str | None = Query(None, max_length=200),
+    key: str | None = Query(None, description="Exact Camelot key, e.g. 12A"),
+    bpm_min: float | None = Query(None, ge=0),
+    bpm_max: float | None = Query(None, ge=0),
+    source: str | None = Query(None, description="local or remote"),
+    limit: int = Query(60, ge=1, le=500),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Exact-metadata catalog filter (Camelot key, BPM range, local/remote).
+
+    Used by the Dig ``VIBE & CATALOG`` panel; unlike vibe search this never
+    touches CLAP text embeddings.
+    """
+    keys = (key.strip(),) if key and key.strip() else ()
+    try:
+        search_filter = SearchFilter(
+            bpm_min=bpm_min,
+            bpm_max=bpm_max,
+            camelot_keys=keys,
+            genre_filter=q.strip() if q and q.strip() else None,
+            limit=limit,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
+
+    tracks = await container.track_repository.find_by_filter(search_filter)
+    heard = await container.track_repository.get_heard_ids()
+    if source == "local":
+        tracks = [t for t in tracks if t.local_path]
+    elif source == "remote":
+        tracks = [t for t in tracks if not t.local_path]
+    return {"tracks": [track_payload(t, heard=heard) for t in tracks]}
+
+
 @router.get("/tracks/recent")
 async def recent_tracks(
     limit: int = Query(30, ge=1, le=100),
@@ -92,7 +128,9 @@ async def recent_tracks(
     container: Any = Depends(get_container),
 ) -> dict[str, Any]:
     """Recently embedded tracks for the Dig picker."""
-    tracks = await container.track_repository.list_embedded(limit, offset=offset)
+    tracks = await container.track_repository.list_embedded(
+        limit, offset=offset, features_first=True
+    )
     heard = await container.track_repository.get_heard_ids()
     return {
         "tracks": [track_payload(track, heard=heard) for track in tracks],
@@ -279,6 +317,48 @@ async def get_catalog_analytics(
     """Catalog distributions and KPI statistics."""
     analytics = await container.track_repository.get_catalog_analytics()
     return catalog_analytics_payload(analytics)
+
+
+async def _dashboard_sections(container: Any) -> dict[str, Any]:
+    """Compose the dashboard payload from existing repositories (additive)."""
+    seeds = container.seed_repository
+    tracks = container.track_repository
+    analytics = await tracks.get_catalog_analytics()
+    heard = await tracks.get_heard_ids()
+    recent = await tracks.list_embedded(12, features_first=True)
+    set_counts = (
+        await container.set_repository.count()
+        if getattr(container, "set_repository", None)
+        else 0
+    )
+    return {
+        "stats": {
+            "seeds": {
+                "total": await seeds.count(),
+                "pending": await seeds.count_by_status("pending"),
+                "fetched": await seeds.count_by_status("fetched"),
+                "failed": await seeds.count_by_status("failed"),
+                "electronic": await seeds.count_by_category("electronic"),
+                "general": await seeds.count_by_category("general"),
+            },
+            "tracks": {
+                "total": await tracks.count(),
+                "embedded": await tracks.count_embedded(),
+                "heard": len(heard),
+            },
+            "sets": {"total": set_counts},
+        },
+        "analytics": catalog_analytics_payload(analytics),
+        "recent_tracks": [track_payload(t, heard=heard) for t in recent],
+    }
+
+
+@router.get("/catalog/dashboard")
+async def get_catalog_dashboard(
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """One-shot dashboard bundle: stats, analytics, and recent tracks."""
+    return await _dashboard_sections(container)
 
 
 @router.get("/catalog/artists")
@@ -641,14 +721,7 @@ async def get_similar_liked_artists(
     liked_repo = getattr(container, "liked_artist_repository", None)
     sqlite = getattr(container, "sqlite", None)
     vectors = getattr(container, "vectors", None)
-
-    if artist and artist.strip():
-        seed_artists = [artist.strip()]
-    elif liked_repo:
-        all_liked = await liked_repo.list_all()
-        seed_artists = [a.artist_name for a in all_liked]
-    else:
-        seed_artists = []
+    seed_artists = await _resolve_seed_artists(artist, liked_repo)
 
     if not seed_artists or not sqlite or not vectors:
         return {"seed_artists": seed_artists, "seed_tracks_used": 0, "items": []}
@@ -659,12 +732,7 @@ async def get_similar_liked_artists(
     all_embedded = await sqlite.fetchall(
         "SELECT id, artist FROM tracks WHERE is_embedded = 1"
     )
-    seed_track_ids = [
-        str(r["id"])
-        for r in all_embedded
-        if normalize_artist_key(str(r["artist"])) in normalized_seed_keys
-    ]
-
+    seed_track_ids = _seed_track_ids(all_embedded, normalized_seed_keys)
     if not seed_track_ids:
         return {"seed_artists": seed_artists, "seed_tracks_used": 0, "items": []}
 
@@ -676,7 +744,46 @@ async def get_similar_liked_artists(
             "items": [],
         }
 
-    artist_rows = await sqlite.fetchall(
+    artist_rows = await _embedded_artist_rows(sqlite)
+    matches = _score_similar_artists(
+        artist_rows,
+        all_embedded,
+        track_sims,
+        normalized_seed_keys,
+        liked_keys,
+        min_year,
+    )
+    matches.sort(key=lambda m: (m.similarity_percent, m.track_count), reverse=True)
+    sliced = matches[:limit]
+    return {
+        "seed_artists": seed_artists,
+        "seed_tracks_used": len(seed_track_ids),
+        "items": [similar_artist_payload(m) for m in sliced],
+    }
+
+
+async def _resolve_seed_artists(artist: str | None, liked_repo: Any) -> list[str]:
+    """Explicit ``artist`` query param wins; otherwise all liked artists."""
+    if artist and artist.strip():
+        return [artist.strip()]
+    if liked_repo:
+        all_liked = await liked_repo.list_all()
+        return [a.artist_name for a in all_liked]
+    return []
+
+
+def _seed_track_ids(
+    all_embedded: list[Any], normalized_seed_keys: set[str]
+) -> list[str]:
+    return [
+        str(r["id"])
+        for r in all_embedded
+        if normalize_artist_key(str(r["artist"])) in normalized_seed_keys
+    ]
+
+
+async def _embedded_artist_rows(sqlite: Any) -> list[Any]:
+    return await sqlite.fetchall(
         """
         SELECT
             artist,
@@ -693,6 +800,16 @@ async def get_similar_liked_artists(
         """
     )
 
+
+def _score_similar_artists(
+    artist_rows: list[Any],
+    all_embedded: list[Any],
+    track_sims: dict[str, float],
+    normalized_seed_keys: set[str],
+    liked_keys: frozenset[str] | set[str],
+    min_year: int | None,
+) -> list[SimilarArtistMatch]:
+    """Average the per-track similarities of every non-seed artist."""
     artist_scores: dict[str, list[float]] = {}
     for r in all_embedded:
         art = str(r["artist"])
@@ -706,10 +823,8 @@ async def get_similar_liked_artists(
     for row in artist_rows:
         art = str(row["artist"])
         norm_k = normalize_artist_key(art)
-        if norm_k in normalized_seed_keys:
-            continue
         scores = artist_scores.get(art, [])
-        if not scores:
+        if norm_k in normalized_seed_keys or not scores:
             continue
         avg_sim = round(sum(scores) / len(scores), 1)
         y_min = int(row["year_min"]) if row["year_min"] is not None else None
@@ -720,7 +835,6 @@ async def get_similar_liked_artists(
         genres = tuple(g for g in genres_raw.split(",") if g)
         b_min = float(row["bpm_min"]) if row["bpm_min"] is not None else None
         b_max = float(row["bpm_max"]) if row["bpm_max"] is not None else None
-        is_liked = norm_k in liked_keys
 
         matches.append(
             SimilarArtistMatch(
@@ -733,17 +847,10 @@ async def get_similar_liked_artists(
                 bpm_max=b_max,
                 year_min=y_min,
                 year_max=y_max,
-                is_liked=is_liked,
+                is_liked=norm_k in liked_keys,
             )
         )
-
-    matches.sort(key=lambda m: (m.similarity_percent, m.track_count), reverse=True)
-    sliced = matches[:limit]
-    return {
-        "seed_artists": seed_artists,
-        "seed_tracks_used": len(seed_track_ids),
-        "items": [similar_artist_payload(m) for m in sliced],
-    }
+    return matches
 
 
 __all__ = ["router"]

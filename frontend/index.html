@@ -1,771 +1,497 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
-  <title>DigDeeper Local — Mission Control</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Ctext%20x='2'%20y='13'%20font-size='13'%20fill='%23ff4d1a'%3E%E2%97%88%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/css/style.css">
+  <title>DigDeeper — DJ Command Center</title>
+  <link rel="stylesheet" href="./css/style.css">
 </head>
 <body>
-  <header class="topbar">
+  <header class="app-header">
     <div class="brand">
-      <span class="brand-mark">◈</span>
-      <span class="brand-name">DIGDEEPER</span>
-      <span class="brand-sub">LOCAL</span>
+      <span class="eyebrow">DigDeeper — Set Command Center</span>
+      <h1>DJ Command Center</h1>
     </div>
-    <nav class="tabs" id="tabs" aria-label="Sections">
-      <button class="tab active" data-tab="run" type="button">RUN</button>
-      <button class="tab" data-tab="dig" type="button">DIG</button>
-      <button class="tab" data-tab="sets" type="button">SETS</button>
-      <button class="tab" data-tab="builder" type="button">BUILDER</button>
-      <button class="tab" data-tab="stats" type="button">STATS</button>
-    </nav>
-    <div class="topbar-meta" id="topbar-meta">
-      <span class="status-dot" id="health-dot" title="API status"></span>
-      <span id="health-label">connecting</span>
+    <div class="health" id="health" role="status">
+      <span class="status-dot" id="health-dot"></span>
+      <span id="health-label">checking…</span>
     </div>
   </header>
 
-  <main id="main">
-    <!-- ------------------------------------------------------------- RUN -->
-    <section class="tab-panel active" id="tab-run">
-      <div class="panel-grid two">
-        <div class="panel">
-          <div class="panel-head">
-            <h2>Launch a job</h2>
-            <span class="hint">same flags as the CLI</span>
-          </div>
-          <label class="field">
-            <span>Job</span>
-            <select id="job-kind">
-              <option value="index">index — embed pending previews</option>
-              <option value="import-local">import-local — scan & embed local music folder</option>
-              <option value="fetch-artist">fetch-artist — fetch artist tracks & auto-index</option>
-              <option value="seed-crawl">seed-crawl — Deezer related artists</option>
-              <option value="seed-llm">seed-llm — curated artists from the LLM</option>
-              <option value="seed-itunes">seed-itunes — iTunes techno/label crawl</option>
-              <option value="fetch-metadata">fetch-metadata — iTunes catalog</option>
-              <option value="analyze-set">analyze-set — DJ set tracklist</option>
-            </select>
-          </label>
-          <form id="job-form" class="job-form" autocomplete="off">
-            <div id="job-params" class="params"></div>
-            <div class="form-actions">
-              <button type="submit" class="btn primary" id="job-start">Start job</button>
-              <span class="error" id="job-error"></span>
-            </div>
-          </form>
-        </div>
+  <nav class="nav" role="tablist" aria-label="Workspaces">
+    <button class="tab active" data-tab="dashboard" role="tab" aria-selected="true">Dashboard</button>
+    <button class="tab" data-tab="dig" role="tab" aria-selected="false">Dig</button>
+    <button class="tab" data-tab="builder" role="tab" aria-selected="false">Set Builder</button>
+    <button class="tab" data-tab="mix" role="tab" aria-selected="false">Mix Analyzer</button>
+    <button class="tab" data-tab="library" role="tab" aria-selected="false">Library</button>
+    <button class="tab" data-tab="pipeline" role="tab" aria-selected="false">Pipeline</button>
+  </nav>
 
+  <main>
+    <!-- ============ Dashboard ============ -->
+    <section class="workspace" id="ws-dashboard" aria-label="Dashboard">
+      <div class="workspace-head">
+        <h2>Dashboard</h2>
+        <span class="hint">Harmony wheel, tempo spread and catalog KPIs at a glance.</span>
+      </div>
+
+      <div class="stat-band" id="dash-stats" aria-label="Catalog stats"></div>
+
+      <div class="grid-dash">
         <div class="panel">
-          <div class="panel-head">
-            <h2>Live progress</h2>
-            <button class="btn tiny ghost hidden" id="job-cancel" type="button">CANCEL</button>
-          </div>
-          <div id="job-idle" class="empty">No job running. Pick one on the left.</div>
-          <div id="job-live" class="hidden">
-            <div class="job-headline">
-              <span class="job-kind" id="job-kind-label">—</span>
-              <span class="badge" id="job-status-badge">idle</span>
-            </div>
-            <div class="progress-track"><div class="progress-fill" id="job-progress"></div></div>
-            <div class="job-metrics">
-              <div><span class="metric-label">STAGE</span><span id="job-stage">—</span></div>
-              <div><span class="metric-label">DONE</span><span class="mono" id="job-processed">0</span></div>
-              <div><span class="metric-label">FAILED</span><span class="mono" id="job-failed">0</span></div>
-              <div><span class="metric-label">SPEED</span><span class="mono" id="job-speed">—</span></div>
-              <div><span class="metric-label">VRAM</span><span class="mono" id="job-vram">—</span></div>
-              <div><span class="metric-label">RAM</span><span class="mono" id="job-ram">—</span></div>
-            </div>
-            <p class="job-message" id="job-message"></p>
-            <div class="job-log mono" id="job-log"></div>
-          </div>
+          <h3 class="panel-title">Camelot wheel — catalog harmony</h3>
+          <div class="wheel-wrap" id="dash-wheel"><div class="skeleton" style="width:320px;height:320px"></div></div>
+        </div>
+        <div class="panel">
+          <h3 class="panel-title">BPM histogram</h3>
+          <div id="dash-bpm"><div class="skeleton" style="width:100%"></div></div>
         </div>
       </div>
 
-      <div class="panel hidden" id="job-result-panel">
-        <div class="panel-head"><h2>Last result</h2></div>
-        <div id="job-result"></div>
+      <div class="panel" style="margin-top:var(--s4)">
+        <h3 class="panel-title">Recently indexed</h3>
+        <div id="dash-recent"></div>
       </div>
     </section>
 
-    <!-- ------------------------------------------------------------- DIG -->
-    <section class="tab-panel" id="tab-dig">
-      <div class="dig-layout">
-        <aside class="panel dig-picker">
-          <div class="panel-head"><h2>Reference track</h2></div>
-          <input class="input" id="track-search" type="search"
-                 placeholder="Search title or artist…" autocomplete="off">
-          <div class="list picker-list" id="track-results"></div>
-          <div class="reference-card hidden" id="reference-card"></div>
-        </aside>
-
-        <div class="dig-main">
-          <div class="panel">
-            <div class="panel-head">
-              <h2>Dig similar</h2>
-              <span class="hint" id="dig-hint">pick a reference first</span>
-            </div>
-            <form class="filters" id="dig-form">
-              <label class="field inline"><span>Limit</span>
-                <input class="input mono" type="number" id="dig-limit" min="1" max="500" value="20">
-              </label>
-              <label class="field inline"><span>BPM ±</span>
-                <input class="input mono" type="number" id="dig-bpm-tolerance" min="0" step="1" placeholder="any">
-              </label>
-              <label class="field inline"><span>Genre</span>
-                <input class="input" type="text" id="dig-genre" placeholder="exact genre">
-              </label>
-              <label class="field inline"><span>Min Year</span>
-                <input class="input mono" type="number" id="dig-min-year" min="1900" max="2100" placeholder="any" style="width: 80px;">
-              </label>
-              <label class="check"><input type="checkbox" id="dig-harmonic"> harmonic</label>
-              <label class="check"><input type="checkbox" id="dig-exclude-heard"> hide heard</label>
-              <button class="btn primary" type="submit">DIG &gt;</button>
-            </form>
-            <div class="results" id="dig-results">
-              <div class="empty">Similar tracks appear here.</div>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-head">
-              <h2>Vibe search</h2>
-              <span class="hint">describe a sound, not a title</span>
-            </div>
-            <form class="vibe-form" id="vibe-form">
-              <input class="input" id="vibe-query" type="text"
-                     placeholder="dark hypnotic peak-time techno…">
-              <label class="field inline"><span>Limit</span>
-                <input class="input mono" type="number" id="vibe-limit" min="1" max="500" value="20">
-              </label>
-              <label class="field inline"><span>Genre</span>
-                <input class="input" type="text" id="vibe-genre" placeholder="optional">
-              </label>
-              <label class="check"><input type="checkbox" id="vibe-exclude-heard"> hide heard</label>
-              <button class="btn" type="submit">SEARCH</button>
-            </form>
-            <div class="results" id="vibe-results">
-              <div class="empty">Text-to-audio results appear here.</div>
-            </div>
-          </div>
-        </div>
+    <!-- ============ Dig ============ -->
+    <section class="workspace" id="ws-dig" aria-label="Dig" hidden>
+      <div class="workspace-head">
+        <h2>Dig</h2>
+        <span class="hint">Three strictly isolated modes: match a track, taste-ranked for you, or vibe &amp; catalog search.</span>
       </div>
-    </section>
 
-    <!-- ------------------------------------------------------------ SETS -->
-    <section class="tab-panel" id="tab-sets">
-      <div class="panel-grid two">
-        <div class="panel">
-          <div class="panel-head"><h2>Analyze a set</h2></div>
-          <form id="analyze-form" class="job-form" autocomplete="off">
-            <label class="field"><span>URL or local file</span>
-              <input class="input" id="set-source" type="text"
-                     placeholder="https://youtube.com/watch?v=… or D:\sets\set.mp3" required>
-            </label>
-            <div class="params">
-              <label class="check"><input type="checkbox" id="set-shazam" checked> Shazam unidentified passages</label>
-              <label class="check"><input type="checkbox" id="set-comments" checked> parse tracklist from comments</label>
-              <label class="check"><input type="checkbox" id="set-keep-audio"> keep downloaded audio</label>
-              <label class="field"><span>cookies.txt (optional)</span>
-                <input class="input" id="set-cookies-file" type="text" placeholder="C:\path\cookies.txt">
-              </label>
-              <label class="field"><span>cookies from browser (optional)</span>
-                <input class="input" id="set-cookies-browser" type="text" placeholder="firefox, edge, chrome…">
-              </label>
-            </div>
-            <div class="form-actions">
-              <button class="btn primary" type="submit">ANALYZE</button>
-              <span class="hint">progress opens in RUN</span>
-            </div>
-          </form>
-        </div>
+      <div class="mode-switch" role="tablist" aria-label="Dig mode" id="dig-modes">
+        <button class="mode active" data-mode="match" role="tab" aria-selected="true">Match a Track</button>
+        <button class="mode" data-mode="foryou" role="tab" aria-selected="false">For You</button>
+        <button class="mode" data-mode="vibe" role="tab" aria-selected="false">Vibe &amp; Catalog</button>
+      </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <h2>Stored sets</h2>
-            <button class="btn tiny ghost" id="sets-refresh" type="button">REFRESH</button>
+      <!-- Mode 1: Match a Track -->
+      <div data-dig-panel="match" hidden>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Pick a track</h3>
+          <div class="field">
+            <label for="dig-match-search">Search the catalog</label>
+            <input type="search" id="dig-match-search" placeholder="Title or artist — then click a result">
           </div>
-          <div class="list" id="sets-list"><div class="empty">Loading…</div></div>
+          <div id="dig-match-picker"></div>
+        </div>
+        <div class="panel" style="margin-top:var(--s4)" id="dig-match-source" hidden>
+          <div id="dig-match-selected"></div>
+        </div>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Matches</h3>
+          <div class="grid-3" style="margin-bottom:var(--s3)">
+            <div class="field">
+              <label for="dig-limit">Results</label>
+              <select id="dig-limit">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="dig-bpm-tol">BPM tolerance</label>
+              <select id="dig-bpm-tol">
+                <option value="">any</option>
+                <option value="2">&plusmn;2</option>
+                <option value="4" selected>&plusmn;4</option>
+                <option value="6">&plusmn;6</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="dig-harmonic">Harmonic match</label>
+              <select id="dig-harmonic">
+                <option value="true" selected>on — Camelot compatible</option>
+                <option value="false">off</option>
+              </select>
+            </div>
+          </div>
+          <div id="dig-match-results"></div>
         </div>
       </div>
 
-      <div class="panel hidden" id="set-detail">
-        <div class="set-detail-head">
-          <button class="btn tiny ghost" id="set-back" type="button">← BACK</button>
-          <div>
-            <h2 id="set-title">—</h2>
-            <div class="set-meta mono" id="set-meta"></div>
-          </div>
-        </div>
-        <div class="subtabs" id="set-subtabs">
-          <button class="subtab active" data-view="tracklist" type="button">TRACKLIST</button>
-          <button class="subtab" data-view="tracks" type="button">SIMILAR TRACKS</button>
-          <button class="subtab" data-view="sets" type="button">SIMILAR SETS</button>
-        </div>
-        <div class="filters hidden" id="set-track-filters">
-          <label class="field inline"><span>Limit</span>
-            <input class="input mono" type="number" id="set-track-limit" min="1" max="500" value="30">
-          </label>
-          <label class="field inline"><span>BPM ±</span>
-            <input class="input mono" type="number" id="set-bpm-tolerance" min="0" step="1" placeholder="any">
-          </label>
-          <label class="field inline"><span>Genre</span>
-            <input class="input" type="text" id="set-track-genre" placeholder="exact genre">
-          </label>
-          <label class="check"><input type="checkbox" id="set-exclude-heard"> hide heard</label>
-          <button class="btn tiny" id="set-track-apply" type="button">APPLY</button>
-        </div>
-        <div class="results" id="set-detail-body"></div>
-      </div>
-    </section>
-
-    <!-- --------------------------------------------------------- BUILDER -->
-    <section class="tab-panel" id="tab-builder">
-      <!-- Top Action Strip -->
-      <div class="panel builder-action-strip">
-        <div class="builder-strip-left">
-          <input class="input builder-name-input" id="builder-set-name" type="text" value="My DJ Set Plan" placeholder="Set name…">
-          <select class="input builder-saved-select" id="builder-saved-sets">
-            <option value="">-- Load Saved Set --</option>
-          </select>
-        </div>
-        <div class="builder-strip-actions">
-          <button class="btn tiny primary" id="builder-save-btn" type="button">SAVE SET</button>
-          <div class="dropdown-wrap" style="display: inline-flex; position: relative;">
-            <button class="btn tiny ghost" id="builder-auto-seq-btn" type="button" title="Auto-sequence tracks using 2-opt search">AUTO-SEQUENCE ▾</button>
-            <div class="popup-menu hidden" id="builder-auto-seq-menu">
-              <button class="popup-item" data-flow="ramp_up" type="button">Ramp Up (+2 BPM flow)</button>
-              <button class="popup-item" data-flow="steady" type="button">Steady (Keep tempo)</button>
-              <button class="popup-item" data-flow="cool_down" type="button">Cool Down (-2 BPM flow)</button>
-              <button class="popup-item" data-flow="any" type="button">Any Flow (Harmonic first)</button>
+      <!-- Mode 2: For You -->
+      <div data-dig-panel="foryou" hidden>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Taste ranking</h3>
+          <div class="grid-3" style="margin-bottom:var(--s3)">
+            <div class="field">
+              <label for="dig-foryou-source">Rank against</label>
+              <select id="dig-foryou-source">
+                <option value="both" selected>Local + liked</option>
+                <option value="local">Local only</option>
+                <option value="liked">Liked only</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="dig-foryou-genre">Genre filter</label>
+              <input type="text" id="dig-foryou-genre" placeholder="e.g. Techno">
+            </div>
+            <div class="field">
+              <label for="dig-foryou-limit">Results</label>
+              <select id="dig-foryou-limit">
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
             </div>
           </div>
-          <button class="btn tiny ghost" id="builder-export-btn" type="button" title="Export as M3U8 playlist">EXPORT .M3U8</button>
-          <button class="btn tiny ghost" id="builder-download-missing-btn" type="button" title="Download missing tracks (.m4a)">DOWNLOAD MISSING (0)</button>
-          <button class="btn tiny danger ghost" id="builder-clear-btn" type="button">CLEAR</button>
+          <button class="btn primary" id="dig-foryou-run">Rank my catalog</button>
+        </div>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Results</h3>
+          <div id="dig-foryou-results"></div>
         </div>
       </div>
 
-      <!-- Two-Column Workbench -->
-      <div class="builder-workbench">
-        <!-- Left Column: Set Tracklist & Energy Progression -->
-        <div class="panel builder-set-column">
-          <div class="panel-head">
-            <div>
-              <h2>Set Tracklist</h2>
-              <div class="builder-summary-bar mono" id="builder-summary">
-                <span id="builder-track-count">0 tracks</span> ·
-                <span id="builder-total-time">00:00:00</span> ·
-                <span class="chip taste-mid" id="builder-avg-score">Avg Flow: —</span>
-              </div>
+      <!-- Mode 3: Vibe & Catalog -->
+      <div data-dig-panel="vibe">
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Catalog filter</h3>
+          <p class="hint" style="margin:0 0 var(--s3)">Exact metadata filters — Camelot key and BPM come straight from the database, never from CLAP text search.</p>
+          <div class="grid-2" style="margin-bottom:var(--s3)">
+            <div class="field">
+              <label for="dig-cat-q">Search text</label>
+              <input type="text" id="dig-cat-q" placeholder="artist, title or genre">
+            </div>
+            <div class="field">
+              <label for="dig-cat-key">Camelot key</label>
+              <select id="dig-cat-key">
+                <option value="">Any key</option>
+              </select>
             </div>
           </div>
-
-          <!-- Energy & BPM Curve -->
-          <div class="builder-curve-container">
-            <div class="builder-curve-header dim">
-              <span>BPM &amp; Energy Progression</span>
-              <span class="mono" id="builder-curve-range">—</span>
+          <div class="grid-3" style="margin-bottom:var(--s3)">
+            <div class="field">
+              <label for="dig-cat-bpm-min">BPM min</label>
+              <input type="number" id="dig-cat-bpm-min" min="0" step="0.1" placeholder="120">
             </div>
-            <div class="builder-svg-wrap" id="builder-curve-wrap">
-              <svg id="builder-energy-curve" viewBox="0 0 600 80" preserveAspectRatio="none">
-                <text x="300" y="45" text-anchor="middle" fill="#666" font-size="12">Add 2+ tracks to see the BPM and energy progression</text>
-              </svg>
+            <div class="field">
+              <label for="dig-cat-bpm-max">BPM max</label>
+              <input type="number" id="dig-cat-bpm-max" min="0" step="0.1" placeholder="132">
             </div>
-          </div>
-
-          <!-- Tracklist items & transition connector pills -->
-          <div class="builder-tracklist" id="builder-tracklist">
-            <div class="empty" id="builder-tracklist-empty">
-              Set is currently empty.<br>Pick recommendations from the right or click "+ SET" while digging.
+            <div class="field">
+              <label for="dig-cat-source">Source</label>
+              <select id="dig-cat-source">
+                <option value="">All</option>
+                <option value="local">Local</option>
+                <option value="remote">Remote</option>
+              </select>
             </div>
           </div>
+          <div class="grid-3">
+            <button class="btn primary" id="dig-cat-run">Filter catalog</button>
+            <button class="btn" id="dig-cat-reset">Reset</button>
+          </div>
+          <span class="error" id="dig-cat-error" role="alert"></span>
         </div>
-
-        <!-- Right Column: Smart Next-Track Picker & Bridge Finder -->
-        <div class="panel builder-picker-column">
-          <!-- Picker Subtabs / Header -->
-          <div class="builder-picker-head">
-            <div class="subtabs" id="builder-picker-modes">
-              <button class="subtab active" id="builder-mode-next-btn" type="button">NEXT TRACK</button>
-              <button class="subtab" id="builder-mode-bridge-btn" type="button">FIND BRIDGE</button>
-            </div>
-            <label class="check compact">
-              <input type="checkbox" id="builder-local-only"> Local files only
-            </label>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">CLAP vibe search</h3>
+          <div class="field">
+            <label for="dig-vibe-text">Describe the vibe</label>
+            <input type="text" id="dig-vibe-text" placeholder="dark hypnotic peak-time techno, 132 bpm">
+            <span class="error" id="dig-vibe-error" role="alert"></span>
           </div>
-
-          <!-- Mode A: Next Track Recommendations -->
-          <div class="builder-mode-panel" id="builder-panel-next">
-            <!-- Flow preset pills & search input -->
-            <div class="builder-filter-strip">
-              <div class="flow-presets" id="builder-flow-presets">
-                <button class="flow-btn active" data-flow="steady" type="button">Steady</button>
-                <button class="flow-btn" data-flow="ramp_up" type="button">Ramp Up (+2)</button>
-                <button class="flow-btn" data-flow="cool_down" type="button">Cool Down (-2)</button>
-                <button class="flow-btn" data-flow="any" type="button">Any</button>
-              </div>
-              <input class="input compact" id="builder-catalog-search" type="search" placeholder="Search catalog to add…">
-            </div>
-            <div class="builder-reference-banner" id="builder-next-reference-banner">
-              <span class="dim">Transitioning from:</span>
-              <strong id="builder-next-ref-title">Pick or add a track first</strong>
-            </div>
-            <div class="results builder-results-list" id="builder-next-results">
-              <div class="empty">Add tracks to the set on the left to see intelligent next-track recommendations.</div>
+          <div class="grid-2" style="margin-bottom:var(--s3)">
+            <div class="field">
+              <label for="dig-vibe-limit">Results</label>
+              <select id="dig-vibe-limit">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+              </select>
             </div>
           </div>
-
-          <!-- Mode B: Bridge Finder -->
-          <div class="builder-mode-panel hidden" id="builder-panel-bridge">
-            <div class="bridge-selector-bar">
-              <div class="bridge-node" id="bridge-node-a">Track A: —</div>
-              <div class="bridge-arrow">──► [BRIDGE] ──►</div>
-              <div class="bridge-node" id="bridge-node-b">Track B: —</div>
-            </div>
-            <div class="results builder-results-list" id="builder-bridge-results">
-              <div class="empty">Click [+ BRIDGE] on any transition pill between two tracks on the left to find ideal stepping-stone tracks.</div>
-            </div>
-          </div>
+          <button class="btn primary" id="dig-vibe-run">Search by vibe</button>
+        </div>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Catalog results</h3>
+          <div id="dig-cat-results"></div>
+        </div>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Vibe results</h3>
+          <div id="dig-vibe-results"></div>
         </div>
       </div>
     </section>
 
-    <!-- ----------------------------------------------------------- STATS -->
-    <section class="tab-panel" id="tab-stats">
+    <!-- ============ Set Builder ============ -->
+    <section class="workspace" id="ws-builder" aria-label="Set Builder" hidden>
+      <div class="workspace-head">
+        <h2>Set Builder</h2>
+        <span class="hint">Compose a set, check transitions, auto-sequence, export .m3u8 — saved sets live here.</span>
+      </div>
+      <div class="grid-dash">
+        <div class="panel">
+          <h3 class="panel-title">Your set</h3>
+          <div class="field">
+            <label for="builder-name">Set name</label>
+            <input type="text" id="builder-name" placeholder="e.g. Warehouse warm-up — 128 bpm">
+          </div>
+          <div id="builder-tracks"></div>
+          <div class="grid-3" style="margin-top:var(--s3)">
+            <button class="btn" id="builder-evaluate">Evaluate transitions</button>
+            <button class="btn" id="builder-autoseq">Auto-sequence</button>
+            <button class="btn primary" id="builder-save">Save set</button>
+          </div>
+          <div class="grid-3" style="margin-top:var(--s2)">
+            <button class="btn" id="builder-suggest">Suggest next</button>
+            <button class="btn" id="builder-bridge">Find bridge</button>
+            <button class="btn" id="builder-export">Export .m3u8</button>
+          </div>
+          <div id="builder-eval" style="margin-top:var(--s3)"></div>
+        </div>
+        <div class="panel">
+          <h3 class="panel-title">Pick tracks</h3>
+          <div class="field">
+            <label for="builder-search">Search the catalog</label>
+            <input type="search" id="builder-search" placeholder="Title or artist…">
+          </div>
+          <div id="builder-pool"></div>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:var(--s4)">
+        <h3 class="panel-title">Saved sets</h3>
+        <div id="builder-saved"></div>
+      </div>
+    </section>
+
+    <!-- ============ Mix Analyzer ============ -->
+    <section class="workspace" id="ws-mix" aria-label="Mix Analyzer" hidden>
+      <div class="workspace-head">
+        <h2>Mix Analyzer</h2>
+        <span class="hint">Analyze a DJ mix (URL or local file): passage timeline and per-passage track matches.</span>
+      </div>
       <div class="panel">
-        <div class="panel-head">
-          <h2>Library Overview</h2>
-          <button class="btn tiny ghost" id="stats-refresh" type="button">REFRESH</button>
+        <h3 class="panel-title">Analyze a mix</h3>
+        <div class="grid-2">
+          <div class="field">
+            <label for="mix-source">Mix URL or local audio path</label>
+            <input type="text" id="mix-source" placeholder="https://… or C:\Music\set.mp3">
+          </div>
+          <div class="field">
+            <label for="mix-cookies">Cookies from browser (optional)</label>
+            <select id="mix-cookies">
+              <option value="">none</option>
+              <option value="firefox">firefox</option>
+              <option value="chrome">chrome</option>
+              <option value="edge">edge</option>
+            </select>
+          </div>
         </div>
-        <div class="cards" id="stats-cards"><div class="empty">Loading…</div></div>
+        <button class="btn primary" id="mix-run">Analyze mix</button>
+        <div class="job-bar" role="progressbar" aria-label="Analysis progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="margin-top:var(--s3)">
+          <div class="job-bar-fill" id="mix-fill"></div>
+        </div>
+        <p class="mono" id="mix-status" style="min-height:1.4em">idle</p>
+        <button class="btn danger" id="mix-cancel" disabled>Cancel</button>
+      </div>
+      <div class="panel" style="margin-top:var(--s4)">
+        <h3 class="panel-title">Passage timeline</h3>
+        <div id="mix-timeline"></div>
+      </div>
+      <div class="panel" style="margin-top:var(--s4)">
+        <h3 class="panel-title">Passage matches</h3>
+        <div id="mix-passages"></div>
+      </div>
+    </section>
 
-        <!-- Distributions grid: Genres, BPM, Keys -->
-        <div class="analytics-grid" id="analytics-grid">
-          <div class="analytics-box">
-            <h3>Top Genres</h3>
-            <div class="bar-chart" id="chart-genres"></div>
+    <!-- ============ Library & Cleanup ============ -->
+    <section class="workspace" id="ws-library" aria-label="Library" hidden>
+      <div class="workspace-head">
+        <h2>Library &amp; Cleanup</h2>
+        <span class="hint">Artists hub, track bulk-cleanup wizard, seeds &amp; blacklist — destructive actions always confirm first.</span>
+      </div>
+      <div class="mode-switch" role="tablist" aria-label="Library mode" id="lib-modes">
+        <button class="mode active" data-libmode="artists" role="tab" aria-selected="true">Artists Hub</button>
+        <button class="mode" data-libmode="tracks" role="tab" aria-selected="false">Tracks Cleanup</button>
+        <button class="mode" data-libmode="seeds" role="tab" aria-selected="false">Seeds &amp; Blacklist</button>
+      </div>
+
+      <div data-lib-panel="artists">
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Artists</h3>
+          <div class="field">
+            <label for="lib-artist-search">Filter artists</label>
+            <input type="search" id="lib-artist-search" placeholder="Artist name…">
           </div>
-          <div class="analytics-box">
-            <h3>BPM Distribution</h3>
-            <div class="bar-chart" id="chart-bpm"></div>
-          </div>
-          <div class="analytics-box">
-            <h3>Top Camelot Keys</h3>
-            <div class="key-pills" id="chart-keys"></div>
-          </div>
+          <div id="lib-artists"></div>
         </div>
       </div>
 
-      <!-- Stats Subtabs: Artists Explorer | Pending Seeds | Blacklist Manager -->
-      <div class="subtabs" id="stats-subtabs" style="margin-top: 16px;">
-        <button class="subtab active" data-subtab="artists" type="button">ARTISTS EXPLORER</button>
-        <button class="subtab" data-subtab="seeds" type="button">PENDING SEEDS</button>
-        <button class="subtab" data-subtab="blacklist" type="button">BLACKLIST MANAGER</button>
-      </div>
-
-      <!-- Artists Explorer & Manager -->
-      <div class="panel" id="panel-artists">
-        <div class="panel-head">
-          <h2>Artists Explorer</h2>
-          <div class="filter-row">
-            <input class="input" id="artists-search" type="search" placeholder="Search artists…">
-            <select class="input" id="artists-source-filter">
-              <option value="">All Sources</option>
-              <option value="local">Local Library</option>
-              <option value="itunes">iTunes</option>
-            </select>
-            <select class="input" id="artists-genre-filter">
-              <option value="">All Genres</option>
-            </select>
-            <input class="input mono" id="artists-min-year" type="number" min="1900" max="2100" placeholder="Min Year" style="width: 90px;">
-            <select class="input" id="artists-sort">
-              <option value="tracks_desc">Most Tracks</option>
-              <option value="embedded_desc">Most Embedded</option>
-              <option value="artist_asc">Artist (A-Z)</option>
-              <option value="taste_desc">Highest Taste Match</option>
-              <option value="taste_asc">Lowest Taste Match</option>
-            </select>
-            <select class="input" id="artists-taste-mode-select" title="Taste match profile">
-              <option value="both" selected>Taste: Auto (Both)</option>
-              <option value="local">Taste: Local Library</option>
-              <option value="liked">Taste: Liked Artists</option>
-            </select>
-            <button class="btn tiny ghost" id="artists-liked-only-btn" type="button" title="Filter to liked artists only">♥ LIKED ONLY</button>
-            <button class="btn tiny ghost" id="artists-similar-liked-btn" type="button" title="Discover artists similar to liked artists">SIMILAR TO LIKED</button>
-            <button class="btn tiny primary" id="artists-fetch-btn" type="button">+ FETCH ARTIST</button>
-            <button class="btn tiny danger-outline" id="artists-bulk-cleanup-btn" type="button">BULK CLEANUP</button>
+      <div data-lib-panel="tracks" hidden>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Rule-based cleanup wizard</h3>
+          <p class="hint" style="margin:0 0 var(--s3)">Pick one or more rules, Preview the exact affected artists and tracks, then Confirm. Disk audio files are never touched — this only removes catalog/database rows.</p>
+          <div class="grid-2" style="margin-bottom:var(--s3)">
+            <div class="field">
+              <label for="lib-cleanup-genre">Non-electronic / genre rule</label>
+              <select id="lib-cleanup-genre">
+                <option value="">No genre rule</option>
+                <option value="Pop">Pop — delete artists tagged Pop</option>
+                <option value="Rock">Rock — delete artists tagged Rock</option>
+                <option value="Hip-Hop">Hip-Hop — delete artists tagged Hip-Hop</option>
+                <option value="Latin">Latin — delete artists tagged Latin</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="lib-cleanup-taste">Max taste match % (low-taste rule)</label>
+              <input type="number" id="lib-cleanup-taste" min="0" max="100" placeholder="e.g. 20 — artists at or below">
+            </div>
           </div>
-        </div>
-        <div class="bulk-bar hidden" id="artists-bulk-bar">
-          <div class="bulk-bar-left">
-            <span class="badge count-badge" id="artists-selected-count">0 artists selected</span>
-            <button class="btn tiny ghost" id="artists-clear-selection-btn" type="button">Clear</button>
+          <div class="grid-3" style="margin-bottom:var(--s3)">
+            <label class="check-inline"><input type="checkbox" id="lib-cleanup-protect-liked" checked> Protect liked artists</label>
+            <label class="check-inline"><input type="checkbox" id="lib-cleanup-protect-local" checked> Protect artists with local files</label>
+            <label class="check-inline"><input type="checkbox" id="lib-cleanup-blacklist" checked> Blacklist deleted artists</label>
           </div>
-          <div class="bulk-bar-right">
-            <label class="check bulk-blacklist-label">
-              <input type="checkbox" id="bulk-select-blacklist">
-              <span>Also Blacklist (Block)</span>
-            </label>
-            <button class="btn tiny danger" id="artists-bulk-delete-btn" type="button">DELETE SELECTED</button>
+          <div class="grid-3">
+            <button class="btn" id="lib-cleanup-preview">Preview affected</button>
+            <button class="btn danger" id="lib-cleanup-run" disabled>Confirm delete (database only)</button>
           </div>
+          <div id="lib-cleanup-result" style="margin-top:var(--s3)"></div>
         </div>
-        <div class="table-container" id="artists-table-container">
-          <table class="data-table" id="artists-table">
-            <thead>
-              <tr>
-                <th class="select-col"><input type="checkbox" id="artists-select-all" title="Select all on current page"></th>
-                <th>Artist</th>
-                <th>Tracks</th>
-                <th>Embedded</th>
-                <th>Years</th>
-                <th>Genres</th>
-                <th>Taste</th>
-                <th>Sources</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="artists-tbody">
-              <tr><td colspan="9" class="empty">Loading…</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination-bar" id="artists-pagination">
-          <button class="btn tiny ghost" id="artists-prev" type="button">← PREV</button>
-          <span class="page-info" id="artists-page-info">Page 1</span>
-          <button class="btn tiny ghost" id="artists-next" type="button">NEXT →</button>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Tracks</h3>
+          <div class="field">
+            <label for="lib-track-search">Filter tracks</label>
+            <input type="search" id="lib-track-search" placeholder="Title or artist…">
+          </div>
+          <div id="lib-tracks"></div>
         </div>
       </div>
 
-      <!-- Pending Seeds Queue Explorer & Cleanup Manager -->
-      <div class="panel hidden" id="panel-seeds">
-        <div class="panel-head">
-          <div>
-            <h2>Pending Seeds Queue</h2>
-            <div class="cell-badges" id="seeds-source-pills" style="margin-top: 6px;"></div>
+      <div data-lib-panel="seeds" hidden>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Current blacklist</h3>
+          <div class="field">
+            <label for="lib-blacklist-add">Blacklist an artist</label>
+            <input type="text" id="lib-blacklist-add" placeholder="Artist name…">
           </div>
-          <div class="filter-row">
-            <button class="btn tiny ghost" id="seeds-keep-core-btn" type="button" title="Delete pending seeds except core sources">KEEP CORE ONLY</button>
-            <button class="btn tiny ghost" id="seeds-purge-general-btn" type="button" title="Delete pending general seeds">PURGE GENERAL</button>
-            <button class="btn tiny ghost" id="seeds-purge-filtered-btn" type="button" disabled title="Purge matching currently selected filters">PURGE FILTERED</button>
-            <button class="btn tiny danger ghost" id="seeds-purge-failed-btn" type="button" title="Purge all failed seeds">PURGE FAILED</button>
-            <button class="btn tiny danger" id="seeds-clear-all-pending-btn" type="button" title="Delete ALL pending seeds">CLEAR ALL PENDING</button>
+          <button class="btn danger" id="lib-blacklist-add-btn">Add to blacklist</button>
+          <div id="lib-blacklist" style="margin-top:var(--s3)"></div>
+        </div>
+        <div class="panel" style="margin-top:var(--s4)">
+          <h3 class="panel-title">Pending seeds explorer &amp; safe purge</h3>
+          <div class="grid-3" style="margin-bottom:var(--s3)">
+            <div class="field">
+              <label for="lib-seed-status">Status</label>
+              <select id="lib-seed-status">
+                <option value="pending" selected>Pending</option>
+                <option value="fetched">Fetched</option>
+                <option value="failed">Failed</option>
+                <option value="">All</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="lib-seed-search">Filter seeds</label>
+              <input type="search" id="lib-seed-search" placeholder="Artist name…">
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn danger" id="lib-seed-purge">Safe purge pending</button>
+            </div>
           </div>
-        </div>
-        <div class="filter-row" style="margin-top: 10px;">
-          <input class="input" id="seeds-search" type="search" placeholder="Search seed artist…">
-          <select class="input" id="seeds-status-filter">
-            <option value="">All Statuses</option>
-            <option value="pending" selected>Pending</option>
-            <option value="fetched">Fetched</option>
-            <option value="failed">Failed</option>
-          </select>
-          <select class="input" id="seeds-source-filter">
-            <option value="">All Sources</option>
-          </select>
-          <select class="input" id="seeds-category-filter">
-            <option value="">All Categories</option>
-            <option value="electronic">Electronic</option>
-            <option value="general">General</option>
-          </select>
-        </div>
-        <div class="table-container" id="seeds-table-container">
-          <table class="data-table" id="seeds-table">
-            <thead>
-              <tr>
-                <th>Artist</th>
-                <th>Category</th>
-                <th>Source</th>
-                <th>Priority</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="seeds-tbody">
-              <tr><td colspan="6" class="empty">Loading seeds…</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination-bar" id="seeds-pagination">
-          <button class="btn tiny ghost" id="seeds-prev" type="button">← PREV</button>
-          <span class="page-info" id="seeds-page-info">Page 1</span>
-          <button class="btn tiny ghost" id="seeds-next" type="button">NEXT →</button>
+          <p class="mono" id="lib-seed-summary" style="min-height:1.2em"></p>
+          <div id="lib-seeds"></div>
         </div>
       </div>
+    </section>
 
-      <!-- Blacklist Manager -->
-      <div class="panel hidden" id="panel-blacklist">
-        <div class="panel-head">
-          <h2>Blacklist Manager</h2>
-          <div class="filter-row">
-            <select class="input" id="blacklist-kind-filter">
-              <option value="">All Types</option>
-              <option value="artist">Artists Only</option>
-              <option value="track">Tracks Only</option>
-            </select>
-            <input class="input" id="blacklist-search" type="search" placeholder="Filter blacklist…">
-            <button class="btn tiny primary" id="blacklist-add-btn" type="button">+ ADD BLOCK</button>
-          </div>
-        </div>
-        <div class="table-container">
-          <table class="data-table" id="blacklist-table">
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Display Name</th>
-                <th>Normalized Key</th>
-                <th>Reason</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="blacklist-tbody">
-              <tr><td colspan="5" class="empty">No blacklisted items.</td></tr>
-            </tbody>
-          </table>
-        </div>
+    <!-- ============ Pipeline ============ -->
+    <section class="workspace" id="ws-pipeline" aria-label="Pipeline" hidden>
+      <div class="workspace-head">
+        <h2>Pipeline</h2>
+        <span class="hint">Run catalog jobs one at a time, with live SSE progress.</span>
       </div>
-
       <div class="panel">
-        <div class="panel-head"><h2>Hardware</h2></div>
-        <div id="hardware-table"><div class="empty">Loading…</div></div>
+        <h3 class="panel-title">Job actions</h3>
+        <div class="action-cards">
+          <button class="action-card" data-job="index"><span class="ac-title">Index catalog</span><span class="ac-desc">Embed unindexed tracks into LanceDB</span></button>
+          <button class="action-card" data-job="seed-crawl"><span class="ac-title">Seed crawl</span><span class="ac-desc">Discover seed artists on Deezer</span></button>
+          <button class="action-card" data-job="seed-llm"><span class="ac-title">Seed LLM</span><span class="ac-desc">Expand seeds with the local LLM</span></button>
+          <button class="action-card" data-job="seed-itunes"><span class="ac-title">Seed iTunes</span><span class="ac-desc">Pull seed artists from Apple Music</span></button>
+          <button class="action-card" data-job="fetch-metadata"><span class="ac-title">Fetch metadata</span><span class="ac-desc">Enrich tracks via iTunes (rate-limited)</span></button>
+          <button class="action-card" data-job="fetch-artist"><span class="ac-title">Fetch artist</span><span class="ac-desc">Backfill one artist's discography</span></button>
+          <button class="action-card" data-job="download-tracks"><span class="ac-title">Download tracks</span><span class="ac-desc">Store previews for local playback</span></button>
+          <button class="action-card" data-job="import-local"><span class="ac-title">Import local</span><span class="ac-desc">Scan a folder of local audio files</span></button>
+          <button class="action-card" data-job="analyze-set"><span class="ac-title">Analyze set</span><span class="ac-desc">Segment a DJ mix into passages</span></button>
+        </div>
+        <div class="job-bar" role="progressbar" aria-label="Job progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="margin-top:var(--s3)">
+          <div class="job-bar-fill" id="job-fill"></div>
+        </div>
+        <p class="mono" id="job-status" style="min-height:1.4em">idle — no job running</p>
+        <button class="btn danger" id="job-cancel" disabled>Cancel job</button>
       </div>
-
-      <div class="panel danger">
-        <div class="panel-head"><h2>Danger zone</h2></div>
-        <p class="hint">Drops every stored embedding but keeps track metadata.
-          The next <code>index</code> run re-embeds the catalog.</p>
-        <button class="btn danger" id="reset-embeddings" type="button">RESET EMBEDDINGS</button>
+      <div class="panel" style="margin-top:var(--s4)">
+        <h3 class="panel-title">Live log</h3>
+        <div class="job-log" id="job-log">—</div>
       </div>
     </section>
   </main>
 
-  <!-- --------------------------------------------------------- PLAYER BAR -->
-  <footer class="player hidden" id="player">
-    <div class="player-track">
-      <img class="player-art" id="player-art" alt="" width="40" height="40">
-      <div class="player-labels">
-        <div class="player-title" id="player-title">—</div>
-        <div class="player-artist" id="player-artist">—</div>
+  <!-- ============ Persistent mini deck ============ -->
+  <footer class="deck" id="deck" aria-label="Mini deck">
+    <img class="deck-art" id="deck-art" src="" alt="" hidden>
+    <div class="now-playing">
+      <div class="np-line">
+        <span class="np-title placeholder" id="np-title">Nothing loaded — dig a track to start</span>
+        <span class="chip" id="np-chip" hidden></span>
       </div>
+      <span class="np-artist placeholder" id="np-artist">—</span>
     </div>
-    <div class="player-controls">
-      <button class="player-toggle" id="player-toggle" type="button" aria-label="Play or pause">▶</button>
-      <span class="mono time" id="player-current">0:00</span>
-      <input class="seek" id="player-seek" type="range" min="0" max="30" step="0.1" value="0" aria-label="Seek">
-      <span class="mono time" id="player-duration">0:30</span>
+    <div class="deck-transport">
+      <button class="transport-btn" id="deck-prev" aria-label="Previous track"></button>
+      <button class="transport-btn play" id="deck-play" aria-label="Play or pause"></button>
+      <button class="transport-btn" id="deck-next" aria-label="Next track"></button>
     </div>
-    <div class="player-extra">
-      <input class="volume" id="player-volume" type="range" min="0" max="1" step="0.01" value="0.9" aria-label="Volume">
-      <a class="link" id="player-store" href="#" target="_blank" rel="noopener">STORE ↗</a>
-      <button class="btn tiny" id="player-dig" type="button">DIG &gt;</button>
+    <div class="deck-progress">
+      <span class="deck-time" id="deck-time">0:00 / 0:00</span>
+      <input type="range" id="deck-seek" min="0" max="100" value="0" step="0.1" aria-label="Seek">
     </div>
+    <div class="deck-cue" id="deck-cue">
+      <span>BPM <span class="t-meta" id="cue-bpm">—</span></span>
+      <span class="key-badge" id="cue-key">—</span>
+    </div>
+    <div class="deck-actions">
+      <button class="icon-btn" id="deck-download" title="Download preview" hidden></button>
+      <button class="icon-btn" id="deck-add-set" title="Add to Set Builder playlist" hidden>+ Set</button>
+    </div>
+    <div class="deck-volume">
+      <span class="mono" aria-hidden="true">VOL</span>
+      <input type="range" id="deck-vol" min="0" max="100" value="80" aria-label="Volume">
+    </div>
+    <audio id="deck-audio" preload="none"></audio>
   </footer>
 
-  <!-- ----------------------------------------------- MODAL: FETCH ARTIST -->
-  <div class="modal-backdrop hidden" id="modal-fetch-artist">
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-fetch-artist-title">
-      <div class="modal-head">
-        <h3 id="modal-fetch-artist-title">Fetch Artist Tracks</h3>
-        <button class="btn tiny ghost" id="modal-fetch-artist-close" type="button" aria-label="Close">✕</button>
+  <div class="toast-stack" id="toasts" aria-live="polite"></div>
+
+  <!-- ============ Artist centered modal ============ -->
+  <div class="modal-overlay" id="artist-modal" hidden>
+    <div class="modal-scrim" data-close-modal></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Artist details">
+      <div class="modal-head" id="artist-modal-head">
+        <span class="t-art t-art-lg t-art-mono" id="artist-modal-art" aria-hidden="true"></span>
+        <div class="modal-head-info" id="artist-modal-info"></div>
+        <button class="icon-btn modal-close" id="artist-modal-close" aria-label="Close"></button>
+        <div class="modal-actions">
+          <span id="modal-like-slot"></span>
+          <button class="btn" id="modal-fetch">Fetch Artist</button>
+        </div>
       </div>
-      <form id="form-fetch-artist" autocomplete="off">
-        <div class="modal-body">
-          <label class="field">
-            <span>Artist Name</span>
-            <input class="input" id="fetch-artist-input" type="text" placeholder="e.g. Enrico Sangiuliano or Adam Beyer" required>
-          </label>
-          <label class="field">
-            <span>Tracks to Fetch (max 200)</span>
-            <input class="input mono" id="fetch-artist-count" type="number" min="1" max="200" value="50" required>
-            <div class="preset-buttons" id="fetch-artist-presets">
-              <button class="preset-btn" type="button" data-count="10">10</button>
-              <button class="preset-btn" type="button" data-count="25">25</button>
-              <button class="preset-btn active" type="button" data-count="50">50</button>
-              <button class="preset-btn" type="button" data-count="100">100</button>
-              <button class="preset-btn" type="button" data-count="200">200</button>
-            </div>
-          </label>
-          <div class="params">
-            <label class="field inline" style="margin-bottom: 8px;">
-              <span>Min Year</span>
-              <input class="input mono" id="fetch-artist-min-year" type="number" min="1900" max="2100" placeholder="e.g. 2018" style="width: 100px;">
-            </label>
-            <label class="check">
-              <input type="checkbox" id="fetch-artist-electronic-only">
-              Electronic only (block pop/rock/jazz)
-            </label>
-            <label class="check">
-              <input type="checkbox" id="fetch-artist-auto-index" checked>
-              Auto-index audio embeddings immediately
-            </label>
-            <label class="check">
-              <input type="checkbox" id="fetch-artist-discover">
-              Discover related artists (Deezer graph)
-            </label>
-          </div>
-        </div>
-        <div class="modal-foot">
-          <button class="btn ghost" id="modal-fetch-artist-cancel" type="button">CANCEL</button>
-          <button class="btn primary" type="submit" id="modal-fetch-artist-submit">FETCH NOW</button>
-        </div>
-      </form>
+      <div class="modal-body" id="artist-modal-body"></div>
     </div>
   </div>
 
-  <!-- ----------------------------------------------- MODAL: ARTIST TRACKS -->
-  <div class="modal-backdrop hidden" id="modal-artist-tracks">
-    <div class="modal-dialog modal-tracks-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-artist-tracks-title">
-      <div class="modal-head sticky-head">
-        <div class="modal-title-group">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <button class="heart-btn" id="modal-artist-tracks-like" type="button" title="Like artist">♡</button>
-            <h3 id="modal-artist-tracks-title">—</h3>
-          </div>
-          <span class="modal-subtitle dim mono" id="modal-artist-tracks-count">0 tracks</span>
-        </div>
-        <div class="modal-head-actions">
-          <input class="input compact" id="modal-artist-tracks-filter" type="search" placeholder="Filter tracks…">
-          <button class="btn tiny primary" id="modal-artist-tracks-fetch" type="button">+ FETCH MORE</button>
-          <button class="btn tiny ghost" id="modal-artist-tracks-close" type="button" aria-label="Close">✕</button>
-        </div>
-      </div>
-      <div class="modal-body scrollable-body">
-        <div class="list" id="modal-artist-tracks-list">
-          <div class="empty">Loading tracks…</div>
-        </div>
-      </div>
-    </div>
+  <div class="kbd-legend workspace" aria-label="Keyboard shortcuts">
+    <span><span class="kbd">1–6</span> workspaces</span>
+    <span><span class="kbd">Space</span> play/pause</span>
+    <span><span class="kbd">/</span> focus search</span>
+    <span><span class="kbd">?</span> shortcuts</span>
   </div>
 
-  <!-- -------------------------------------------- MODAL: SIMILAR TO LIKED -->
-  <div class="modal-backdrop hidden" id="modal-similar-artists">
-    <div class="modal-dialog modal-tracks-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-similar-artists-title">
-      <div class="modal-head sticky-head">
-        <div class="modal-title-group">
-          <h3 id="modal-similar-artists-title">Similar to Liked Artists</h3>
-          <span class="modal-subtitle dim mono" id="modal-similar-artists-count">AI recommendations based on your favorite artists</span>
-        </div>
-        <div class="modal-head-actions">
-          <input class="input mono compact" id="similar-artists-min-year" type="number" min="1900" max="2100" placeholder="Min Year" style="width: 90px;">
-          <button class="btn tiny ghost" id="similar-artists-refresh-btn" type="button">REFRESH</button>
-          <button class="btn tiny ghost" id="modal-similar-artists-close" type="button" aria-label="Close">✕</button>
-        </div>
-      </div>
-      <div class="modal-body scrollable-body">
-        <div class="table-container">
-          <table class="data-table" id="similar-artists-table">
-            <thead>
-              <tr>
-                <th>Artist</th>
-                <th>Match</th>
-                <th>Tracks</th>
-                <th>BPM</th>
-                <th>Years</th>
-                <th>Genres</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="similar-artists-tbody">
-              <tr><td colspan="7" class="empty">Loading recommendations…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- --------------------------------------- MODAL: BULK DELETE SELECTED -->
-  <div class="modal-backdrop hidden" id="modal-bulk-delete-confirm">
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-bulk-delete-title">
-      <div class="modal-head">
-        <h3 id="modal-bulk-delete-title">Delete Selected Artists</h3>
-        <button class="btn tiny ghost" id="modal-bulk-delete-close" type="button" aria-label="Close">✕</button>
-      </div>
-      <div class="modal-body">
-        <p style="margin-bottom: 12px;">Are you sure you want to delete <strong id="bulk-delete-confirm-count">0</strong> selected artists and all their tracks from the catalog?</p>
-        <div class="notice-pill warning hidden" id="bulk-delete-blacklist-notice" style="margin-bottom: 12px;">
-          <span>⚠ These artists will also be added to the <strong>Blacklist</strong> to block future indexing/fetching.</span>
-        </div>
-        <p class="hint">Local audio files on disk will <strong>NOT</strong> be deleted (only database rows and vectors).</p>
-      </div>
-      <div class="modal-foot">
-        <button class="btn ghost" id="modal-bulk-delete-cancel" type="button">CANCEL</button>
-        <button class="btn danger" id="modal-bulk-delete-confirm-btn" type="button">DELETE ARTISTS</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ----------------------------------------- MODAL: BULK CLEANUP RULES -->
-  <div class="modal-backdrop hidden" id="modal-bulk-cleanup">
-    <div class="modal-dialog modal-cleanup-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-bulk-cleanup-title">
-      <div class="modal-head sticky-head">
-        <div class="modal-title-group">
-          <h3 id="modal-bulk-cleanup-title">Rule-Based Bulk Cleanup</h3>
-          <span class="modal-subtitle dim mono">Filter, preview, and delete low-taste or off-genre artists</span>
-        </div>
-        <button class="btn tiny ghost" id="modal-bulk-cleanup-close" type="button" aria-label="Close">✕</button>
-      </div>
-      <div class="modal-body scrollable-body">
-        <div class="cleanup-grid">
-          <div class="cleanup-rules-pane">
-            <div class="panel-subhead">Filter Criteria</div>
-            <label class="field">
-              <span>Genre</span>
-              <select class="input" id="bulk-cleanup-genre">
-                <option value="">Any Genre</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Taste Match below (%)</span>
-              <input class="input mono" id="bulk-cleanup-taste" type="number" min="0" max="100" placeholder="e.g. 55">
-              <div class="preset-buttons" id="bulk-cleanup-taste-presets">
-                <button class="preset-btn" type="button" data-val="50">&lt; 50%</button>
-                <button class="preset-btn" type="button" data-val="60">&lt; 60%</button>
-                <button class="preset-btn" type="button" data-val="70">&lt; 70%</button>
-              </div>
-            </label>
-            <div class="panel-subhead" style="margin-top: 14px;">Safety Guards</div>
-            <label class="check">
-              <input type="checkbox" id="bulk-cleanup-protect-liked" checked>
-              <span>Protect Liked Artists (♥)</span>
-            </label>
-            <label class="check">
-              <input type="checkbox" id="bulk-cleanup-protect-local" checked>
-              <span>Protect Artists with LOCAL files</span>
-            </label>
-            <div class="panel-subhead" style="margin-top: 14px;">Blacklist Action</div>
-            <label class="check">
-              <input type="checkbox" id="bulk-cleanup-blacklist" checked>
-              <span>Also Blacklist matched artists (never fetch again)</span>
-            </label>
-            <label class="field" style="margin-top: 6px;">
-              <span>Reason (optional)</span>
-              <input class="input" id="bulk-cleanup-reason" type="text" placeholder="e.g. Ambient &amp; non-techno cleanup">
-            </label>
-          </div>
-          <div class="cleanup-preview-pane">
-            <div class="panel-subhead">Live Preview</div>
-            <div class="cleanup-banner" id="bulk-cleanup-banner">
-              Set a Taste % threshold or pick a Genre to preview
-            </div>
-            <div class="cleanup-preview-list-wrapper">
-              <div class="cleanup-preview-list" id="bulk-cleanup-preview-list">
-                <div class="empty">No criteria specified yet.</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn ghost" id="modal-bulk-cleanup-cancel" type="button">CANCEL</button>
-        <button class="btn danger" id="modal-bulk-cleanup-submit" type="button" disabled>DELETE &amp; BLOCK 0 ARTISTS</button>
-      </div>
-    </div>
-  </div>
-
-  <script type="module" src="/js/main.js"></script>
+  <script type="module" src="./js/main.js"></script>
 </body>
 </html>

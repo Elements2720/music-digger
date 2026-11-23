@@ -10,7 +10,9 @@ the composition root inside the lifespan.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,6 +28,35 @@ LOGGER = logging.getLogger(__name__)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 FRONTEND_DIR = REPOSITORY_ROOT / "frontend"
+
+
+def _install_windows_loop_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
+    """Silence Windows proactor noise from ``206`` audio-range scrubbing.
+
+    When the browser aborts an audio ``Range`` request mid-stream, the
+    ``_ProactorBasePipeTransport`` surfaces ``ConnectionResetError``
+    (winerror 10054) as a stray "Future exception was never retrieved" log.
+    It is expected client behaviour, so drop it; everything else keeps the
+    previous handling.
+    """
+
+    if sys.platform != "win32":
+        return
+    previous_handler = loop.get_exception_handler()
+
+    def handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        exc = context.get("exception")
+        if (
+            isinstance(exc, ConnectionResetError)
+            and getattr(exc, "winerror", None) == 10054
+        ):
+            return
+        if previous_handler is not None:
+            previous_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
 
 
 def create_app(container: Any | None = None) -> FastAPI:
@@ -46,6 +77,7 @@ def create_app(container: Any | None = None) -> FastAPI:
             real_container = Container()
             await real_container.start()
             app.state.container = real_container
+        _install_windows_loop_exception_handler(asyncio.get_running_loop())
         LOGGER.info("DigDeeper Local API ready")
         try:
             yield

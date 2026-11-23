@@ -1,287 +1,271 @@
-/* DIG tab: pick a reference track, then similarity-dig or vibe-search. */
+/* Dig workspace: three strictly isolated tabs sharing one results renderer.
+ * - match: visual track picker -> GET /api/dig/{id}
+ * - foryou: taste ranking -> GET /api/tracks/recent + filters
+ * - vibe: CLAP text search -> POST /api/vibe-search
+ */
 
 import { api } from "../api.js";
-import { currentTrack, isAudioPlaying, playTrack } from "../player.js";
-import { emit, on, state } from "../state.js";
-import { artwork, camelotBadge, chips, el, renderMatches } from "../ui.js";
+import { emptyHTML, errorHTML, bindRetries, esc, toast } from "../ui.js";
+import { trackRowHTML, bindTrackRows } from "../components.js";
 
-let mounted = false;
-let searchTimer = null;
-let pickerTracks = [];
-let activeId = null;
+let currentMode = "match";
+let selectedTrack = null;
+let pickerCache = [];
 
-function $(id) {
-  return document.getElementById(id);
+function modePanels() {
+  return document.querySelectorAll("[data-dig-panel]");
 }
 
-function pickerItem(track) {
-  const isPlaying = currentTrack()?.id === track.id && isAudioPlaying();
-  const playBtn = el("button", {
-    class: `icon-btn picker-play-btn${isPlaying ? " playing" : ""}`,
-    type: "button",
-    title: isPlaying ? "Pause preview" : "Play preview",
-    text: isPlaying ? "❚❚" : "▶",
+function selectMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll("#dig-modes .mode").forEach((btn) => {
+    const active = btn.dataset.mode === mode;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
   });
-  playBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    playTrack(track);
+  modePanels().forEach((panel) => {
+    panel.hidden = panel.dataset.digPanel !== mode;
   });
+}
 
-  const item = el(
-    "button",
-    {
-      class: `picker-item${track.id === activeId ? " active" : ""}`,
-      type: "button",
-      "data-track-id": track.id,
-    },
-    [
-      artwork(track.artwork_url, "picker-art"),
-      el("div", { class: "picker-copy" }, [
-        el("div", { class: "picker-title", text: track.title }),
-        el("div", { class: "picker-artist", text: track.artist }),
-      ]),
-      el("div", { class: "picker-badges" }, [
-        playBtn,
-        track.source === "local" || track.local_path
-          ? el("span", { class: "chip local", text: "LOCAL" })
-          : null,
-        track.bpm !== null
-          ? el("span", { class: "chip bpm", text: String(Math.round(track.bpm)) })
-          : null,
-        track.key ? camelotBadge(track.key, "chip") : null,
-      ]),
-    ]
+/* ---------- Match a Track ---------- */
+
+function renderPicker(tracks) {
+  pickerCache = tracks;
+  const el = document.getElementById("dig-match-picker");
+  if (!tracks.length) {
+    el.innerHTML = emptyHTML("No tracks found", "Try a different search.");
+    return;
+  }
+  el.innerHTML = `<div class="track-list">${tracks
+    .map(
+      (t) => `
+  <button class="track-row picker-row" data-pick="${esc(t.id)}">
+    <span class="t-meta primary">${t.taste_match_percent ?? 0}%</span>
+    <div style="min-width:0; flex:1; text-align:left">
+      <div class="t-title">${esc(t.title)}</div>
+      <div class="t-artist">${esc(t.artist)}</div>
+    </div>
+    <span class="t-meta primary">${t.bpm != null ? t.bpm + " bpm" : "—"}</span>
+  </button>`,
+    )
+    .join("")}</div>`;
+  el.querySelectorAll("[data-pick]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      selectedTrack = pickerCache.find((t) => t.id === btn.dataset.pick);
+      if (selectedTrack) runMatch();
+    }),
   );
-  item.addEventListener("click", () => selectTrack(track));
-  return item;
 }
 
-function renderPicker() {
-  const list = $("track-results");
-  list.replaceChildren();
-  if (pickerTracks.length === 0) {
-    list.append(el("div", { class: "empty", text: "No tracks found." }));
+function renderSelected() {
+  const wrap = document.getElementById("dig-match-source");
+  const el = document.getElementById("dig-match-selected");
+  if (!selectedTrack) {
+    wrap.hidden = true;
+    el.innerHTML = "";
     return;
   }
-  for (const track of pickerTracks) list.append(pickerItem(track));
+  wrap.hidden = false;
+  el.innerHTML = `
+  <h3 class="panel-title">Digging around</h3>
+  ${trackRowHTML(selectedTrack)}`;
+  bindTrackRows(el, [selectedTrack]);
 }
 
-function renderReference(track) {
-  const card = $("reference-card");
-  if (!track) {
-    card.classList.add("hidden");
-    card.replaceChildren();
-    $("dig-hint").textContent = "pick a reference first";
+async function runMatch() {
+  if (!selectedTrack) {
+    toast("Pick a track first", "error");
     return;
   }
-  card.classList.remove("hidden");
-  const isPlaying = currentTrack()?.id === track.id && isAudioPlaying();
-  const playBtn = el("button", {
-    class: `icon-btn reference-play-btn${isPlaying ? " playing" : ""}`,
-    type: "button",
-    title: isPlaying ? "Pause preview" : "Play preview",
-    text: isPlaying ? "❚❚" : "▶",
-  });
-  playBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    playTrack(track);
-  });
-
-  const heartBtn = el("button", {
-    class: "heart-btn",
-    type: "button",
-    title: "Like artist",
-    text: "♡",
-  });
-  api
-    .likedArtists()
-    .then((res) => {
-      const list = res?.liked_artists ?? (Array.isArray(res) ? res : []);
-      const isLiked = list.some(
-        (a) =>
-          (a.artist_name || a.artist || "").toLowerCase() ===
-          (track.artist || "").toLowerCase()
-      );
-      heartBtn.classList.toggle("liked", isLiked);
-      heartBtn.textContent = isLiked ? "♥" : "♡";
-      heartBtn.title = isLiked ? "Unlike artist" : "Like artist";
-    })
-    .catch(() => {});
-
-  heartBtn.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    const wasLiked = heartBtn.classList.contains("liked");
-    heartBtn.disabled = true;
-    try {
-      if (wasLiked) {
-        await api.unlikeArtist(track.artist);
-        heartBtn.classList.remove("liked");
-        heartBtn.textContent = "♡";
-        heartBtn.title = "Like artist";
-        emit("toast", `Unliked "${track.artist}"`);
-        emit("artist:liked", { artist: track.artist, liked: false });
-      } else {
-        await api.likeArtist(track.artist);
-        heartBtn.classList.add("liked");
-        heartBtn.textContent = "♥";
-        heartBtn.title = "Unlike artist";
-        emit("toast", `Liked "${track.artist}"`);
-        emit("artist:liked", { artist: track.artist, liked: true });
-      }
-    } catch (err) {
-      emit("toast", err.message);
-    } finally {
-      heartBtn.disabled = false;
+  renderSelected();
+  const el = document.getElementById("dig-match-results");
+  try {
+    el.innerHTML = emptyHTML("searching…", "");
+    const params = { limit: Number(document.getElementById("dig-limit").value) };
+    const tol = document.getElementById("dig-bpm-tol").value;
+    if (tol) params.bpm_tolerance = Number(tol);
+    params.harmonic = document.getElementById("dig-harmonic").value === "true";
+    const data = await api.dig(selectedTrack.id, params);
+    const matches = data.matches ?? [];
+    if (!matches.length) {
+      el.innerHTML = emptyHTML("No matches", "The index returned nothing for this track.");
+      return;
     }
-  });
+    el.innerHTML = `<div class="track-list">${matches.map((t) => trackRowHTML(t, { similarity: t.similarity })).join("")}</div>`;
+    bindTrackRows(el, matches);
+  } catch (err) {
+    el.innerHTML = errorHTML(err.message, "dig-match-retry");
+    bindRetries(el, runMatch);
+  }
+}
 
-  card.replaceChildren(
-    el("div", { class: "reference-main" }, [
-      playBtn,
-      el("div", { class: "track-main" }, [
-        artwork(track.artwork_url, "row-art"),
-        el("div", { class: "picker-copy" }, [
-          el("div", { class: "row-title", text: track.title }),
-          el(
-            "div",
-            {
-              class: "row-artist",
-              style: "display: flex; align-items: center; gap: 4px;",
-            },
-            [el("span", { text: track.artist }), heartBtn]
-          ),
-        ]),
-      ]),
-    ]),
-    chips(track)
+/* ---------- For You ---------- */
+
+async function runForYou() {
+  const el = document.getElementById("dig-foryou-results");
+  try {
+    el.innerHTML = emptyHTML("ranking…", "");
+    const limit = Number(document.getElementById("dig-foryou-limit").value);
+    const genre = document.getElementById("dig-foryou-genre").value.trim();
+    const data = await api.recentTracks(limit);
+    let tracks = data.tracks ?? [];
+    if (genre) {
+      const needle = genre.toLowerCase();
+      tracks = tracks.filter((t) => String(t.genre ?? "").toLowerCase().includes(needle));
+    }
+    const source = document.getElementById("dig-foryou-source").value;
+    if (source === "local") tracks = tracks.filter((t) => t.has_local_file);
+    else if (source === "liked") tracks = tracks.filter((t) => t.is_liked);
+    tracks.sort((a, b) => (b.taste_match_percent ?? 0) - (a.taste_match_percent ?? 0));
+    if (!tracks.length) {
+      el.innerHTML = emptyHTML("Nothing to rank", "Widen the filters or run the pipeline first.");
+      return;
+    }
+    el.innerHTML = `<div class="track-list">${tracks.map((t) => trackRowHTML(t)).join("")}</div>`;
+    bindTrackRows(el, tracks);
+  } catch (err) {
+    el.innerHTML = errorHTML(err.message, "dig-foryou-retry");
+    bindRetries(el, runForYou);
+  }
+}
+
+/* ---------- Vibe & Catalog ---------- */
+
+async function runVibe(queryOverride = null) {
+  const input = document.getElementById("dig-vibe-text");
+  const errEl = document.getElementById("dig-vibe-error");
+  const el = document.getElementById("dig-vibe-results");
+  errEl.textContent = "";
+  const query = (queryOverride ?? input.value).trim();
+  if (!query) {
+    errEl.textContent = "Describe the vibe first.";
+    return;
+  }
+  if (queryOverride != null) input.value = queryOverride;
+  try {
+    const data = await api.vibeSearch({
+      query,
+      limit: Number(document.getElementById("dig-vibe-limit").value),
+    });
+    const vibeTracks = data.matches ?? [];
+    if (!vibeTracks.length) {
+      el.innerHTML = emptyHTML("No vibe matches", "Try different words.");
+      return;
+    }
+    el.innerHTML = `<div class="track-list">${vibeTracks.map((t) => trackRowHTML(t, { similarity: t.similarity })).join("")}</div>`;
+    bindTrackRows(el, vibeTracks);
+  } catch (err) {
+    errEl.textContent = err.message;
+    el.innerHTML = errorHTML(err.message, "dig-vibe-retry");
+    bindRetries(el, () => runVibe(query));
+  }
+}
+
+/* Exact-metadata catalog filter. Deep links from the Camelot wheel / BPM
+ * histogram land here — CLAP text search is never used for key/BPM queries. */
+
+function numOrNull(value) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function runCatalogFilter(preset = {}) {
+  const errEl = document.getElementById("dig-cat-error");
+  const el = document.getElementById("dig-cat-results");
+  errEl.textContent = "";
+  if (preset.key) document.getElementById("dig-cat-key").value = preset.key;
+  if (preset.bpm_min != null) document.getElementById("dig-cat-bpm-min").value = preset.bpm_min;
+  if (preset.bpm_max != null) document.getElementById("dig-cat-bpm-max").value = preset.bpm_max;
+  const params = {
+    q: document.getElementById("dig-cat-q").value.trim() || undefined,
+    key: document.getElementById("dig-cat-key").value || undefined,
+    bpm_min: numOrNull(document.getElementById("dig-cat-bpm-min").value) ?? undefined,
+    bpm_max: numOrNull(document.getElementById("dig-cat-bpm-max").value) ?? undefined,
+    source: document.getElementById("dig-cat-source").value || undefined,
+    limit: 100,
+  };
+  if (!params.q && !params.key && params.bpm_min == null && params.bpm_max == null && !params.source) {
+    errEl.textContent = "Set at least one filter (text, key, BPM or source).";
+    return;
+  }
+  try {
+    el.innerHTML = emptyHTML("filtering…", "");
+    const data = await api.catalogFilter(params);
+    const tracks = data.tracks ?? [];
+    if (!tracks.length) {
+      el.innerHTML = emptyHTML("No tracks match", "Loosen the filters and try again.");
+      return;
+    }
+    el.innerHTML = `<div class="track-list">${tracks.map((t) => trackRowHTML(t)).join("")}</div>`;
+    bindTrackRows(el, tracks);
+  } catch (err) {
+    errEl.textContent = err.message;
+    el.innerHTML = errorHTML(err.message, "dig-cat-retry");
+    bindRetries(el, () => runCatalogFilter(preset));
+  }
+}
+
+/** Deep link from the dashboard: switch to the catalog panel and apply the
+ * exact filter — never feed "tracks in key 12" to CLAP vibe search. */
+function openCatalogWith(preset) {
+  selectMode("vibe");
+  runCatalogFilter(preset);
+}
+
+/* ---------- setup ---------- */
+
+export function setupDig() {
+  document.querySelectorAll("#dig-modes .mode").forEach((btn) =>
+    btn.addEventListener("click", () => selectMode(btn.dataset.mode)),
   );
-  $("dig-hint").textContent = "digging from this track";
-}
 
-export function selectTrack(track) {
-  if (!track) return;
-  state.reference = track;
-  activeId = track.id;
-  renderPicker();
-  renderReference(track);
-  runDig();
-}
-
-async function runDig() {
-  const reference = state.reference;
-  if (!reference) return;
-  const results = $("dig-results");
-  results.replaceChildren(el("div", { class: "empty", text: "Digging…" }));
-
-  const tolerance = $("dig-bpm-tolerance").value.trim();
-  const filters = {
-    limit: Number($("dig-limit").value) || 20,
-    harmonic: $("dig-harmonic").checked,
-    exclude_heard: $("dig-exclude-heard").checked,
-  };
-  if (tolerance) filters.bpm_tolerance = Number(tolerance);
-  const genre = $("dig-genre").value.trim();
-  if (genre) filters.genre = genre;
-  const minYear = $("dig-min-year") ? $("dig-min-year").value.trim() : "";
-  if (minYear) filters.min_year = Number(minYear);
-
-  try {
-    const body = await api.dig(reference.id, filters);
-    if (body.reference) {
-      state.reference = body.reference;
-      renderReference(body.reference);
-    }
-    renderMatches(results, body.matches, "No similar tracks yet.");
-  } catch (error) {
-    results.replaceChildren(el("div", { class: "empty", text: error.message }));
-  }
-}
-
-async function runVibe(event) {
-  event?.preventDefault();
-  const query = $("vibe-query").value.trim();
-  if (!query) return;
-  const results = $("vibe-results");
-  results.replaceChildren(el("div", { class: "empty", text: "Listening…" }));
-
-  const payload = {
-    query,
-    limit: Number($("vibe-limit").value) || 20,
-    exclude_heard: $("vibe-exclude-heard").checked,
-  };
-  const genre = $("vibe-genre").value.trim();
-  if (genre) payload.genre = genre;
-
-  try {
-    const body = await api.vibeSearch(payload);
-    renderMatches(results, body.matches, "Nothing matched that description.");
-  } catch (error) {
-    results.replaceChildren(el("div", { class: "empty", text: error.message }));
-  }
-}
-
-async function loadRecent() {
-  try {
-    const body = await api.recentTracks(30);
-    pickerTracks = body.tracks;
-    renderPicker();
-  } catch (error) {
-    $("track-results").replaceChildren(
-      el("div", { class: "empty", text: error.message })
-    );
-  }
-}
-
-async function search(query) {
-  if (!query.trim()) {
-    await loadRecent();
-    return;
-  }
-  try {
-    const body = await api.searchTracks(query, 30);
-    pickerTracks = body.tracks;
-    renderPicker();
-  } catch (error) {
-    $("track-results").replaceChildren(
-      el("div", { class: "empty", text: error.message })
-    );
-  }
-}
-
-export function mount() {
-  if (mounted) return;
-  mounted = true;
-
-  $("track-search").addEventListener("input", (event) => {
+  let searchTimer = null;
+  document.getElementById("dig-match-search").addEventListener("input", (e) => {
     clearTimeout(searchTimer);
-    const value = event.target.value;
-    searchTimer = setTimeout(() => search(value), 220);
-  });
-
-  $("dig-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    runDig();
-  });
-  $("vibe-form").addEventListener("submit", runVibe);
-
-  on("player:state", () => {
-    if (state.reference) {
-      renderReference(state.reference);
-    }
-    const list = $("track-results");
-    if (list) {
-      for (const btn of list.querySelectorAll(".picker-play-btn")) {
-        const item = btn.closest(".picker-item");
-        const trackId = item?.dataset.trackId;
-        const isPlaying = trackId && currentTrack()?.id === trackId && isAudioPlaying();
-        btn.textContent = isPlaying ? "❚❚" : "▶";
-        btn.classList.toggle("playing", isPlaying);
-        btn.title = isPlaying ? "Pause preview" : "Play preview";
+    const q = e.target.value.trim();
+    if (q.length < 2) return;
+    searchTimer = setTimeout(async () => {
+      try {
+        const data = await api.searchTracks(q, 8);
+        renderPicker(data.tracks ?? []);
+      } catch (err) {
+        toast(err.message, "error");
       }
-    }
+    }, 250);
   });
 
-  loadRecent();
-}
+  document.getElementById("dig-foryou-run").addEventListener("click", runForYou);
+  document.getElementById("dig-vibe-run").addEventListener("click", () => runVibe());
+  document.getElementById("dig-vibe-text").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runVibe();
+  });
 
-export { runDig };
+  document.getElementById("dig-cat-run").addEventListener("click", () => runCatalogFilter());
+  document.getElementById("dig-cat-reset").addEventListener("click", () => {
+    document.getElementById("dig-cat-q").value = "";
+    document.getElementById("dig-cat-key").value = "";
+    document.getElementById("dig-cat-bpm-min").value = "";
+    document.getElementById("dig-cat-bpm-max").value = "";
+    document.getElementById("dig-cat-source").value = "";
+    document.getElementById("dig-cat-results").innerHTML = "";
+  });
+
+  // Camelot key dropdown: 1A..12A / 1B..12B
+  const keySelect = document.getElementById("dig-cat-key");
+  for (let n = 1; n <= 12; n++) {
+    for (const letter of ["A", "B"]) {
+      const opt = document.createElement("option");
+      opt.value = `${n}${letter}`;
+      opt.textContent = `${n}${letter}`;
+      keySelect.appendChild(opt);
+    }
+  }
+
+  import("../events.js").then(({ on }) => {
+    on("catalog:filter", (detail) => openCatalogWith(detail ?? {}));
+  });
+
+  selectMode("match");
+  return () => {};
+}

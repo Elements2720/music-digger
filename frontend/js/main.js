@@ -1,87 +1,97 @@
-/* Mission Control bootstrap: tabs, health badge, toasts, view lifecycle. */
+/* Mission Control bootstrap: tabs, health badge, keyboard shortcuts, view lifecycle. */
 
 import { api } from "./api.js";
-import { on, state } from "./state.js";
+import { hydrateLikedArtists } from "./components.js";
+import { setupDashboard } from "./views/dashboard.js";
+import { setupDig } from "./views/dig.js";
+import { setupBuilder } from "./views/builder.js";
+import { setupMix } from "./views/mix.js";
+import { setupLibrary } from "./views/library.js";
+import { setupPipeline } from "./views/pipeline.js";
 import { setupPlayer } from "./player.js";
-import { toast } from "./ui.js";
-import * as runView from "./views/run.js";
-import * as digView from "./views/dig.js";
-import * as setsView from "./views/sets.js";
-import * as builderView from "./views/builder.js";
-import * as statsView from "./views/stats.js";
 
-const VIEWS = {
-  run: runView,
-  dig: digView,
-  sets: setsView,
-  builder: builderView,
-  stats: statsView,
-};
+const teardowns = [];
 
-let currentTab = null;
-
-function showTab(name) {
-  if (!VIEWS[name] || name === currentTab) return;
-  currentTab = name;
-  state.tab = name;
-  for (const button of document.querySelectorAll(".tab")) {
-    button.classList.toggle("active", button.dataset.tab === name);
-  }
-  for (const panel of document.querySelectorAll(".tab-panel")) {
-    panel.classList.toggle("active", panel.id === `tab-${name}`);
-  }
-  VIEWS[name].mount();
-  window.scrollTo({ top: 0, behavior: "smooth" });
+function activate(tabId) {
+  document.querySelectorAll("[data-tab]").forEach((btn) => {
+    const active = btn.dataset.tab === tabId;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll(".workspace").forEach((section) => {
+    section.hidden = section.id !== `ws-${tabId}`;
+  });
 }
 
-async function checkHealth() {
-  const dot = document.getElementById("health-dot");
+function currentTab() {
+  const active = document.querySelector("[data-tab].active");
+  return active ? active.dataset.tab : "dashboard";
+}
+
+function drawHealth(ok, detail) {
   const label = document.getElementById("health-label");
+  const dot = document.getElementById("health-dot");
+  if (label) label.textContent = detail;
+  if (dot) dot.classList.toggle("ok", ok), dot.classList.toggle("bad", !ok);
+}
+
+async function refreshHealth() {
   try {
     await api.health();
-    dot.className = "status-dot ok";
-    label.textContent = "local";
+    drawHealth(true, "API online");
   } catch {
-    dot.className = "status-dot bad";
-    label.textContent = "offline";
+    drawHealth(false, "API offline");
   }
 }
 
-function bind() {
-  for (const button of document.querySelectorAll(".tab")) {
-    button.addEventListener("click", () => showTab(button.dataset.tab));
+async function refreshStats() {
+  try {
+    const stats = await api.stats();
+    const tracks = document.getElementById("stat-tracks");
+    const artists = document.getElementById("stat-artists");
+    if (tracks) tracks.textContent = String(stats.tracks ?? 0);
+    if (artists) artists.textContent = String(stats.artists ?? 0);
+  } catch {
+    /* stats are decorative; the badge shows connectivity */
   }
+}
 
-  on("tab:show", (name) => showTab(name));
-  on("toast", (message) => toast(message));
-  on("dig:track", (track) => {
-    showTab("dig");
-    digView.selectTrack(track);
-  });
-  on("builder:add-track", (track) => {
-    showTab("builder");
-    builderView.addTrackToSet(track);
-  });
-
-  // A finished job can change counts or add a set: refresh whatever is open.
-  on("job:finished", (job) => {
-    if (!job || job.status !== "done") return;
-    if (job.kind === "index" || job.kind === "fetch-metadata") {
-      statsView.loadStats();
-    }
-    if (job.kind === "analyze-set") {
-      setsView.loadSets();
+function setupTabs() {
+  document.querySelectorAll("[data-tab]").forEach((btn) =>
+    btn.addEventListener("click", () => activate(btn.dataset.tab)),
+  );
+  document.addEventListener("keydown", (e) => {
+    if (e.altKey && e.key >= "1" && e.key <= "9") {
+      const tabs = [...document.querySelectorAll("[data-tab]")];
+      const tab = tabs[Number(e.key) - 1];
+      if (tab) activate(tab.dataset.tab);
     }
   });
+}
 
+async function main() {
+  setupTabs();
+  await hydrateLikedArtists();
+  const loadDashboard = setupDashboard();
+  teardowns.push(loadDashboard);
+  loadDashboard();
+  teardowns.push(setupDig());
+  teardowns.push(setupBuilder());
+  teardowns.push(setupMix());
+  teardowns.push(setupLibrary());
+  teardowns.push(setupPipeline());
   setupPlayer();
-  showTab("run");
-  checkHealth();
-  setInterval(checkHealth, 10000);
+  // Boot default only: never clobber a tab the user already clicked while
+  // the boot fetches above were still in flight.
+  if (currentTab() === "dashboard") activate("dashboard");
+  await Promise.all([refreshHealth(), refreshStats()]);
+  setInterval(refreshHealth, 30000);
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", bind, { once: true });
-} else {
-  bind();
-}
+main().catch((err) => {
+  console.error("bootstrap failed", err);
+  document.body?.insertAdjacentHTML(
+    "afterbegin",
+    `<div class="toast error" style="position:fixed;top:1rem;left:50%;transform:translateX(-50%);z-index:999">Bootstrap failed: ${err.message}</div>`,
+  );
+});

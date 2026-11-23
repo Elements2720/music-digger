@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
-_DEFAULT_RESOLVER: Final[Path] = Path(__file__).resolve().parent / "amdl_resolver.cjs"
 _INVALID_FILENAME_CHARS: Final[re.Pattern[str]] = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _FONT_PATTERN: Final[re.Pattern[str]] = re.compile(
     r".*\.(woff2?|ttf|otf|eot)(\?.*)?$", re.IGNORECASE
@@ -53,8 +52,6 @@ class AmdlHttpTrackDownloader(ITrackDownloader):
         timeout_seconds: float = 60.0,
         ffmpeg_binary: str = "ffmpeg",
         ffprobe_binary: str = "ffprobe",
-        node_binary: str = "node",
-        resolver_script: Path | None = None,
         http_client: httpx.AsyncClient | None = None,
         playwright_storage_dir: Path | str | None = None,
         playwright_idle_timeout: float = 120.0,
@@ -63,8 +60,6 @@ class AmdlHttpTrackDownloader(ITrackDownloader):
         self._timeout_seconds = timeout_seconds
         self._ffmpeg_binary = ffmpeg_binary
         self._ffprobe_binary = ffprobe_binary
-        self._node_binary = node_binary
-        self._resolver_script = resolver_script or _DEFAULT_RESOLVER
         self._http_client = http_client
         self._playwright_storage_dir = (
             Path(playwright_storage_dir).resolve()

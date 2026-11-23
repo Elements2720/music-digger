@@ -328,15 +328,26 @@ class HybridTrackRepository(ITrackRepository):
         return tuple(row_to_track(row) for row in rows)
 
     async def list_embedded(
-        self, limit: int = 20, *, offset: int = 0
+        self, limit: int = 20, *, offset: int = 0, features_first: bool = False
     ) -> Sequence[Track]:
+        """Return embedded tracks, most recently indexed first.
+
+        With ``features_first`` the rows whose BPM and Camelot key have not
+        been extracted yet sort after fully analysed tracks, so a "recent"
+        panel never leads with rows that would render as ``-``.
+        """
         if limit <= 0:
             return ()
+        feature_rank = (
+            "CASE WHEN bpm IS NULL OR bpm = '' THEN 1 ELSE 0 END, "
+            if features_first
+            else ""
+        )
         rows = await self._sqlite.fetchall(
-            """
+            f"""
             SELECT * FROM tracks
             WHERE is_embedded = 1
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY {feature_rank}updated_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -637,7 +648,12 @@ class HybridTrackRepository(ITrackRepository):
                 GROUP_CONCAT(DISTINCT genre) AS genres_concat,
                 GROUP_CONCAT(DISTINCT source) AS sources_concat,
                 MIN(id) AS sample_id,
-                MIN(title) AS sample_title
+                MIN(title) AS sample_title,
+                (
+                    SELECT t2.artwork_url FROM tracks t2
+                    WHERE t2.artist = tracks.artist AND t2.artwork_url IS NOT NULL
+                    ORDER BY t2.updated_at DESC LIMIT 1
+                ) AS artwork_url
             FROM tracks
             {where}
             GROUP BY artist
@@ -655,7 +671,12 @@ class HybridTrackRepository(ITrackRepository):
                 GROUP_CONCAT(DISTINCT genre) AS genres_concat,
                 GROUP_CONCAT(DISTINCT source) AS sources_concat,
                 MIN(id) AS sample_id,
-                MIN(title) AS sample_title
+                MIN(title) AS sample_title,
+                (
+                    SELECT t2.artwork_url FROM tracks t2
+                    WHERE t2.artist = tracks.artist AND t2.artwork_url IS NOT NULL
+                    ORDER BY t2.updated_at DESC LIMIT 1
+                ) AS artwork_url
             FROM tracks
             {where}
             GROUP BY artist
@@ -697,6 +718,7 @@ class HybridTrackRepository(ITrackRepository):
                     if row["year_max"] is not None
                     else None,
                     taste_match_percent=taste_pct,
+                    artwork_url=row["artwork_url"],
                     is_liked=is_liked,
                 )
             )
