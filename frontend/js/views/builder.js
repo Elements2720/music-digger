@@ -13,6 +13,15 @@ let playlist = []; // ordered tracks in the working set
 let savedSets = [];
 let lastEvals = [];
 
+// Set-helper endpoints return scores on a 0–100 scale; tolerate legacy 0–1 values.
+function pctNum(s) {
+  return s == null ? null : s <= 1 ? s * 100 : s;
+}
+function pctLabel(s) {
+  const p = pctNum(s);
+  return p == null ? "—" : `${Number(p.toFixed(1))}%`;
+}
+
 /* ---------- working playlist ---------- */
 
 function renderPlaylist() {
@@ -26,7 +35,7 @@ function renderPlaylist() {
       const ev = lastEvals[i - 1];
       const badge =
         ev != null
-          ? `<button class="connector-badge ${ev.score >= 0.66 ? "good" : ev.score >= 0.33 ? "mid" : "bad"}" data-ev="${i - 1}" title="harmonic ${ev.harmonic_score * 100}% · bpm ${ev.bpm_score * 100}% · ${esc(ev.camelot_move ?? "")} ${ev.bpm_delta != null ? ev.bpm_delta : ""}">${ev.score * 100}%</button>`
+          ? `<button class="connector-badge ${ev.score >= 66 ? "good" : ev.score >= 33 ? "mid" : "bad"}" data-ev="${i - 1}" title="harmonic ${pctLabel(ev.harmonic_score)} · bpm ${pctLabel(ev.bpm_score)} · ${esc(ev.camelot_move ?? "")} ${ev.bpm_delta != null ? ev.bpm_delta : ""}">${pctLabel(ev.score)}</button>`
           : `<span class="connector-dot" aria-hidden="true"></span>`;
       return `
   ${i > 0 ? `<div class="connector">${badge}</div>` : ""}
@@ -76,9 +85,8 @@ async function searchPool() {
   const el = document.getElementById("builder-pool");
   if (q.length < 2) return;
   try {
-    const params = new URLSearchParams({ q, limit: "12" });
-    const data = await api.searchTracks(params);
-    const tracks = data.results ?? [];
+    const data = await api.searchTracks(q, 12);
+    const tracks = data.tracks ?? data.results ?? [];
     if (!tracks.length) {
       el.innerHTML = emptyHTML("No matches", "Try another query.");
       return;
@@ -123,8 +131,8 @@ function showEval(index) {
   <h3 class="panel-title">Transition ${index + 1} → ${index + 2}</h3>
   <p class="mono">${esc(from?.title ?? "")} → ${esc(to?.title ?? "")}</p>
   <div class="grid-3">
-    <div class="stat-card"><span class="stat-value">${ev.score * 100}%</span><span class="stat-label">overall</span></div>
-    <div class="stat-card"><span class="stat-value">${ev.harmonic_score * 100}%</span><span class="stat-label">harmonic</span></div>
+    <div class="stat-card"><span class="stat-value">${pctLabel(ev.score)}</span><span class="stat-label">overall</span></div>
+    <div class="stat-card"><span class="stat-value">${pctLabel(ev.harmonic_score)}</span><span class="stat-label">harmonic</span></div>
     <div class="stat-card"><span class="stat-value">${ev.bpm_delta != null ? ev.bpm_delta : "—"}</span><span class="stat-label">bpm delta</span></div>
   </div>
   <p class="mono">camelot move: ${esc(ev.camelot_move ?? "—")}</p>`;
@@ -141,7 +149,7 @@ async function evaluate() {
     lastEvals = data.transitions ?? [];
     renderPlaylist();
     const avg = lastEvals.reduce((s, e) => s + e.score, 0) / Math.max(1, lastEvals.length);
-    el.innerHTML = `<p class="mono">Evaluated ${lastEvals.length} transitions — average ${avg * 100}%. Click a connector badge for detail.</p>`;
+    el.innerHTML = `<p class="mono">Evaluated ${lastEvals.length} transitions — average ${pctLabel(avg)}. Click a connector badge for detail.</p>`;
   } catch (err) {
     el.innerHTML = errorHTML(err.message, "eval-retry");
     bindRetries(el, evaluate);
@@ -159,7 +167,7 @@ async function autoSequence() {
     playlist = (data.ordered_track_ids ?? []).map((id) => byId.get(id)).filter(Boolean);
     lastEvals = [];
     renderPlaylist();
-    toast(`Auto-sequenced — average score ${data.average_score * 100}%`, "ok");
+    toast(`Auto-sequenced — average score ${pctLabel(data.average_score)}`, "ok");
   } catch (err) {
     toast(err.message, "error", 8000);
   }
@@ -176,7 +184,7 @@ async function suggestNext() {
     const data = await api.suggestNext(from.id);
     const suggestions = (data.suggestions ?? []).map((s) => ({
       ...s.track,
-      similarity: s.evaluation.score * 100,
+      similarity: s.evaluation.score,
     }));
     el.innerHTML = `
     <h3 class="panel-title">Next after ${esc(from.title)}</h3>
@@ -200,7 +208,7 @@ async function findBridge() {
     const data = await api.findBridge(a.id, b.id);
     const rows = (data.bridges ?? []).map((br) => ({
       ...br.bridge_track,
-      similarity: br.combined_score * 100,
+      similarity: br.combined_score,
     }));
     el.innerHTML = `
     <h3 class="panel-title">Bridges: ${esc(a.title)} → ${esc(b.title)}</h3>

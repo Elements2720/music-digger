@@ -6,7 +6,7 @@
 
 import { api } from "../api.js";
 import { emptyHTML, errorHTML, bindRetries, esc, toast } from "../ui.js";
-import { trackRowHTML, bindTrackRows } from "../components.js";
+import { trackRowHTML, bindTrackRows, isArtistLiked } from "../components.js";
 
 let currentMode = "match";
 let selectedTrack = null;
@@ -92,8 +92,9 @@ async function runMatch() {
       el.innerHTML = emptyHTML("No matches", "The index returned nothing for this track.");
       return;
     }
-    el.innerHTML = `<div class="track-list">${matches.map((t) => trackRowHTML(t, { similarity: t.similarity })).join("")}</div>`;
-    bindTrackRows(el, matches);
+    const flatMatches = matches.map((m) => m.track ?? m);
+    el.innerHTML = `<div class="track-list">${flatMatches.map((t, i) => trackRowHTML(t, { similarity: matches[i].similarity })).join("")}</div>`;
+    bindTrackRows(el, flatMatches);
   } catch (err) {
     el.innerHTML = errorHTML(err.message, "dig-match-retry");
     bindRetries(el, runMatch);
@@ -108,8 +109,20 @@ async function runForYou() {
     el.innerHTML = emptyHTML("ranking…", "");
     const limit = Number(document.getElementById("dig-foryou-limit").value);
     const genre = document.getElementById("dig-foryou-genre").value.trim();
-    const data = await api.recentTracks(limit);
-    let tracks = data.tracks ?? [];
+    const [data, artistData] = await Promise.all([
+      api.recentTracks(limit),
+      api.artists({ limit: 500 }),
+    ]);
+    const tasteByArtist = new Map(
+      (artistData.artists ?? artistData.results ?? [])
+        .filter((a) => a.taste_match_percent != null)
+        .map((a) => [String(a.artist ?? "").toLowerCase(), a.taste_match_percent]),
+    );
+    let tracks = (data.tracks ?? []).map((t) => ({
+      ...t,
+      is_liked: isArtistLiked(t.artist),
+      taste_match_percent: t.taste_match_percent ?? tasteByArtist.get(String(t.artist ?? "").toLowerCase()) ?? null,
+    }));
     if (genre) {
       const needle = genre.toLowerCase();
       tracks = tracks.filter((t) => String(t.genre ?? "").toLowerCase().includes(needle));
@@ -153,8 +166,9 @@ async function runVibe(queryOverride = null) {
       el.innerHTML = emptyHTML("No vibe matches", "Try different words.");
       return;
     }
-    el.innerHTML = `<div class="track-list">${vibeTracks.map((t) => trackRowHTML(t, { similarity: t.similarity })).join("")}</div>`;
-    bindTrackRows(el, vibeTracks);
+    const flatMatches = vibeTracks.map((m) => m.track ?? m);
+    el.innerHTML = `<div class="track-list">${flatMatches.map((t, i) => trackRowHTML(t, { similarity: vibeTracks[i].similarity })).join("")}</div>`;
+    bindTrackRows(el, flatMatches);
   } catch (err) {
     errEl.textContent = err.message;
     el.innerHTML = errorHTML(err.message, "dig-vibe-retry");
@@ -210,7 +224,9 @@ async function runCatalogFilter(preset = {}) {
  * exact filter — never feed "tracks in key 12" to CLAP vibe search. */
 function openCatalogWith(preset) {
   selectMode("vibe");
-  runCatalogFilter(preset);
+  runCatalogFilter(preset).then(() => {
+    document.getElementById("dig-cat-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 /* ---------- setup ---------- */

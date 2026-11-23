@@ -16,9 +16,11 @@ function fmtClock(sec) {
 
 function setProgress(done, total, message, status = "running") {
   const fill = document.getElementById("mix-fill");
+  const bar = document.getElementById("mix-bar");
   const statusEl = document.getElementById("mix-status");
   const cancel = document.getElementById("mix-cancel");
   const pct = total > 0 ? (done / total) * 100 : 0;
+  bar.hidden = status !== "running";
   fill.style.width = `${pct}%`;
   fill.parentElement.setAttribute("aria-valuenow", String(pct));
   statusEl.textContent = message ?? `${status} — ${pct}%`;

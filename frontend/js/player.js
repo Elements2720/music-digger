@@ -160,6 +160,24 @@ export function setupPlayer() {
     }
   });
 
+  // Global transport shortcuts — ignored while typing in any form control.
+  document.addEventListener("keydown", (e) => {
+    const target = e.target;
+    if (target instanceof HTMLElement && target.closest("input, textarea, select, [contenteditable], [contenteditable] *")) return;
+    if (e.code === "Space") {
+      e.preventDefault();
+      playBtn.click();
+    } else if (e.code === "KeyM") {
+      audio.muted = !audio.muted;
+    } else if (e.code === "ArrowLeft" && Number.isFinite(audio.duration) && audio.duration > 0) {
+      e.preventDefault();
+      audio.currentTime = Math.max(0, audio.currentTime - 10);
+    } else if (e.code === "ArrowRight" && Number.isFinite(audio.duration) && audio.duration > 0) {
+      e.preventDefault();
+      audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+    }
+  });
+
   // Views can refresh the deck chip after a download completes elsewhere.
   on("track:downloaded", () => {
     if (currentTrack) {

@@ -661,6 +661,11 @@ img.deck-art {
   }
   .track-row .chip-source { display: none; }
   .track-row .icon-btn { min-width: 36px; min-height: 36px; }
+  /* Artist rows mirror track rows: line 1 = DIG + art + name/genres,
+     line 2 = taste % + heart, cleanly aligned at 390px. */
+  .artist-row { row-gap: 6px; }
+  .artist-row .t-main { min-width: 150px; }
+  .artist-row > [data-like] { order: 11; margin-left: auto; }
 }
 
 @media (max-width: 640px) {
@@ -821,6 +826,7 @@ img.deck-art {
   flex-direction: column;
   overflow: hidden;
 }
+#lib-blacklist { max-height: 280px; overflow-y: auto; }
 .modal-close { font-size: 1.25rem; flex-shrink: 0; align-self: flex-start; }
 .modal-head {
   display: flex;
