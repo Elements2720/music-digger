@@ -7,7 +7,7 @@ import { emit, on } from "./events.js";
 import { esc, toast } from "./ui.js";
 import { iconPlay, iconPause, iconPrev, iconNext, iconDownload } from "./icons.js";
 
-const audio = new Audio();
+const audio = document.getElementById("deck-audio") || new Audio();
 let queue = [];
 let queueIndex = -1;
 let currentTrack = null;

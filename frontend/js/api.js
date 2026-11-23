@@ -5,7 +5,8 @@
 async function request(path, { method = "GET", body, params } = {}) {
   const url = new URL(path, window.location.origin);
   if (params) {
-    for (const [key, value] of Object.entries(params)) {
+    const entries = params instanceof URLSearchParams ? params.entries() : Object.entries(params);
+    for (const [key, value] of entries) {
       if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
     }
   }
