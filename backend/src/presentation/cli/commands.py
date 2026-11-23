@@ -1511,6 +1511,37 @@ def seeds_purge(
     _run(run())
 
 
+@app.command("download")
+def download(
+    track_id: str = typer.Argument(..., help="Track ID to download."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Re-download even if already downloaded.",
+    ),
+) -> None:
+    """Download full-length audio for a catalog track via AMDL."""
+
+    async def run() -> None:
+        async with Container() as container:
+            track = await container.track_repository.get_by_id(track_id)
+            if track is None:
+                console.print(f"[red]Track not found:[/] {track_id}")
+                raise typer.Exit(1)
+
+            console.print(
+                f"[cyan]Downloading:[/] {track.artist} - {track.title} ({track.id})"
+            )
+            result = await container.download_tracks.download_one(
+                track_id,
+                force=force,
+            )
+            console.print(f"[green]Saved ({result.format}):[/] {result.file_path}")
+
+    _run(run())
+
+
 @app.command("serve")
 def serve(
     host: str = typer.Option(

@@ -22,6 +22,7 @@ JobKind = Literal[
     "seed-itunes",
     "import-local",
     "fetch-artist",
+    "download-tracks",
 ]
 
 
@@ -156,8 +157,9 @@ class PlannedSetUpdateRequest(BaseModel):
 
 def track_payload(track: Any, *, heard: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Flatten a :class:`~domain.entities.track.Track` for the browser."""
+    has_local = bool(getattr(track, "local_path", None))
     preview_url = track.preview_url
-    if getattr(track, "local_path", None) and getattr(track, "source", None) == "local":
+    if has_local:
         preview_url = f"/api/catalog/tracks/{quote(track.id, safe='')}/audio"
     return {
         "id": track.id,
@@ -174,8 +176,37 @@ def track_payload(track: Any, *, heard: frozenset[str] = frozenset()) -> dict[st
         "store_url": track.store_url,
         "source": track.source,
         "local_path": getattr(track, "local_path", None),
+        "has_local_file": has_local,
         "is_heard": track.id in heard,
     }
+
+
+class TrackDTO(BaseModel):
+    """Pydantic representation of a track payload for API clients."""
+
+    id: str
+    title: str
+    artist: str
+    album: str | None = None
+    genre: str | None = None
+    duration_seconds: float | None = None
+    bpm: float | None = None
+    key: str | None = None
+    release_year: int | None = None
+    preview_url: str | None = None
+    artwork_url: str | None = None
+    store_url: str | None = None
+    source: str = "itunes"
+    local_path: str | None = None
+    has_local_file: bool = False
+    is_heard: bool = False
+
+    @classmethod
+    def from_domain(
+        cls, track: Any, *, heard: frozenset[str] = frozenset()
+    ) -> TrackDTO:
+        data = track_payload(track, heard=heard)
+        return cls(**data)
 
 
 def match_payload(match: Any, *, heard: frozenset[str] = frozenset()) -> dict[str, Any]:

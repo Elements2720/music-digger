@@ -59,6 +59,7 @@ export function mount() {
   $("builder-save-btn")?.addEventListener("click", saveCurrentSet);
   $("builder-clear-btn")?.addEventListener("click", clearCurrentSet);
   $("builder-export-btn")?.addEventListener("click", exportM3U8);
+  $("builder-download-missing-btn")?.addEventListener("click", downloadMissingTracks);
 
   // Auto-sequence dropdown
   const autoSeqBtn = $("builder-auto-seq-btn");
@@ -435,7 +436,7 @@ function buildTrackRow(track, index, isSelected) {
         el("div", { class: "builder-artist dim", text: track.artist }),
       ]),
       el("div", { class: "track-meta builder-meta" }, [
-        track.local_path || track.source === "local"
+        track.local_path || track.has_local_file || track.source === "local"
           ? el("span", { class: "chip local", text: "LOCAL" })
           : null,
         el("span", { class: "chip bpm", text: bpmText }),
@@ -555,6 +556,42 @@ function updateSummary() {
       scoreEl.className = "chip taste-mid";
       scoreEl.textContent = "Avg Flow: —";
     }
+  }
+
+  const dlBtn = $("builder-download-missing-btn");
+  if (dlBtn) {
+    const missing = setTracks.filter(
+      (t) => !t.local_path && !t.has_local_file && t.source !== "local"
+    );
+    if (missing.length > 0) {
+      dlBtn.disabled = false;
+      dlBtn.textContent = `DOWNLOAD MISSING (${missing.length})`;
+      dlBtn.className = "btn tiny primary";
+      dlBtn.title = `Download ${missing.length} missing track(s) as .m4a`;
+    } else {
+      dlBtn.disabled = true;
+      dlBtn.textContent = "DOWNLOAD MISSING (0)";
+      dlBtn.className = "btn tiny ghost";
+      dlBtn.title = "All tracks in this set are downloaded locally";
+    }
+  }
+}
+
+async function downloadMissingTracks() {
+  const missing = setTracks.filter(
+    (t) => !t.local_path && !t.has_local_file && t.source !== "local"
+  );
+  if (missing.length === 0) {
+    emit("toast", "All tracks in this set are already downloaded locally");
+    return;
+  }
+  const trackIds = missing.map((t) => t.id);
+  try {
+    await api.startJob("download-tracks", { track_ids: trackIds });
+    emit("toast", `Started download for ${missing.length} track(s)`);
+    emit("tab:show", "run");
+  } catch (err) {
+    emit("toast", `Failed to start download job: ${err.message}`);
   }
 }
 

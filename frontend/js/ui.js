@@ -66,7 +66,7 @@ export function camelotBadge(key, extraClass = "", extraChildren = null) {
 
 export function chips(track, { exact = false } = {}) {
   const wrap = el("div", { class: "track-meta" });
-  if (track.source === "local" || track.local_path) {
+  if (track.source === "local" || track.local_path || track.has_local_file) {
     wrap.append(el("span", { class: "chip local", text: "LOCAL" }));
   }
   const bpm = fmtBpm(track.bpm);
@@ -97,10 +97,14 @@ export function trackRow(
   track,
   { rank = null, similarity = null, exact = false } = {}
 ) {
+  const isLocal = Boolean(
+    track.has_local_file || track.local_path || track.source === "local"
+  );
+
   const play = el("button", {
     class: "icon-btn",
     type: "button",
-    title: "Play 30 s preview",
+    title: isLocal ? "Play full track" : "Play 30 s preview",
     text: "▶",
   });
   play.addEventListener("click", () => playTrack(track));
@@ -112,6 +116,48 @@ export function trackRow(
     text: track.is_heard ? "✓" : "○",
   });
   heard.addEventListener("click", () => toggleHeard(track, heard));
+
+  let downloadBtn = null;
+  if (!isLocal && (track.store_url || track.source !== "local")) {
+    downloadBtn = el("button", {
+      class: "icon-btn download-btn",
+      type: "button",
+      title: "Download track (.m4a)",
+      text: "↓",
+    });
+    downloadBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      downloadBtn.disabled = true;
+      downloadBtn.textContent = "…";
+      downloadBtn.title = "Downloading track…";
+      try {
+        const updated = await api.downloadTrack(track.id);
+        track.has_local_file = true;
+        track.local_path = updated.local_path || track.local_path;
+        track.preview_url =
+          updated.preview_url ||
+          `/api/catalog/tracks/${encodeURIComponent(track.id)}/audio`;
+        play.title = "Play full track";
+        emit("toast", `Downloaded "${track.title}" (.m4a)`);
+        downloadBtn.replaceWith(
+          el("span", { class: "chip local", text: "LOCAL" })
+        );
+        const meta = row.querySelector(".track-meta");
+        if (meta && !meta.querySelector(".chip.local")) {
+          meta.prepend(el("span", { class: "chip local", text: "LOCAL" }));
+        }
+      } catch (err) {
+        const msg = err.message || "Unknown error";
+        emit(
+          "toast",
+          msg.startsWith("Download failed") ? msg : `Download failed: ${msg}`
+        );
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = "↓";
+        downloadBtn.title = "Download track (.m4a)";
+      }
+    });
+  }
 
   const dig = el("button", { class: "dig-btn", type: "button", text: "DIG >" });
   dig.addEventListener("click", () => emit("dig:track", track));
@@ -142,6 +188,10 @@ export function trackRow(
     ]),
   ]);
 
+  const actions = [play, heard];
+  if (downloadBtn) actions.push(downloadBtn);
+  actions.push(dig, addSet, del);
+
   const row = el("div", { class: "track-row", "data-track-id": track.id }, [
     el("div", { class: "track-rank", text: rank === null ? "•" : String(rank) }),
     main,
@@ -150,7 +200,7 @@ export function trackRow(
       class: "track-score",
       text: similarity === null ? "" : `${Number(similarity).toFixed(1)}%`,
     }),
-    el("div", { class: "track-actions" }, [play, heard, dig, addSet, del]),
+    el("div", { class: "track-actions" }, actions),
   ]);
 
   del.addEventListener("click", async (e) => {

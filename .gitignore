@@ -49,6 +49,10 @@ frontend/.turbo/
 *.log
 *.tmp
 *.part
+*.rar
+*.zip
+*.7z
+*.tar.*
 tmp/
 temp/
 

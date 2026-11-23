@@ -28,6 +28,7 @@ from domain.entities.track import (
     SeedArtist,
     Track,
 )
+from domain.interfaces.downloader import ITrackDownloader, TrackDownloadResult
 from domain.interfaces.repositories import (
     IBlacklistRepository,
     ILikedArtistRepository,
@@ -38,6 +39,7 @@ from domain.interfaces.repositories import (
 from domain.use_cases import (
     DigSimilarTracks,
     DJSetHelper,
+    DownloadTracks,
     FindSimilarForSet,
     ManageCatalog,
     VibeSearch,
@@ -1040,6 +1042,25 @@ class FakeHardwareProbe:
         )
 
 
+class FakeTrackDownloader(ITrackDownloader):
+    """In-memory downloader fake for testing."""
+
+    def __init__(self, output_file: str = "storage/downloads/test.m4a") -> None:
+        self.output_file = output_file
+        self.downloaded_tracks: list[Track] = []
+
+    async def download_track(
+        self, track: Track, output_dir: str
+    ) -> TrackDownloadResult:
+        self.downloaded_tracks.append(track)
+        file_path = f"{output_dir}/{track.artist} - {track.title}.m4a"
+        return TrackDownloadResult(
+            track_id=track.id,
+            file_path=file_path,
+            format="m4a",
+        )
+
+
 def make_set(set_id: str = "set:1") -> DJSet:
     match = TrackMatch(
         track=make_track("itunes:1"),
@@ -1112,12 +1133,21 @@ def make_container(
     dj_set = set_list[0] if set_list else make_set()
     fake_vectors = FakeVectors(track_list)
     fake_sqlite = FakeSqlite(track_list)
+    track_downloader = FakeTrackDownloader()
+    download_tracks = DownloadTracks(
+        track_repository=track_repository,
+        downloader=track_downloader,
+        output_dir="storage/downloads",
+    )
 
     return SimpleNamespace(
         settings=SimpleNamespace(
             clap_batch_size=16,
             preview_concurrency=16,
             set_cache_dir=Path("cache"),
+            download_dir=Path("storage/downloads"),
+            amdl_base_url="https://am-dl.pages.dev",
+            amdl_timeout_seconds=45,
             ytdlp_cookies_file=None,
             ytdlp_cookies_from_browser=None,
         ),
@@ -1130,6 +1160,8 @@ def make_container(
         planned_set_repository=planned_set_repository,
         manage_catalog=manage_catalog,
         dj_set_helper=dj_set_helper,
+        track_downloader=track_downloader,
+        download_tracks=download_tracks,
         set_repository=set_repository,
         dig_similar_tracks=DigSimilarTracks(track_repository=track_repository),
         find_similar_for_set=FindSimilarForSet(

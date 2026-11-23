@@ -590,3 +590,74 @@ async def test_bulk_cleanup_preview_and_execute_api(
     assert exec_res.status_code == 200
     exec_data = exec_res.json()
     assert exec_data["artists_deleted"] == prev_data["artist_count"]
+
+
+async def test_download_track_endpoint_success(client: httpx.AsyncClient) -> None:
+    res = await client.post("/api/catalog/tracks/itunes:1/download")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["id"] == "itunes:1"
+    assert data["has_local_file"] is True
+    assert data["local_path"] is not None
+    assert data["local_path"].endswith(".m4a")
+    assert data["preview_url"] == "/api/catalog/tracks/itunes%3A1/audio"
+
+
+async def test_download_track_endpoint_not_found(client: httpx.AsyncClient) -> None:
+    res = await client.post("/api/catalog/tracks/nonexistent/download")
+    assert res.status_code == 404
+
+
+async def test_get_track_audio_stream_local_file(
+    client: httpx.AsyncClient, tmp_path: Path
+) -> None:
+    # First test 404 when track has no local file
+    not_local = await client.get("/api/catalog/tracks/itunes:2/audio")
+    assert not_local.status_code == 404
+
+    # Now create real dummy file and set local_path on itunes:1
+    test_audio = tmp_path / "test_track.m4a"
+    test_audio.write_bytes(b"\x00\x00\x00\x20ftypM4A ")
+
+    # We need to update the container's track repository directly
+    # Using the downloader endpoint with a fake that writes the file:
+
+    # Download itunes:1
+    res = await client.post("/api/catalog/tracks/itunes:1/download")
+    assert res.status_code == 200
+    local_path = Path(res.json()["local_path"])
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_bytes(b"FAKE_M4A_DATA")
+
+    # Now streaming it should return 200 with audio/mp4 media type
+    stream_res = await client.get("/api/catalog/tracks/itunes:1/audio")
+    assert stream_res.status_code == 200
+    assert stream_res.content == b"FAKE_M4A_DATA"
+    assert stream_res.headers["content-type"] == "audio/mp4"
+
+    # Byte-range request should return 206 Partial Content
+    range_res = await client.get(
+        "/api/catalog/tracks/itunes:1/audio", headers={"Range": "bytes=0-3"}
+    )
+    assert range_res.status_code == 206
+    assert range_res.content == b"FAKE"
+    assert range_res.headers["content-type"] == "audio/mp4"
+    assert "bytes 0-3/" in range_res.headers["content-range"]
+
+    # Clean up
+    if local_path.is_file():
+        local_path.unlink()
+
+
+def test_track_dto_from_domain() -> None:
+    from presentation.api.schemas import TrackDTO
+
+    remote_track = make_track("rem:1", preview_url="https://preview.test/1.m4a")
+    dto_remote = TrackDTO.from_domain(remote_track)
+    assert dto_remote.has_local_file is False
+    assert dto_remote.preview_url == "https://preview.test/1.m4a"
+
+    local_track = remote_track.with_local_path("storage/downloads/test.m4a")
+    dto_local = TrackDTO.from_domain(local_track)
+    assert dto_local.has_local_file is True
+    assert dto_local.preview_url == "/api/catalog/tracks/rem%3A1/audio"

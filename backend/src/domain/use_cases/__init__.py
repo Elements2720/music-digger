@@ -19,6 +19,11 @@ from .dig_similar_tracks import (
     TrackNotFoundError,
 )
 from .dj_set_helper import DJSetHelper, evaluate_transition
+from .download_tracks import (
+    BatchDownloadProgress,
+    BatchDownloadResult,
+    DownloadTracks,
+)
 from .fetch_artist_tracks import (
     FetchArtistProgress,
     FetchArtistResult,
@@ -52,6 +57,8 @@ __all__ = [
     "DEFAULT_TECHNO_TERMS",
     "AnalyzeDJSet",
     "AnalyzeEvent",
+    "BatchDownloadProgress",
+    "BatchDownloadResult",
     "BuildSeedList",
     "BuildSeedListResult",
     "BulkCleanupCriteria",
@@ -66,6 +73,7 @@ __all__ = [
     "DigLookupError",
     "DigResult",
     "DigSimilarTracks",
+    "DownloadTracks",
     "FetchArtistProgress",
     "FetchArtistResult",
     "FetchArtistTracks",

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -42,6 +43,7 @@ from ..schemas import (
 from . import get_container
 
 router = APIRouter(prefix="/api", tags=["catalog"])
+LOGGER = logging.getLogger(__name__)
 
 
 @router.get("/stats")
@@ -206,6 +208,19 @@ async def reset_embeddings(
     return {"cleared": cleared}
 
 
+AUDIO_MEDIA_TYPES: Final[dict[str, str]] = {
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".aac": "audio/aac",
+    ".aif": "audio/x-aiff",
+    ".aiff": "audio/x-aiff",
+}
+
+
 @router.get("/catalog/tracks/{track_id}/audio")
 @router.get("/tracks/{track_id}/audio")
 async def get_track_audio(
@@ -214,21 +229,47 @@ async def get_track_audio(
 ) -> FileResponse:
     """Stream a local audio file safely."""
     track = await container.track_repository.get_by_id(track_id)
-    if (
-        track is None
-        or not getattr(track, "local_path", None)
-        or getattr(track, "source", None) != "local"
-    ):
+    if track is None or not getattr(track, "local_path", None):
         raise HTTPException(
             status_code=404, detail=f"Local track {track_id!r} not found"
         )
     file_path = Path(track.local_path)
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Audio file does not exist on disk")
+    media_type = AUDIO_MEDIA_TYPES.get(
+        file_path.suffix.lower(), "application/octet-stream"
+    )
     return FileResponse(
         path=file_path,
         filename=file_path.name,
+        media_type=media_type,
     )
+
+
+@router.post("/catalog/tracks/{track_id}/download")
+@router.post("/tracks/{track_id}/download")
+async def download_track(
+    track_id: str,
+    force: bool = Query(False),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Download single track audio and persist local_path."""
+    try:
+        await container.download_tracks.download_one(track_id, force=force)
+    except ValueError as exc:
+        LOGGER.warning("Track not found for download: %s", track_id)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        LOGGER.exception("Download failed for track %s", track_id)
+        raise HTTPException(status_code=502, detail=f"Download failed: {exc}") from exc
+
+    track = await container.track_repository.get_by_id(track_id)
+    if track is None:
+        raise HTTPException(
+            status_code=404, detail=f"Track {track_id!r} not found after download"
+        )
+    heard = await container.track_repository.get_heard_ids()
+    return track_payload(track, heard=heard)
 
 
 @router.get("/catalog/analytics")

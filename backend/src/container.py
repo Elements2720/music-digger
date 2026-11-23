@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from data.datasources.local.lancedb_client import SET_VECTOR_SCHEMA, LanceDBClient
 from data.datasources.local.local_library_scanner import LocalLibraryScanner
 from data.datasources.local.sqlite_client import SQLiteClient
+from data.datasources.remote.amdl_http_downloader import AmdlHttpTrackDownloader
 from data.datasources.remote.artist_parser import parse_collaborators
 from data.datasources.remote.deezer_seed_crawler import DeezerSeedCrawler
 from data.datasources.remote.itunes_provider import ITunesProvider
@@ -41,6 +42,7 @@ from domain.use_cases import (
     CrawlITunesSeeds,
     DigSimilarTracks,
     DJSetHelper,
+    DownloadTracks,
     FetchArtistTracks,
     FetchCatalogMetadata,
     FindSimilarForSet,
@@ -83,6 +85,11 @@ class Settings:
     ffmpeg_timeout_seconds: float
     index_queue_maxsize: int
     set_cache_dir: Path
+    download_dir: Path
+    amdl_base_url: str
+    amdl_timeout_seconds: float
+    playwright_storage_dir: Path
+    playwright_idle_timeout_seconds: float
     ytdlp_cookies_file: Path | None
     ytdlp_cookies_from_browser: str | None
 
@@ -170,6 +177,23 @@ class Settings:
                 root,
                 os.getenv("SET_CACHE_DIR", str(storage_dir / "cache")),
             ),
+            download_dir=_resolve_path(
+                root,
+                os.getenv("DOWNLOAD_DIR", str(storage_dir / "downloads")),
+            ),
+            amdl_base_url=os.getenv("AMDL_BASE_URL", "https://am-dl.pages.dev").rstrip(
+                "/"
+            ),
+            amdl_timeout_seconds=_env_float("AMDL_TIMEOUT_SECONDS", 60.0),
+            playwright_storage_dir=_resolve_path(
+                root,
+                os.getenv(
+                    "PLAYWRIGHT_STORAGE_DIR", str(storage_dir / "playwright_amdl")
+                ),
+            ),
+            playwright_idle_timeout_seconds=_env_float(
+                "PLAYWRIGHT_IDLE_TIMEOUT_SECONDS", 120.0
+            ),
             ytdlp_cookies_file=(
                 _resolve_path(root, cookies_file_raw) if cookies_file_raw else None
             ),
@@ -242,6 +266,8 @@ class Container:
         self.index_catalog: IndexCatalog | None = None
         self.import_local_library: ImportLocalLibrary | None = None
         self.local_library_scanner: LocalLibraryScanner | None = None
+        self.track_downloader: AmdlHttpTrackDownloader | None = None
+        self.download_tracks: DownloadTracks | None = None
         self.dig_similar_tracks: DigSimilarTracks | None = None
         self.vibe_search: VibeSearch | None = None
         self._started = False
@@ -389,6 +415,21 @@ class Container:
         self.local_library_scanner = local_library_scanner
         self.import_local_library = import_local_library
 
+        track_downloader = AmdlHttpTrackDownloader(
+            base_url=settings.amdl_base_url,
+            timeout_seconds=settings.amdl_timeout_seconds,
+            http_client=http_client,
+            playwright_storage_dir=settings.playwright_storage_dir,
+            playwright_idle_timeout=settings.playwright_idle_timeout_seconds,
+        )
+        download_tracks = DownloadTracks(
+            track_repository=track_repository,
+            downloader=track_downloader,
+            output_dir=str(settings.download_dir),
+        )
+        self.track_downloader = track_downloader
+        self.download_tracks = download_tracks
+
         # ----- Phase 4: DJ set analysis -----------------------------------
         # Second disk-backed table: whole-set mean vectors. A separate
         # LanceDBClient instance keeps the track schema untouched.
@@ -437,6 +478,8 @@ class Container:
         """Close HTTP and storage resources in reverse order."""
         if not self._started:
             return
+        if self.track_downloader is not None:
+            await self.track_downloader.close()
         if self.http_client is not None:
             await self.http_client.aclose()
         if self.set_vectors is not None:

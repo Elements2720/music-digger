@@ -75,6 +75,32 @@ export function setupPlayer() {
     syncToggle();
     emit("player:state", { track: current, playing: false });
   });
+  audio.addEventListener("error", () => {
+    const err = audio.error;
+    let detail = "Playback error";
+    if (err) {
+      switch (err.code) {
+        case 1: // MEDIA_ERR_ABORTED
+          detail = "Audio playback aborted";
+          break;
+        case 2: // MEDIA_ERR_NETWORK
+          detail = "Network error loading audio";
+          break;
+        case 3: // MEDIA_ERR_DECODE
+          detail = "Audio decode failed (file corrupted or unsupported format)";
+          break;
+        case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+          detail = "Audio format or source not supported";
+          break;
+        default:
+          detail = err.message ? `Playback error: ${err.message}` : "Playback error";
+      }
+    }
+    emit("toast", detail);
+    syncToggle();
+    syncSeek();
+    emit("player:state", { track: current, playing: false });
+  });
   audio.addEventListener("timeupdate", syncSeek);
   audio.addEventListener("durationchange", syncSeek);
   audio.addEventListener("ended", () => {
@@ -96,7 +122,11 @@ export function playTrack(track) {
   }
   if (current?.id === track.id) {
     if (audio.paused) {
-      audio.play().catch(() => emit("toast", "Preview could not play"));
+      audio.play().catch((err) => {
+        if (err.name !== "AbortError") {
+          emit("toast", `Playback failed: ${err.message || "cannot play"}`);
+        }
+      });
     } else {
       audio.pause();
     }
@@ -117,11 +147,12 @@ export function playTrack(track) {
 
   audio.src = track.preview_url;
   audio.currentTime = 0;
+  audio.load();
   audio
     .play()
     .catch((error) => {
       if (error.name !== "AbortError") {
-        emit("toast", "Preview could not play");
+        emit("toast", `Playback failed: ${error.message || "cannot play"}`);
       }
     });
   emit("player:play", track);

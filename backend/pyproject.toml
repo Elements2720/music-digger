@@ -10,6 +10,7 @@ dependencies = [
     "lancedb>=0.41.0",
     "librosa>=0.11.0",
     "numpy>=1.26",
+    "playwright>=1.40",
     "pyarrow>=26.0.1",
     "pylance>=14.0.3",
     "python-dotenv>=1.2.4",

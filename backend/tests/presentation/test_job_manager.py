@@ -444,3 +444,51 @@ async def test_fetch_artist_job_validates_and_executes() -> None:
     assert call["auto_index"] is True
     assert call["discover_related"] is True
     assert call["related_limit"] == 5
+
+
+async def test_download_tracks_job_validation() -> None:
+    container = make_container()
+    manager = make_manager(container)
+
+    with pytest.raises(JobParamError, match="track_ids must be a non-empty list"):
+        await manager.start("download-tracks", {"track_ids": []})
+
+    with pytest.raises(JobParamError, match="track_ids must contain non-empty strings"):
+        await manager.start("download-tracks", {"track_ids": [""]})
+
+
+async def test_download_tracks_job_streams_progress_and_finishes() -> None:
+    container = make_container()
+    manager = make_manager(container)
+    stream = manager.stream(FakeRequest())
+    await stream.__anext__()  # initial state
+
+    await manager.start(
+        "download-tracks",
+        {
+            "track_ids": ["itunes:1", "itunes:2"],
+            "skip_existing": True,
+        },
+    )
+    events = []
+    async for frame in stream:
+        event = parse_frame(frame)
+        if event is not None:
+            events.append(event)
+
+    assert [event["type"] for event in events][-1] == "done"
+    progress = [event for event in events if event["type"] == "progress"]
+    assert len(progress) >= 2
+    assert progress[-1]["job"]["processed"] == 2
+    assert progress[-1]["job"]["stage"] == "downloading"
+
+    snapshot = manager.snapshot()
+    assert snapshot is not None
+    assert snapshot["status"] == "done"
+    assert snapshot["result"] == {
+        "total": 2,
+        "downloaded": 2,
+        "skipped": 0,
+        "failed": 0,
+        "errors": [],
+    }

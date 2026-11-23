@@ -9,6 +9,7 @@ from .audio_engine import (
     ISetDownloader,
 )
 from .catalog import ICatalogProvider, ISeedCrawler, ISeedDiscovery
+from .downloader import ITrackDownloader, TrackDownloadResult
 from .hardware import IHardwareProbe
 from .llm import ILLMService
 from .local_library import ILocalLibraryScanner
@@ -39,5 +40,7 @@ __all__ = [
     "ISeedRepository",
     "ISetDownloader",
     "ISetRepository",
+    "ITrackDownloader",
     "ITrackRepository",
+    "TrackDownloadResult",
 ]

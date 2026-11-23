@@ -21,12 +21,21 @@ async function request(path, { method = "GET", body, params } = {}) {
     }
   }
   if (!response.ok) {
-    const detail =
-      (data && typeof data === "object" && data.detail) ||
-      `${response.status} ${response.statusText}`;
-    throw new Error(
-      typeof detail === "string" ? detail : JSON.stringify(detail)
-    );
+    let detail = `${response.status} ${response.statusText}`;
+    if (data && typeof data === "object") {
+      if (typeof data.detail === "string") {
+        detail = data.detail;
+      } else if (data.detail) {
+        detail = JSON.stringify(data.detail);
+      } else if (typeof data.error === "string") {
+        detail = data.error;
+      } else if (typeof data.message === "string") {
+        detail = data.message;
+      }
+    } else if (typeof data === "string" && data.trim()) {
+      detail = data.trim();
+    }
+    throw new Error(detail);
   }
   return data;
 }
@@ -68,6 +77,11 @@ export const api = {
   artistTracks: (artistName, params = {}) =>
     request(`/api/catalog/artists/${encodeURIComponent(artistName)}/tracks`, {
       params,
+    }),
+  downloadTrack: (trackId, force = false) =>
+    request(`/api/catalog/tracks/${encodeURIComponent(trackId)}/download`, {
+      method: "POST",
+      params: { force },
     }),
   deleteTrack: (trackId, blacklist = false, reason = null) =>
     request(`/api/catalog/tracks/${encodeURIComponent(trackId)}`, {

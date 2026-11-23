@@ -119,6 +119,10 @@ class Track:
             raise TypeError("embedding must be an EmbeddingVector")
         return replace(self, embedding=embedding)
 
+    def with_local_path(self, local_path: str) -> Track:
+        """Return a copy carrying ``local_path`` without mutating this entity."""
+        return replace(self, local_path=require_str(local_path, "local_path"))
+
 
 @dataclass(frozen=True, slots=True)
 class SeedArtist:

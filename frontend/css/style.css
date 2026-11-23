@@ -587,6 +587,21 @@ select { cursor: pointer; }
 .icon-btn:hover { color: var(--text); border-color: var(--text-faint); }
 .icon-btn.playing { color: var(--accent); border-color: var(--accent-line); }
 .icon-btn.heard { color: var(--good); border-color: rgba(67, 209, 124, 0.4); }
+.icon-btn.download-btn {
+  color: var(--accent);
+  border-color: rgba(255, 77, 26, 0.35);
+  font-size: 13px;
+  font-weight: 700;
+}
+.icon-btn.download-btn:hover {
+  color: #fff;
+  border-color: var(--accent);
+  background: rgba(255, 77, 26, 0.15);
+}
+.icon-btn.download-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
 .dig-btn {
   appearance: none;
   background: transparent;

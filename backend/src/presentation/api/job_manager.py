@@ -507,6 +507,42 @@ class JobManager:
             "artists_seeded": result.artists_seeded,
         }
 
+    async def _run_download_tracks(
+        self, job: JobState, container: Any, config: dict[str, Any]
+    ) -> None:
+        track_ids = config["track_ids"]
+        skip_existing = config["skip_existing"]
+        job.total = len(track_ids)
+        job.stage = "downloading"
+        job.message = f"Starting download of {len(track_ids)} tracks..."
+        self._progress(job, stage="downloading", processed=0, total=len(track_ids))
+
+        def on_progress(p: Any) -> None:
+            elapsed = max(time.monotonic() - self._started_monotonic, 1e-6)
+            speed = round(p.processed / elapsed, 2) if p.processed > 0 else None
+            self._progress(
+                job,
+                stage="downloading",
+                processed=p.processed,
+                failed=p.failed,
+                total=p.total,
+                message=f"Downloaded {p.downloaded}/{p.total} ({p.skipped} skipped, {p.failed} failed) - {p.current_track}",
+                speed=speed,
+            )
+
+        result = await container.download_tracks.download_many(
+            track_ids,
+            skip_existing=skip_existing,
+            progress=on_progress,
+        )
+        job.result = {
+            "total": result.total,
+            "downloaded": result.downloaded,
+            "skipped": result.skipped,
+            "failed": result.failed,
+            "errors": list(result.errors),
+        }
+
     # ---------------------------------------------------------------- helpers
 
     def _progress(
@@ -588,11 +624,27 @@ class JobManager:
             "fetch-artist": self._validate_fetch_artist,
             "analyze-set": self._validate_analyze_set,
             "import-local": self._validate_import_local,
+            "download-tracks": self._validate_download_tracks,
         }
         validator = validators.get(kind)
         if validator is None:
             raise JobParamError(f"unknown job kind {kind!r}")
         return validator(params)
+
+    @staticmethod
+    def _validate_download_tracks(params: dict[str, Any]) -> dict[str, Any]:
+        raw_ids = params.get("track_ids")
+        if not isinstance(raw_ids, (list, tuple)) or len(raw_ids) == 0:
+            raise JobParamError("track_ids must be a non-empty list of track IDs")
+        track_ids: list[str] = []
+        for item in raw_ids:
+            if not isinstance(item, str) or not item.strip():
+                raise JobParamError("track_ids must contain non-empty strings")
+            track_ids.append(item.strip())
+        return {
+            "track_ids": track_ids,
+            "skip_existing": _as_bool(params, "skip_existing", True),
+        }
 
     @staticmethod
     def _validate_index(params: dict[str, Any]) -> dict[str, Any]:

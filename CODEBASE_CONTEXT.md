@@ -32,6 +32,7 @@ backend/
         __init__.py
         audio_engine.py                           # IAudioDecoder, IFeatureExtractor, IAudioEmbedder, IAudioSegmenter, IFingerprinter, ISetDownloader
         catalog.py                                # ICatalogProvider (search, lookup, crawl_keyword), ISeedDiscovery, ISeedCrawler
+        downloader.py                             # ITrackDownloader, TrackDownloadResult
         hardware.py                               # IHardwareProbe
         llm.py                                    # ILLMService
         local_library.py                          # ILocalLibraryScanner
@@ -43,6 +44,7 @@ backend/
         crawl_itunes_seeds.py                     # CrawlITunesSeeds (Phase B: iTunes techno/label keyword crawler)
         dig_similar_tracks.py                     # DigSimilarTracks (track-to-track similarity, harmonic/BPM filter)
         dj_set_helper.py                          # DJSetHelper (transition evaluation, next track suggestion, bridge finder, 2-opt auto-sequence, M3U8 export)
+        download_tracks.py                        # DownloadTracks (single-track & batch downloader, local_path persistence, resilience)
         fetch_artist_tracks.py                    # FetchArtistTracks (targeted artist track fetching, auto-indexing, related discovery)
         fetch_catalog_metadata.py                 # FetchCatalogMetadata (iTunes artist metadata harvester, blacklist-aware)
         find_similar_for_set.py                   # FindSimilarForSet (set-to-set & passage-to-track similarity)
@@ -63,6 +65,8 @@ backend/
           local_library_scanner.py                # LocalLibraryScanner (ffprobe recursive tag reader + filename fallback)
         remote/
           __init__.py
+          amdl_http_downloader.py                 # AmdlHttpTrackDownloader (ITrackDownloader: direct HTTP + ffmpeg remux/tagging)
+          amdl_resolver.cjs                       # am-dl cryptographic handshake (Curve25519/X25519, ChaCha20-Poly1305, GZIP)
           artist_parser.py                        # parse_collaborators() (remix/feature artist extractor)
           deezer_seed_crawler.py                  # DeezerSeedCrawler (BFS discovery with live CrawlProgress)
           itunes_provider.py                      # ITunesProvider (18 req/min token bucket, crawl_keyword, snowballing)
