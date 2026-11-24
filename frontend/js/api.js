@@ -2,7 +2,7 @@
  * Every method maps 1:1 to a backend endpoint — do not reshape responses here.
  */
 
-async function request(path, { method = "GET", body, params } = {}) {
+async function request(path, { method = "GET", body, params, raw = false } = {}) {
   const url = new URL(path, window.location.origin);
   if (params) {
     const entries = params instanceof URLSearchParams ? params.entries() : Object.entries(params);
@@ -19,6 +19,11 @@ async function request(path, { method = "GET", body, params } = {}) {
     });
   } catch {
     throw new Error("Cannot reach the local backend — is the server running?");
+  }
+  if (raw) {
+    const text = await res.text();
+    if (!res.ok) throw new Error(text || `Request failed (${res.status})`);
+    return text;
   }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
@@ -80,6 +85,7 @@ export const api = {
     request(`/api/dig/${encodeURIComponent(trackId)}`, { params }),
   vibeSearch: (payload) => request("/api/vibe-search", { method: "POST", body: payload }),
   catalogFilter: (params = {}) => request("/api/catalog/filter", { params }),
+  tasteRanking: (params = {}) => request("/api/catalog/taste-ranking", { params }),
 
   // ---- seeds ----
   seeds: (params = {}) => request("/api/catalog/seeds", { params }),
@@ -121,7 +127,7 @@ export const api = {
   updatePlannedSet: (id, payload) =>
     request(`/api/set-helper/sets/${id}`, { method: "PATCH", body: payload }),
   deletePlannedSet: (id) => request(`/api/set-helper/sets/${id}`, { method: "DELETE" }),
-  exportPlannedSet: (id) => request(`/api/set-helper/sets/${id}/export.m3u8`),
+  exportPlannedSet: (id) => request(`/api/set-helper/sets/${id}/export.m3u8`, { raw: true }),
 
   // ---- DJ sets (analyzed) ----
   listSets: (limit = 20) => request(`/api/sets?limit=${limit}`),

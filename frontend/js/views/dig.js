@@ -1,6 +1,6 @@
 /* Dig workspace: three strictly isolated tabs sharing one results renderer.
  * - match: visual track picker -> GET /api/dig/{id}
- * - foryou: taste ranking -> GET /api/tracks/recent + filters
+ * - foryou: real taste ranking -> GET /api/catalog/taste-ranking
  * - vibe: CLAP text search -> POST /api/vibe-search
  */
 
@@ -33,6 +33,7 @@ function selectMode(mode) {
 function renderPicker(tracks) {
   pickerCache = tracks;
   const el = document.getElementById("dig-match-picker");
+  el.hidden = false;
   if (!tracks.length) {
     el.innerHTML = emptyHTML("No tracks found", "Try a different search.");
     return;
@@ -41,12 +42,11 @@ function renderPicker(tracks) {
     .map(
       (t) => `
   <button class="track-row picker-row" data-pick="${esc(t.id)}">
-    <span class="t-meta primary">${t.taste_match_percent ?? 0}%</span>
-    <div style="min-width:0; flex:1; text-align:left">
-      <div class="t-title">${esc(t.title)}</div>
-      <div class="t-artist">${esc(t.artist)}</div>
-    </div>
+    ${t.artwork_url ? `<img class="picker-art" src="${esc(t.artwork_url)}" alt="" loading="lazy" onerror="this.remove()">` : `<span class="picker-art picker-art-empty" aria-hidden="true"></span>`}
+    <span class="picker-meta"><span class="t-title">${esc(t.title)}</span><span class="t-artist">${esc(t.artist)}</span></span>
     <span class="t-meta primary">${t.bpm != null ? t.bpm + " bpm" : "—"}</span>
+    ${t.camelot_key ? `<span class="key-badge">${esc(t.camelot_key)}</span>` : ""}
+    ${t.has_local_file ? `<span class="pill pill-local">LOCAL</span>` : ""}
   </button>`,
     )
     .join("")}</div>`;
@@ -64,6 +64,7 @@ function renderSelected() {
   if (!selectedTrack) {
     wrap.hidden = true;
     el.innerHTML = "";
+    setPickerOpen(false);
     return;
   }
   wrap.hidden = false;
@@ -71,6 +72,15 @@ function renderSelected() {
   <h3 class="panel-title">Digging around</h3>
   ${trackRowHTML(selectedTrack)}`;
   bindTrackRows(el, [selectedTrack]);
+  setPickerOpen(false);
+}
+
+/** Collapse/reopen the picker results; "Change track" brings them back. */
+function setPickerOpen(open) {
+  const picker = document.getElementById("dig-match-picker");
+  const change = document.getElementById("dig-match-change");
+  if (picker) picker.hidden = !open;
+  if (change) change.hidden = !selectedTrack;
 }
 
 async function runMatch() {
@@ -101,41 +111,36 @@ async function runMatch() {
   }
 }
 
-/* ---------- For You ---------- */
+/* ---------- For You (real backend taste ranking) ---------- */
 
 async function runForYou() {
   const el = document.getElementById("dig-foryou-results");
   try {
-    el.innerHTML = emptyHTML("ranking…", "");
+    el.innerHTML = emptyHTML("ranking the full catalog…", "");
     const limit = Number(document.getElementById("dig-foryou-limit").value);
     const genre = document.getElementById("dig-foryou-genre").value.trim();
-    const [data, artistData] = await Promise.all([
-      api.recentTracks(limit),
-      api.artists({ limit: 500 }),
-    ]);
-    const tasteByArtist = new Map(
-      (artistData.artists ?? artistData.results ?? [])
-        .filter((a) => a.taste_match_percent != null)
-        .map((a) => [String(a.artist ?? "").toLowerCase(), a.taste_match_percent]),
-    );
-    let tracks = (data.tracks ?? []).map((t) => ({
+    const mode = document.getElementById("dig-foryou-source").value;
+    const data = await api.tasteRanking({
+      mode,
+      limit,
+      genre: genre || undefined,
+    });
+    const tracks = (data.matches ?? []).map((t) => ({
       ...t,
       is_liked: isArtistLiked(t.artist),
-      taste_match_percent: t.taste_match_percent ?? tasteByArtist.get(String(t.artist ?? "").toLowerCase()) ?? null,
     }));
-    if (genre) {
-      const needle = genre.toLowerCase();
-      tracks = tracks.filter((t) => String(t.genre ?? "").toLowerCase().includes(needle));
-    }
-    const source = document.getElementById("dig-foryou-source").value;
-    if (source === "local") tracks = tracks.filter((t) => t.has_local_file);
-    else if (source === "liked") tracks = tracks.filter((t) => t.is_liked);
-    tracks.sort((a, b) => (b.taste_match_percent ?? 0) - (a.taste_match_percent ?? 0));
     if (!tracks.length) {
-      el.innerHTML = emptyHTML("Nothing to rank", "Widen the filters or run the pipeline first.");
+      el.innerHTML = emptyHTML(
+        "Nothing to rank",
+        mode === "liked"
+          ? "Like some artists first, then re-run."
+          : "Widen the filters or run the pipeline first.",
+      );
       return;
     }
-    el.innerHTML = `<div class="track-list">${tracks.map((t) => trackRowHTML(t)).join("")}</div>`;
+    el.innerHTML = `<div class="track-list">${tracks
+      .map((t) => trackRowHTML(t, { similarity: t.taste_percent }))
+      .join("")}</div>`;
     bindTrackRows(el, tracks);
   } catch (err) {
     el.innerHTML = errorHTML(err.message, "dig-foryou-retry");
@@ -231,57 +236,69 @@ function openCatalogWith(preset) {
 
 /* ---------- setup ---------- */
 
-export function setupDig() {
-  document.querySelectorAll("#dig-modes .mode").forEach((btn) =>
-    btn.addEventListener("click", () => selectMode(btn.dataset.mode)),
-  );
+// Bind all Dig controls at module load: the DOM is already parsed, and clicks
+// landing during boot (before main() finishes its fetches) must still work.
+document.querySelectorAll("#dig-modes .mode").forEach((btn) =>
+  btn.addEventListener("click", () => selectMode(btn.dataset.mode)),
+);
 
-  let searchTimer = null;
-  document.getElementById("dig-match-search").addEventListener("input", (e) => {
-    clearTimeout(searchTimer);
-    const q = e.target.value.trim();
-    if (q.length < 2) return;
-    searchTimer = setTimeout(async () => {
-      try {
-        const data = await api.searchTracks(q, 8);
-        renderPicker(data.tracks ?? []);
-      } catch (err) {
-        toast(err.message, "error");
-      }
-    }, 250);
-  });
-
-  document.getElementById("dig-foryou-run").addEventListener("click", runForYou);
-  document.getElementById("dig-vibe-run").addEventListener("click", () => runVibe());
-  document.getElementById("dig-vibe-text").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") runVibe();
-  });
-
-  document.getElementById("dig-cat-run").addEventListener("click", () => runCatalogFilter());
-  document.getElementById("dig-cat-reset").addEventListener("click", () => {
-    document.getElementById("dig-cat-q").value = "";
-    document.getElementById("dig-cat-key").value = "";
-    document.getElementById("dig-cat-bpm-min").value = "";
-    document.getElementById("dig-cat-bpm-max").value = "";
-    document.getElementById("dig-cat-source").value = "";
-    document.getElementById("dig-cat-results").innerHTML = "";
-  });
-
-  // Camelot key dropdown: 1A..12A / 1B..12B
-  const keySelect = document.getElementById("dig-cat-key");
-  for (let n = 1; n <= 12; n++) {
-    for (const letter of ["A", "B"]) {
-      const opt = document.createElement("option");
-      opt.value = `${n}${letter}`;
-      opt.textContent = `${n}${letter}`;
-      keySelect.appendChild(opt);
+let searchTimer = null;
+const searchInput = document.getElementById("dig-match-search");
+searchInput.addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  document.getElementById("dig-match-picker").hidden = false; // editing reopens the picker
+  const q = e.target.value.trim();
+  if (q.length < 2) return;
+  searchTimer = setTimeout(async () => {
+    try {
+      const data = await api.searchTracks(q, 8);
+      renderPicker(data.tracks ?? []);
+    } catch (err) {
+      toast(err.message, "error");
     }
+  }, 250);
+});
+searchInput.addEventListener("focus", () => {
+  if (pickerCache.length) document.getElementById("dig-match-picker").hidden = false;
+});
+document.getElementById("dig-match-change").addEventListener("click", () => {
+  document.getElementById("dig-match-picker").hidden = false;
+  searchInput.focus();
+});
+
+document.getElementById("dig-foryou-run").addEventListener("click", runForYou);
+document.getElementById("dig-vibe-run").addEventListener("click", () => runVibe());
+document.getElementById("dig-vibe-text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runVibe();
+});
+
+document.getElementById("dig-cat-run").addEventListener("click", () => runCatalogFilter());
+document.getElementById("dig-cat-reset").addEventListener("click", () => {
+  document.getElementById("dig-cat-q").value = "";
+  document.getElementById("dig-cat-key").value = "";
+  document.getElementById("dig-cat-bpm-min").value = "";
+  document.getElementById("dig-cat-bpm-max").value = "";
+  document.getElementById("dig-cat-source").value = "";
+  document.getElementById("dig-cat-results").innerHTML = "";
+});
+
+// Camelot key dropdown: 1A..12A / 1B..12B
+const keySelect = document.getElementById("dig-cat-key");
+for (let n = 1; n <= 12; n++) {
+  for (const letter of ["A", "B"]) {
+    const opt = document.createElement("option");
+    opt.value = `${n}${letter}`;
+    opt.textContent = `${n}${letter}`;
+    keySelect.appendChild(opt);
   }
+}
 
-  import("../events.js").then(({ on }) => {
-    on("catalog:filter", (detail) => openCatalogWith(detail ?? {}));
-  });
+import("../events.js").then(({ on }) => {
+  on("catalog:filter", (detail) => openCatalogWith(detail ?? {}));
+});
 
-  selectMode("match");
+selectMode("match");
+
+export function setupDig() {
   return () => {};
 }

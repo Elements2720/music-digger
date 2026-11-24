@@ -35,7 +35,7 @@ function renderPlaylist() {
       const ev = lastEvals[i - 1];
       const badge =
         ev != null
-          ? `<button class="connector-badge ${ev.score >= 66 ? "good" : ev.score >= 33 ? "mid" : "bad"}" data-ev="${i - 1}" title="harmonic ${pctLabel(ev.harmonic_score)} · bpm ${pctLabel(ev.bpm_score)} · ${esc(ev.camelot_move ?? "")} ${ev.bpm_delta != null ? ev.bpm_delta : ""}">${pctLabel(ev.score)}</button>`
+          ? `<button class="connector-badge match-badge ${ev.score >= 66 ? "match-high" : ev.score >= 33 ? "match-mid" : "match-low"}" data-ev="${i - 1}" title="harmonic ${pctLabel(ev.harmonic_score)} · bpm ${pctLabel(ev.bpm_score)} · ${esc(ev.camelot_move ?? "")} ${ev.bpm_delta != null ? ev.bpm_delta : ""}">${pctLabel(ev.score)}</button>`
           : `<span class="connector-dot" aria-hidden="true"></span>`;
       return `
   ${i > 0 ? `<div class="connector">${badge}</div>` : ""}

@@ -692,3 +692,42 @@ def test_track_dto_from_domain() -> None:
     dto_local = TrackDTO.from_domain(local_track)
     assert dto_local.has_local_file is True
     assert dto_local.preview_url == "/api/catalog/tracks/rem%3A1/audio"
+
+
+async def test_taste_ranking_ranks_embedded_catalog_with_taste_percent(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/catalog/taste-ranking", params={"mode": "both"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "both"
+    # Only embedded tracks are ranked, sorted best-first, each with 0-100 score.
+    ids = [m["id"] for m in body["matches"]]
+    assert set(ids) == {"itunes:1", "itunes:2"}
+    scores = [m["taste_percent"] for m in body["matches"]]
+    assert scores == sorted(scores, reverse=True)
+    assert all(0.0 <= s <= 100.0 for s in scores)
+    assert body["total"] == len(body["matches"])
+
+
+async def test_taste_ranking_respects_limit_and_mode_filter(
+    client: httpx.AsyncClient,
+) -> None:
+    limited = await client.get("/api/catalog/taste-ranking", params={"limit": 1})
+    assert limited.status_code == 200
+    assert len(limited.json()["matches"]) == 1
+
+    liked_only = await client.get(
+        "/api/catalog/taste-ranking", params={"mode": "liked"}
+    )
+    assert liked_only.status_code == 200
+    # No liked artists in the default fixture -> empty liked-seeded ranking.
+    assert liked_only.json()["matches"] == []
+
+
+async def test_taste_ranking_unknown_mode_falls_back_to_both(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/catalog/taste-ranking", params={"mode": "bogus"})
+    assert response.status_code == 200
+    assert response.json()["mode"] == "both"

@@ -9,11 +9,11 @@ const JOB_PARAMS = {
   index: () => ({ limit: 500, batch_size: 16 }),
   "seed-crawl": () => ({ electronic_limit: 1000, general_limit: 300 }),
   "seed-llm": () => ({ genre: "Melodic Techno & Afro House", count: 100 }),
-  "seed-itunes": () => ({ count: 200 }),
+  "seed-itunes": () => ({ tracks_per_term: 200 }),
   "fetch-metadata": () => ({ artists_limit: 50 }),
   "fetch-artist": () => ({ artist: "" }),
-  "download-tracks": () => ({ limit: 50 }),
-  "import-local": () => ({ path: "" }),
+  "download-tracks": () => ({ track_ids: [] }),
+  "import-local": () => ({ folder_path: "" }),
   "analyze-set": () => ({ source: "" }),
 };
 
@@ -88,6 +88,15 @@ export function setupPipeline() {
       }
       const kind = card.dataset.job;
       const params = (JOB_PARAMS[kind] ?? (() => ({})))();
+      if (kind === "download-tracks") {
+        // Real contract: explicit track id list; empty list is a no-op, not a 400.
+        toast("Pick tracks via a view first — download-tracks takes explicit track IDs", "error", 8000);
+        return;
+      }
+      if (kind === "import-local" && params.folder_path === "") {
+        toast("import-local needs a folder_path — enter it in the log panel first", "error", 8000);
+        return;
+      }
       if (Object.values(params).some((v) => v === "")) {
         toast(`This job needs parameters (${Object.keys(params).join(", ")}) — edit pipeline defaults first`, "error", 8000);
         return;

@@ -488,6 +488,86 @@ class HybridTrackRepository(ITrackRepository):
         )
         return tuple(row_to_track(row) for row in rows)
 
+    async def _select_taste_seed_ids(
+        self,
+        *,
+        mode: Literal["local", "liked", "both"] = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[list[str], dict[str, float] | None, dict[str, str]]:
+        """Pick the embedded seed track IDs (and weights) for a taste mode.
+
+        Returns (seed_ids, weights, artist_by_track_id) over all embedded rows.
+        """
+        embedded_rows = await self._sqlite.fetchall(
+            "SELECT id, artist, source FROM tracks WHERE is_embedded = 1"
+        )
+        if not embedded_rows:
+            return [], None, {}
+
+        artist_by_tid = {str(r["id"]): str(r["artist"]) for r in embedded_rows}
+        local_ids: list[str] = []
+        liked_ids: list[str] = []
+        for r in embedded_rows:
+            tid = str(r["id"])
+            if r["source"] == "local":
+                local_ids.append(tid)
+            if (
+                liked_artist_keys
+                and normalize_artist_key(str(r["artist"])) in liked_artist_keys
+            ):
+                liked_ids.append(tid)
+
+        if mode == "local":
+            return local_ids, None, artist_by_tid
+        if mode == "liked":
+            return liked_ids, None, artist_by_tid
+        # "both": liked seeds count double against local seeds.
+        weight_map: dict[str, float] = {}
+        for tid in local_ids:
+            weight_map[tid] = 1.0
+        for tid in liked_ids:
+            weight_map[tid] = 2.0
+        return list(weight_map), weight_map if weight_map else None, artist_by_tid
+
+    async def get_track_taste_ranking(
+        self,
+        *,
+        mode: Literal["local", "liked", "both"] = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        genre: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, float]:
+        """Rank embedded catalog tracks against the taste profile.
+
+        Returns a mapping of track_id to similarity percentage (0.0 to 100.0).
+        ``genre``/``source`` narrow the ranked candidates (not the seeds).
+        """
+        seed_ids, weights, _artist_by_tid = await self._select_taste_seed_ids(
+            mode=mode, liked_artist_keys=liked_artist_keys
+        )
+        if not seed_ids:
+            return {}
+        scores = await self._vectors.compute_similarity_to_seed_ids(
+            seed_ids, weights=weights
+        )
+        if genre is None and source is None:
+            return scores
+
+        clauses = ["is_embedded = 1"]
+        params: list[str] = []
+        if genre is not None:
+            clauses.append("genre = ?")
+            params.append(genre)
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(source)
+        candidate_rows = await self._sqlite.fetchall(
+            f"SELECT id FROM tracks WHERE {' AND '.join(clauses)}",
+            tuple(params),
+        )
+        candidates = {str(r["id"]) for r in candidate_rows}
+        return {tid: pct for tid, pct in scores.items() if tid in candidates}
+
     async def get_artist_taste_scores(
         self,
         *,
@@ -503,42 +583,9 @@ class HybridTrackRepository(ITrackRepository):
         ):
             return self._taste_scores_cache[cache_key]
 
-        embedded_rows = await self._sqlite.fetchall(
-            "SELECT id, artist, source FROM tracks WHERE is_embedded = 1"
+        seed_ids, weights, artist_by_tid = await self._select_taste_seed_ids(
+            mode=mode, liked_artist_keys=liked_artist_keys
         )
-        if not embedded_rows:
-            result = ({}, 0)
-            self._taste_scores_cache[cache_key] = result
-            self._taste_scores_timestamp[cache_key] = now
-            return result
-
-        local_ids: list[str] = []
-        liked_ids: list[str] = []
-        for r in embedded_rows:
-            tid = str(r["id"])
-            if r["source"] == "local":
-                local_ids.append(tid)
-            if (
-                liked_artist_keys
-                and normalize_artist_key(str(r["artist"])) in liked_artist_keys
-            ):
-                liked_ids.append(tid)
-
-        weights: dict[str, float] | None = None
-        seed_ids: list[str] = []
-        if mode == "local":
-            seed_ids = local_ids
-        elif mode == "liked":
-            seed_ids = liked_ids
-        else:  # "both"
-            weight_map: dict[str, float] = {}
-            for tid in local_ids:
-                weight_map[tid] = 1.0
-            for tid in liked_ids:
-                weight_map[tid] = 2.0
-            seed_ids = list(weight_map.keys())
-            weights = weight_map if seed_ids else None
-
         if not seed_ids:
             result = ({}, 0)
             self._taste_scores_cache[cache_key] = result
@@ -555,9 +602,7 @@ class HybridTrackRepository(ITrackRepository):
             return result
 
         artist_scores_accum: dict[str, list[float]] = {}
-        for r in embedded_rows:
-            tid = str(r["id"])
-            artist = str(r["artist"])
+        for tid, artist in artist_by_tid.items():
             if tid in track_scores:
                 artist_scores_accum.setdefault(artist, []).append(track_scores[tid])
 

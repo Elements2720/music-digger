@@ -399,6 +399,44 @@ async def get_artists_summary(
     }
 
 
+@router.get("/catalog/taste-ranking")
+async def get_taste_ranking(
+    mode: str = Query("both"),
+    genre: str | None = Query(None),
+    source: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Rank the full embedded catalog against the CLAP taste vector.
+
+    ``mode`` selects the taste profile seeds: ``local`` (downloaded tracks),
+    ``liked`` (liked artists' catalog tracks) or ``both`` (liked weighted 2x).
+    """
+    liked_keys = (
+        await container.liked_artist_repository.get_liked_keys()
+        if getattr(container, "liked_artist_repository", None)
+        else frozenset()
+    )
+    taste_mode = mode if mode in ("local", "liked", "both") else "both"
+    ranking = await container.track_repository.get_track_taste_ranking(
+        mode=taste_mode,
+        liked_artist_keys=liked_keys,
+        genre=genre,
+        source=source,
+    )
+    ordered = sorted(ranking.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    tracks = await container.track_repository.get_many([tid for tid, _ in ordered])
+    scores = dict(ordered)
+    heard = await container.track_repository.get_heard_ids()
+    matches = [
+        {**track_payload(t, heard=heard), "taste_percent": scores[t.id]}
+        for t in tracks
+        if t.id in scores
+    ]
+    matches.sort(key=lambda m: m["taste_percent"], reverse=True)
+    return {"matches": matches, "total": len(matches), "mode": taste_mode}
+
+
 @router.get("/catalog/artists/{artist_name}/tracks")
 async def get_artist_tracks(
     artist_name: str,

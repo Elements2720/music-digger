@@ -34,6 +34,16 @@ export function pctLabel(val) {
   return `${Math.round(n <= 1 ? n * 100 : n)}%`;
 }
 
+/** High-contrast match/taste badge, color-coded by strength:
+ * >=85 emerald, 70-84 cyan, <70 amber. Returns "" when there is no score. */
+export function matchBadge(val, title = "Match") {
+  const label = pctLabel(val);
+  if (label == null) return "";
+  const pct = Number(label.replace("%", ""));
+  const tier = pct >= 85 ? "high" : pct >= 70 ? "mid" : "low";
+  return `<span class="match-badge match-${tier}" title="${esc(title)}">${label}</span>`;
+}
+
 /** BPM shown exactly as stored — no rounding or truncation. */
 export function bpmLabel(t) {
   if (t.bpm == null || !Number.isFinite(Number(t.bpm))) return "&mdash;";
@@ -107,7 +117,7 @@ export async function toggleArtistLike(btn) {
  * optional similarity/taste %, LOCAL/DL chip, heart, + Set.
  * Play button, artwork AND title all start playback. */
 export function trackRowHTML(t, { similarity = null } = {}) {
-  const pct = pctLabel(similarity ?? t.taste_match_percent);
+  const pct = matchBadge(similarity ?? t.taste_percent ?? t.taste_match_percent, "Taste match");
   return `
   <div class="track-row" data-id="${esc(t.id)}">
     <button class="icon-btn" data-play="${esc(t.id)}" aria-label="Play ${esc(t.title)}">${iconPlay()}</button>
@@ -116,7 +126,7 @@ export function trackRowHTML(t, { similarity = null } = {}) {
       <div class="t-title">${esc(t.title)}</div>
       <div class="t-artist">${esc(t.artist)}</div>
     </div>
-    ${pct ? `<span class="t-meta primary">${pct}</span>` : ""}
+    ${pct}
     <span class="t-meta primary">${bpmLabel(t)}</span>
     <span>${keyBadge(t.key)}</span>
     <div class="right-cluster">
@@ -172,7 +182,7 @@ export function artistRowHTML(a) {
   const thumb = a.artwork_url
     ? `<img class="t-art" src="${esc(a.artwork_url)}" alt="" loading="lazy" width="40" height="40">`
     : `<span class="t-art t-art-empty t-art-mono" aria-hidden="true">${esc(String(a.artist ?? "?").trim().charAt(0).toUpperCase() || "?")}</span>`;
-  const pct = pctLabel(a.taste_match_percent);
+  const pct = matchBadge(a.taste_match_percent, "Taste match");
   return `
   <div class="track-row artist-row" data-artist="${esc(a.artist)}">
     <button class="icon-btn" data-artist-dig="${esc(a.artist)}" aria-label="Dig ${esc(a.artist)}">DIG</button>
@@ -183,7 +193,7 @@ export function artistRowHTML(a) {
     </div>
     <span class="t-meta">${a.track_count ?? 0} tracks</span>
     <span class="t-meta">${a.year_min ?? "—"}–${a.year_max ?? "—"}</span>
-    ${pct ? `<span class="t-meta primary" title="Taste match">${pct}</span>` : `<span class="t-meta">&mdash;</span>`}
+    ${pct || `<span class="t-meta">&mdash;</span>`}
     ${likeBtnHTML(a.artist)}
   </div>`;
 }

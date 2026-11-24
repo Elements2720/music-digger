@@ -149,6 +149,37 @@ class FakeTrackRepository(ITrackRepository):
     async def get_heard_ids(self) -> frozenset[str]:
         return frozenset(self.heard)
 
+    async def get_track_taste_ranking(
+        self,
+        *,
+        mode: str = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        genre: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, float]:
+        from domain._validation import normalize_artist_key
+
+        liked_norm = {normalize_artist_key(k) for k in liked_artist_keys}
+        scores: dict[str, float] = {}
+        for t in self.tracks.values():
+            if t.embedding is None:
+                continue
+            if genre and (t.genre or "").casefold() != genre.casefold():
+                continue
+            if source and t.source != source:
+                continue
+            is_local = t.source == "local"
+            is_liked = normalize_artist_key(t.artist) in liked_norm
+            if mode == "local" and not is_local:
+                continue
+            if mode == "liked" and not is_liked:
+                continue
+            base = 80.0 + (hash(t.id) % 1500) / 100.0
+            if mode == "both" and is_liked:
+                base = min(99.0, base + 5.0)
+            scores[t.id] = min(99.0, base)
+        return scores
+
     async def count(self) -> int:
         return len(self.tracks)
 
