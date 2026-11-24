@@ -55,7 +55,7 @@ export function remapM3u8(text: string, options: M3u8Options): string {
   const out: string[] = ["#EXTM3U"];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
-    if (!line || line === "#EXTM3U") continue;
+    if (!line || line.startsWith("#EXTM3U")) continue;
     if (line.startsWith("#")) {
       if (line.startsWith("#EXTINF") && !options.includeMetadata) continue;
       out.push(line);
