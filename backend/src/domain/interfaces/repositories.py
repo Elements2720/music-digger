@@ -104,9 +104,13 @@ class ITrackRepository(ABC):
 
     @abstractmethod
     async def list_embedded(
-        self, limit: int = 20, *, offset: int = 0
+        self, limit: int = 20, *, offset: int = 0, features_first: bool = False
     ) -> Sequence[Track]:
-        """Return embedded tracks, most recently indexed first."""
+        """Return embedded tracks, most recently indexed first.
+
+        With ``features_first=True`` embedded tracks whose BPM/key have not
+        been extracted yet sort after fully analysed ones.
+        """
 
     @abstractmethod
     async def mark_index_failed(self, track_id: str) -> None:

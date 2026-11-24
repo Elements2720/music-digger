@@ -10,13 +10,16 @@ the composition root inside the lifespan.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .job_manager import JobManager
@@ -26,6 +29,35 @@ LOGGER = logging.getLogger(__name__)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 FRONTEND_DIR = REPOSITORY_ROOT / "frontend"
+
+
+def _install_windows_loop_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
+    """Silence Windows proactor noise from ``206`` audio-range scrubbing.
+
+    When the browser aborts an audio ``Range`` request mid-stream, the
+    ``_ProactorBasePipeTransport`` surfaces ``ConnectionResetError``
+    (winerror 10054) as a stray "Future exception was never retrieved" log.
+    It is expected client behaviour, so drop it; everything else keeps the
+    previous handling.
+    """
+
+    if sys.platform != "win32":
+        return
+    previous_handler = loop.get_exception_handler()
+
+    def handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        exc = context.get("exception")
+        if (
+            isinstance(exc, ConnectionResetError)
+            and getattr(exc, "winerror", None) == 10054
+        ):
+            return
+        if previous_handler is not None:
+            previous_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
 
 
 def create_app(container: Any | None = None) -> FastAPI:
@@ -46,6 +78,7 @@ def create_app(container: Any | None = None) -> FastAPI:
             real_container = Container()
             await real_container.start()
             app.state.container = real_container
+        _install_windows_loop_exception_handler(asyncio.get_running_loop())
         LOGGER.info("DigDeeper Local API ready")
         try:
             yield
@@ -84,7 +117,24 @@ def create_app(container: Any | None = None) -> FastAPI:
     async def api_catch_all(full_path: str) -> None:
         raise HTTPException(status_code=404, detail="API endpoint not found")
 
-    if FRONTEND_DIR.is_dir():
+    dist_index = FRONTEND_DIR / "dist" / "index.html"
+    if dist_index.is_file():
+        # Built React bundle (ui-editorial-crate): assets + SPA fallback.
+        app.mount(
+            "/assets",
+            StaticFiles(directory=FRONTEND_DIR / "dist" / "assets"),
+            name="frontend-assets",
+        )
+
+        @app.get("/{spa_path:path}", include_in_schema=False)
+        async def spa_fallback(spa_path: str) -> FileResponse:
+            dist_dir = (FRONTEND_DIR / "dist").resolve()
+            candidate = (dist_dir / spa_path).resolve()
+            if spa_path and candidate.is_file() and candidate.is_relative_to(dist_dir):
+                return FileResponse(candidate)
+            return FileResponse(dist_index)
+
+    elif FRONTEND_DIR.is_dir():
         app.mount(
             "/",
             StaticFiles(directory=FRONTEND_DIR, html=True),

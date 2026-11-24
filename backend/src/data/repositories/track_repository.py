@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Sequence
 from dataclasses import replace
@@ -250,15 +251,25 @@ class HybridTrackRepository(ITrackRepository):
         needle = query.strip()
         if not needle:
             return ()
-        pattern = f"%{needle}%"
+        # Tokenize so "Artist - Title" queries match across the artist and
+        # title columns; every token must appear in title or artist (AND).
+        tokens = [t for t in re.split(r"[\s\-&/]+", needle) if t]
+        if not tokens:
+            return ()
+        clauses = " AND ".join("(title LIKE ? OR artist LIKE ?)" for _ in tokens)
+        parameters: list[object] = []
+        for token in tokens:
+            pattern = f"%{token}%"
+            parameters.extend((pattern, pattern))
+        parameters.append(limit)
         rows = await self._sqlite.fetchall(
-            """
+            f"""
             SELECT * FROM tracks
-            WHERE title LIKE ? OR artist LIKE ?
+            WHERE {clauses}
             ORDER BY is_embedded DESC, artist COLLATE NOCASE, title COLLATE NOCASE
             LIMIT ?
             """,
-            (pattern, pattern, limit),
+            tuple(parameters),
         )
         return tuple(row_to_track(row) for row in rows)
 
@@ -328,15 +339,26 @@ class HybridTrackRepository(ITrackRepository):
         return tuple(row_to_track(row) for row in rows)
 
     async def list_embedded(
-        self, limit: int = 20, *, offset: int = 0
+        self, limit: int = 20, *, offset: int = 0, features_first: bool = False
     ) -> Sequence[Track]:
+        """Return embedded tracks, most recently indexed first.
+
+        With ``features_first`` the rows whose BPM and Camelot key have not
+        been extracted yet sort after fully analysed tracks, so a "recent"
+        panel never leads with rows that would render as ``-``.
+        """
         if limit <= 0:
             return ()
+        feature_rank = (
+            "CASE WHEN bpm IS NULL OR bpm = '' THEN 1 ELSE 0 END, "
+            if features_first
+            else ""
+        )
         rows = await self._sqlite.fetchall(
-            """
+            f"""
             SELECT * FROM tracks
             WHERE is_embedded = 1
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY {feature_rank}updated_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -477,6 +499,127 @@ class HybridTrackRepository(ITrackRepository):
         )
         return tuple(row_to_track(row) for row in rows)
 
+    async def _select_taste_seed_ids(
+        self,
+        *,
+        mode: Literal["local", "liked", "both"] = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        liked_weight: float = 2.0,
+        local_weight: float = 1.0,
+    ) -> tuple[list[str], dict[str, float] | None, dict[str, str]]:
+        """Pick the embedded seed track IDs (and weights) for a taste mode.
+
+        Returns (seed_ids, weights, artist_by_track_id) over all embedded rows.
+        ``liked_weight``/``local_weight`` only matter for ``mode="both"``; a track
+        that is both local and from a liked artist takes the liked weight.
+        """
+        embedded_rows = await self._sqlite.fetchall(
+            "SELECT id, artist, source FROM tracks WHERE is_embedded = 1"
+        )
+        if not embedded_rows:
+            return [], None, {}
+
+        artist_by_tid = {str(r["id"]): str(r["artist"]) for r in embedded_rows}
+        local_ids: list[str] = []
+        liked_ids: list[str] = []
+        for r in embedded_rows:
+            tid = str(r["id"])
+            if r["source"] == "local":
+                local_ids.append(tid)
+            if (
+                liked_artist_keys
+                and normalize_artist_key(str(r["artist"])) in liked_artist_keys
+            ):
+                liked_ids.append(tid)
+
+        if mode == "local":
+            return local_ids, None, artist_by_tid
+        if mode == "liked":
+            return liked_ids, None, artist_by_tid
+        # "both": liked seeds outweigh local-only seeds by default (2.0 vs 1.0).
+        weight_map: dict[str, float] = {}
+        for tid in local_ids:
+            weight_map[tid] = local_weight
+        for tid in liked_ids:
+            weight_map[tid] = liked_weight
+        return list(weight_map), weight_map if weight_map else None, artist_by_tid
+
+    async def get_track_taste_ranking(
+        self,
+        *,
+        mode: Literal["local", "liked", "both"] = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        genre: str | None = None,
+        source: str | None = None,
+        liked_weight: float = 2.0,
+        local_weight: float = 1.0,
+        max_per_artist: int = 0,
+        hide_heard: bool = False,
+        exclude_local: bool = False,
+    ) -> dict[str, float]:
+        """Rank embedded catalog tracks against the taste profile.
+
+        Returns a mapping of track_id to similarity percentage (0.0 to 100.0).
+        ``genre``/``source``/``hide_heard``/``exclude_local`` narrow the ranked
+        candidates (not the seeds); ``max_per_artist`` keeps at most that many
+        tracks per artist (0 = unlimited) after ranking.
+        """
+        if liked_weight < 0.0 or local_weight < 0.0:
+            raise ValueError("taste weights must be >= 0")
+        if max_per_artist < 0:
+            raise ValueError("max_per_artist must be >= 0")
+        seed_ids, weights, artist_by_tid = await self._select_taste_seed_ids(
+            mode=mode,
+            liked_artist_keys=liked_artist_keys,
+            liked_weight=liked_weight,
+            local_weight=local_weight,
+        )
+        if not seed_ids:
+            return {}
+        scores = await self._vectors.compute_similarity_to_seed_ids(
+            seed_ids, weights=weights
+        )
+        if (
+            genre is None
+            and source is None
+            and not hide_heard
+            and not exclude_local
+            and max_per_artist <= 0
+        ):
+            return scores
+
+        clauses = ["is_embedded = 1"]
+        params: list[str] = []
+        if genre is not None:
+            clauses.append("genre = ?")
+            params.append(genre)
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(source)
+        if exclude_local:
+            clauses.append("source != 'local'")
+        candidate_rows = await self._sqlite.fetchall(
+            f"SELECT id FROM tracks WHERE {' AND '.join(clauses)}",
+            tuple(params),
+        )
+        candidates = {str(r["id"]) for r in candidate_rows}
+        if hide_heard:
+            candidates -= await self.get_heard_ids()
+        ranked = [(tid, pct) for tid, pct in scores.items() if tid in candidates]
+        if max_per_artist <= 0:
+            return dict(ranked)
+
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        seen_per_artist: dict[str, int] = {}
+        capped: dict[str, float] = {}
+        for tid, pct in ranked:
+            artist_key = normalize_artist_key(artist_by_tid.get(tid, ""))
+            if seen_per_artist.get(artist_key, 0) >= max_per_artist:
+                continue
+            seen_per_artist[artist_key] = seen_per_artist.get(artist_key, 0) + 1
+            capped[tid] = pct
+        return capped
+
     async def get_artist_taste_scores(
         self,
         *,
@@ -492,42 +635,9 @@ class HybridTrackRepository(ITrackRepository):
         ):
             return self._taste_scores_cache[cache_key]
 
-        embedded_rows = await self._sqlite.fetchall(
-            "SELECT id, artist, source FROM tracks WHERE is_embedded = 1"
+        seed_ids, weights, artist_by_tid = await self._select_taste_seed_ids(
+            mode=mode, liked_artist_keys=liked_artist_keys
         )
-        if not embedded_rows:
-            result = ({}, 0)
-            self._taste_scores_cache[cache_key] = result
-            self._taste_scores_timestamp[cache_key] = now
-            return result
-
-        local_ids: list[str] = []
-        liked_ids: list[str] = []
-        for r in embedded_rows:
-            tid = str(r["id"])
-            if r["source"] == "local":
-                local_ids.append(tid)
-            if (
-                liked_artist_keys
-                and normalize_artist_key(str(r["artist"])) in liked_artist_keys
-            ):
-                liked_ids.append(tid)
-
-        weights: dict[str, float] | None = None
-        seed_ids: list[str] = []
-        if mode == "local":
-            seed_ids = local_ids
-        elif mode == "liked":
-            seed_ids = liked_ids
-        else:  # "both"
-            weight_map: dict[str, float] = {}
-            for tid in local_ids:
-                weight_map[tid] = 1.0
-            for tid in liked_ids:
-                weight_map[tid] = 2.0
-            seed_ids = list(weight_map.keys())
-            weights = weight_map if seed_ids else None
-
         if not seed_ids:
             result = ({}, 0)
             self._taste_scores_cache[cache_key] = result
@@ -544,9 +654,7 @@ class HybridTrackRepository(ITrackRepository):
             return result
 
         artist_scores_accum: dict[str, list[float]] = {}
-        for r in embedded_rows:
-            tid = str(r["id"])
-            artist = str(r["artist"])
+        for tid, artist in artist_by_tid.items():
             if tid in track_scores:
                 artist_scores_accum.setdefault(artist, []).append(track_scores[tid])
 
@@ -637,7 +745,12 @@ class HybridTrackRepository(ITrackRepository):
                 GROUP_CONCAT(DISTINCT genre) AS genres_concat,
                 GROUP_CONCAT(DISTINCT source) AS sources_concat,
                 MIN(id) AS sample_id,
-                MIN(title) AS sample_title
+                MIN(title) AS sample_title,
+                (
+                    SELECT t2.artwork_url FROM tracks t2
+                    WHERE t2.artist = tracks.artist AND t2.artwork_url IS NOT NULL
+                    ORDER BY t2.updated_at DESC LIMIT 1
+                ) AS artwork_url
             FROM tracks
             {where}
             GROUP BY artist
@@ -655,7 +768,12 @@ class HybridTrackRepository(ITrackRepository):
                 GROUP_CONCAT(DISTINCT genre) AS genres_concat,
                 GROUP_CONCAT(DISTINCT source) AS sources_concat,
                 MIN(id) AS sample_id,
-                MIN(title) AS sample_title
+                MIN(title) AS sample_title,
+                (
+                    SELECT t2.artwork_url FROM tracks t2
+                    WHERE t2.artist = tracks.artist AND t2.artwork_url IS NOT NULL
+                    ORDER BY t2.updated_at DESC LIMIT 1
+                ) AS artwork_url
             FROM tracks
             {where}
             GROUP BY artist
@@ -697,6 +815,7 @@ class HybridTrackRepository(ITrackRepository):
                     if row["year_max"] is not None
                     else None,
                     taste_match_percent=taste_pct,
+                    artwork_url=row["artwork_url"],
                     is_liked=is_liked,
                 )
             )

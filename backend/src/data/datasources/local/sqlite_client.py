@@ -71,6 +71,18 @@ CREATE INDEX IF NOT EXISTS idx_tracks_bpm ON tracks(bpm);
 CREATE INDEX IF NOT EXISTS idx_tracks_genre ON tracks(genre);
 CREATE INDEX IF NOT EXISTS idx_tracks_heard ON tracks(is_heard);
 
+-- Composite indexes (additive, ML-REFACTOR): cover the dashboard and
+-- artist-summary aggregates so they stay index-only scans. They only
+-- reference the tracks table (defined above), never a later table.
+CREATE INDEX IF NOT EXISTS idx_tracks_embedded_artist
+    ON tracks(is_embedded, artist);
+CREATE INDEX IF NOT EXISTS idx_tracks_embedded_bpm
+    ON tracks(is_embedded, bpm);
+CREATE INDEX IF NOT EXISTS idx_tracks_embedded_camelot
+    ON tracks(is_embedded, camelot_key);
+CREATE INDEX IF NOT EXISTS idx_tracks_embedded_genre
+    ON tracks(is_embedded, genre);
+
 CREATE TABLE IF NOT EXISTS dj_sets (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,

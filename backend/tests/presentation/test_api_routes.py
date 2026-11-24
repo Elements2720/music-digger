@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -454,6 +455,37 @@ async def test_similar_liked_artists_endpoint(client: httpx.AsyncClient) -> None
     assert "items" in data
 
 
+async def test_set_helper_scores_are_percent_scale(client: httpx.AsyncClient) -> None:
+    """Contract for the Set Builder UI: every similarity score arrives on a
+    0-100 percent scale, never 0-1. A 0-1 value here is silently rendered as
+    '5190%' by any consumer that trusts the percent unit."""
+    eval_res = await client.post(
+        "/api/set-helper/evaluate",
+        json={"track_ids": ["itunes:1", "itunes:2"], "flow": "steady"},
+    )
+    assert eval_res.status_code == 200
+    transitions = eval_res.json()["transitions"]
+    for transition in transitions:
+        for field in ("score", "harmonic_score", "bpm_score", "audio_score"):
+            assert 0 <= transition[field] <= 100, f"{field}={transition[field]}"
+
+    suggest_res = await client.post(
+        "/api/set-helper/suggest-next",
+        json={"from_track_id": "itunes:1", "limit": 5, "flow": "steady"},
+    )
+    assert suggest_res.status_code == 200
+    for suggestion in suggest_res.json()["suggestions"]:
+        assert 0 <= suggestion["evaluation"]["score"] <= 100
+
+    bridge_res = await client.post(
+        "/api/set-helper/bridge",
+        json={"track_a_id": "itunes:1", "track_b_id": "itunes:2", "limit": 5},
+    )
+    assert bridge_res.status_code == 200
+    for bridge in bridge_res.json()["bridges"]:
+        assert 0 <= bridge["combined_score"] <= 100
+
+
 async def test_set_helper_endpoints(client: httpx.AsyncClient) -> None:
     # 1. Suggest next track
     suggest_res = await client.post(
@@ -661,3 +693,154 @@ def test_track_dto_from_domain() -> None:
     dto_local = TrackDTO.from_domain(local_track)
     assert dto_local.has_local_file is True
     assert dto_local.preview_url == "/api/catalog/tracks/rem%3A1/audio"
+
+
+async def test_taste_ranking_ranks_embedded_catalog_with_taste_percent(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/catalog/taste-ranking", params={"mode": "both"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "both"
+    # Only embedded tracks are ranked, sorted best-first, each with 0-100 score.
+    ids = [m["id"] for m in body["matches"]]
+    assert set(ids) == {"itunes:1", "itunes:2"}
+    scores = [m["taste_percent"] for m in body["matches"]]
+    assert scores == sorted(scores, reverse=True)
+    assert all(0.0 <= s <= 100.0 for s in scores)
+    assert body["total"] == len(body["matches"])
+
+
+async def test_taste_ranking_respects_limit_and_mode_filter(
+    client: httpx.AsyncClient,
+) -> None:
+    limited = await client.get("/api/catalog/taste-ranking", params={"limit": 1})
+    assert limited.status_code == 200
+    assert len(limited.json()["matches"]) == 1
+
+    liked_only = await client.get(
+        "/api/catalog/taste-ranking", params={"mode": "liked"}
+    )
+    assert liked_only.status_code == 200
+    # No liked artists in the default fixture -> empty liked-seeded ranking.
+    assert liked_only.json()["matches"] == []
+
+
+async def test_taste_ranking_unknown_mode_falls_back_to_both(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/catalog/taste-ranking", params={"mode": "bogus"})
+    assert response.status_code == 200
+    assert response.json()["mode"] == "both"
+
+
+async def test_taste_ranking_forwards_tuning_params() -> None:
+    container = make_container()
+    transport = httpx.ASGITransport(app=create_app(container=container))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/api/catalog/taste-ranking",
+            params={
+                "mode": "both",
+                "liked_weight": 3.5,
+                "local_weight": 0.5,
+                "max_per_artist": 2,
+                "hide_heard": "true",
+                "exclude_local": "true",
+            },
+        )
+    assert response.status_code == 200
+    assert container.track_repository.taste_kwargs == {
+        "mode": "both",
+        "genre": None,
+        "source": None,
+        "liked_weight": 3.5,
+        "local_weight": 0.5,
+        "max_per_artist": 2,
+        "hide_heard": True,
+        "exclude_local": True,
+    }
+
+
+async def test_taste_ranking_rejects_invalid_tuning(
+    client: httpx.AsyncClient,
+) -> None:
+    for params in (
+        {"liked_weight": -1},
+        {"local_weight": -0.5},
+        {"max_per_artist": -1},
+        {"max_per_artist": 51},
+    ):
+        response = await client.get("/api/catalog/taste-ranking", params=params)
+        assert response.status_code == 422, params
+
+
+def _taste_tracks() -> list:
+    return [
+        replace(make_track("local:1", artist="Repeat"), source="local"),
+        make_track("itunes:2", artist="Repeat"),
+        make_track("itunes:3", artist="Repeat"),
+        make_track("itunes:4", artist="Other", embedding=(0.0, 1.0)),
+    ]
+
+
+async def _taste_client() -> AsyncIterator[httpx.AsyncClient]:
+    container = make_container(tracks=_taste_tracks())
+    transport = httpx.ASGITransport(app=create_app(container=container))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as http_client:
+        yield http_client
+
+
+async def test_taste_ranking_caps_tracks_per_artist() -> None:
+    async for client in _taste_client():
+        response = await client.get(
+            "/api/catalog/taste-ranking",
+            params={"mode": "both", "max_per_artist": 1},
+        )
+        assert response.status_code == 200
+        matches = response.json()["matches"]
+        artists = [match["artist"] for match in matches]
+        assert artists.count("Repeat") == 1
+        assert artists.count("Other") == 1
+
+
+async def test_taste_ranking_hides_heard_and_excludes_local() -> None:
+    async for client in _taste_client():
+        await client.patch("/api/tracks/itunes:2/heard", json={"heard": True})
+
+        hidden = await client.get(
+            "/api/catalog/taste-ranking",
+            params={"mode": "local", "hide_heard": "true", "limit": 50},
+        )
+        hidden_ids = {match["id"] for match in hidden.json()["matches"]}
+        assert "itunes:2" not in hidden_ids
+
+        without_local = await client.get(
+            "/api/catalog/taste-ranking",
+            params={"mode": "both", "exclude_local": "true"},
+        )
+        local_ids = {match["id"] for match in without_local.json()["matches"]}
+        assert "local:1" not in local_ids
+
+
+async def test_dig_accepts_harmonic_mode_and_max_per_artist(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get(
+        "/api/dig/itunes:1",
+        params={"limit": 5, "harmonic": "true", "harmonic_mode": "energy_boost"},
+    )
+    assert response.status_code == 200
+    assert [match["track"]["id"] for match in response.json()["matches"]] == [
+        "itunes:2"
+    ]
+
+    capped = await client.get("/api/dig/itunes:1", params={"max_per_artist": 1})
+    assert capped.status_code == 200
+    assert len(capped.json()["matches"]) == 1
+
+    for params in ({"harmonic_mode": "smooth"}, {"max_per_artist": -1}):
+        rejected = await client.get("/api/dig/itunes:1", params=params)
+        assert rejected.status_code == 422, params

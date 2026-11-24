@@ -1,0 +1,485 @@
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { AudioWaveform, Radio, Search } from "lucide-react";
+import { api } from "../api/client";
+import type {
+  PassagePayload,
+  SetDetailResponse,
+  SetsListResponse,
+} from "../types/apiTypes";
+import {
+  EmptyState,
+  ErrorState,
+  KeyPill,
+  Loading,
+  PanelHead,
+  TrackRow,
+} from "../components/ui";
+import { fmtBpm, fmtClock, fmtPercent } from "../lib/format";
+import { useJobsStore } from "../stores/jobsStore";
+
+type DetailView = "tracklist" | "tracks" | "sets";
+
+function Timeline({ passages }: { passages: PassagePayload[] }) {
+  const total = Math.max(...passages.map((p) => p.end_seconds), 1);
+  return (
+    <div className="panel">
+      <PanelHead title="TIMELINE" />
+      <div className="relative h-10 m-3" data-testid="mix-timeline">
+        {passages.map((p, i) => {
+          const left = (p.start_seconds / total) * 100;
+          const width = ((p.end_seconds - p.start_seconds) / total) * 100;
+          const bpm = p.bpm ?? 0;
+          const color =
+            bpm >= 130
+              ? "var(--color-accent)"
+              : bpm >= 120
+                ? "var(--color-info)"
+                : bpm > 0
+                  ? "var(--color-warn)"
+                  : "var(--color-line-strong)";
+          return (
+            <div
+              key={i}
+              className="absolute top-0 h-full rounded-[2px] border border-line"
+              style={{
+                left: `${left}%`,
+                width: `${Math.max(0.5, width)}%`,
+                background: color,
+                opacity: 0.75,
+              }}
+              title={`${fmtClock(p.start_seconds)}–${fmtClock(p.end_seconds)}${p.bpm ? ` · ${fmtBpm(p.bpm)} BPM` : ""}`}
+            />
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-2 px-3 pb-3">
+        {passages.slice(0, 24).map((p, i) => (
+          <span key={i} className="pill font-num">
+            {fmtClock(p.start_seconds)} · {p.bpm == null ? "—" : `${fmtBpm(p.bpm)}`} BPM
+            {p.key ? ` · ${p.key}` : ""}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const VIEW_TABS: { id: DetailView; label: string }[] = [
+  { id: "tracklist", label: "TRACKLIST" },
+  { id: "tracks", label: "SIMILAR TRACKS" },
+  { id: "sets", label: "SIMILAR SETS" },
+];
+
+export function MixView() {
+  const [sets, setSets] = useState<SetsListResponse | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<SetDetailResponse | null>(null);
+  const [view, setView] = useState<DetailView>("tracklist");
+  const [bpmTolerance, setBpmTolerance] = useState(6);
+  const [genre, setGenre] = useState("");
+  const [excludeHeard, setExcludeHeard] = useState(false);
+  const [limit, setLimit] = useState(20);
+  const [q, setQ] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showAnalyze, setShowAnalyze] = useState(false);
+  const [source, setSource] = useState("");
+  const [shazam, setShazam] = useState(true);
+  const [comments, setComments] = useState(true);
+  const [keepAudio, setKeepAudio] = useState(false);
+  const [cookiesFile, setCookiesFile] = useState("");
+
+  const job = useJobsStore((s) => s.job);
+  const active = useJobsStore((s) => s.active);
+  const startJob = useJobsStore((s) => s.start);
+
+  const refresh = useCallback(() => {
+    api
+      .listSets(50)
+      .then((res) => {
+        setSets(res);
+        setSelectedId((current) => current ?? res.sets[0]?.id ?? null);
+      })
+      .catch((err: unknown) => err instanceof Error && setError(err.message));
+  }, []);
+
+  useEffect(refresh, [refresh]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    let alive = true;
+    setBusy(true);
+    api
+      .setDetail(selectedId, {
+        view,
+        limit,
+        bpm_tolerance: bpmTolerance,
+        exclude_heard: excludeHeard || undefined,
+        genre: genre.trim() || undefined,
+      })
+      .then((res) => alive && setDetail(res))
+      .catch((err: unknown) => {
+        if (alive && err instanceof Error) setError(err.message);
+      })
+      .finally(() => alive && setBusy(false));
+    return () => {
+      alive = false;
+    };
+  }, [selectedId, view, limit, bpmTolerance, excludeHeard, genre]);
+
+  const analyze = async () => {
+    if (!source.trim()) return;
+    try {
+      await startJob("analyze-set", {
+        source: source.trim(),
+        shazam,
+        parse_comments: comments,
+        keep_audio: keepAudio,
+        cookies_file: cookiesFile.trim() || null,
+      });
+      setError(null);
+      setShowAnalyze(false);
+      setSource("");
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+    }
+  };
+
+  const visibleSets = (sets?.sets ?? []).filter((s) =>
+    q.trim() ? `${s.artist} ${s.title}`.toLowerCase().includes(q.trim().toLowerCase()) : true,
+  );
+  const selected = sets?.sets.find((s) => s.id === selectedId) ?? null;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h1 className="text-2xl font-bold tracking-[-0.02em] text-heading">Mix Analyzer</h1>
+        <button
+          type="button"
+          className="btn btn-primary"
+          aria-expanded={showAnalyze}
+          onClick={() => setShowAnalyze((v) => !v)}
+        >
+          <AudioWaveform size={14} /> ANALYZE A SET
+        </button>
+      </div>
+
+      {showAnalyze ? (
+        <form
+          className="panel p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void analyze();
+          }}
+        >
+          <p className="eyebrow mb-2">NEW ANALYSIS — YOUTUBE OR AUDIO URL</p>
+          <input
+            className="input"
+            placeholder="https://www.youtube.com/watch?v=…"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            aria-label="DJ set source URL"
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 font-mono text-[11px] uppercase text-ink-dim">
+              <input
+                type="checkbox"
+                checked={shazam}
+                onChange={(e) => setShazam(e.target.checked)}
+                className="h-4 w-4 accent-accent"
+              />
+              SHAZAM PASS
+            </label>
+            <label className="flex items-center gap-2 font-mono text-[11px] uppercase text-ink-dim">
+              <input
+                type="checkbox"
+                checked={comments}
+                onChange={(e) => setComments(e.target.checked)}
+                className="h-4 w-4 accent-accent"
+              />
+              PARSE TOP-100 COMMENTS
+            </label>
+            <label className="flex items-center gap-2 font-mono text-[11px] uppercase text-ink-dim">
+              <input
+                type="checkbox"
+                checked={keepAudio}
+                onChange={(e) => setKeepAudio(e.target.checked)}
+                className="h-4 w-4 accent-accent"
+              />
+              KEEP AUDIO FILE
+            </label>
+            <input
+              className="input max-w-[220px]"
+              placeholder="cookies.txt path (optional)"
+              value={cookiesFile}
+              onChange={(e) => setCookiesFile(e.target.value)}
+              aria-label="Cookies file path"
+            />
+            <button type="submit" className="btn btn-primary ml-auto" disabled={!source.trim()}>
+              START ANALYSIS
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {active && job ? (
+        <div className="panel p-3" role="status">
+          <p className="eyebrow text-accent">ANALYSIS RUNNING — {job.kind}</p>
+          <p className="mt-1 text-xs text-ink-dim">
+            {job.stage} {job.total ? `(${job.processed}/${job.total})` : ""}
+          </p>
+        </div>
+      ) : null}
+
+      {error ? <ErrorState message={error} /> : null}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <section className="panel self-start">
+          <div className="panel-head">
+            <span className="eyebrow">YOUR SETS</span>
+            <span className="pill font-num">{sets?.sets.length ?? 0}</span>
+          </div>
+          <div className="px-3 py-2">
+            <div className="relative">
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint"
+                aria-hidden
+              />
+              <input
+                className="input pl-10"
+                placeholder="Filter sets…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                aria-label="Filter sets"
+              />
+            </div>
+          </div>
+          {!sets ? (
+            <Loading />
+          ) : visibleSets.length === 0 ? (
+            <p className="px-3 pb-3 text-sm text-ink-dim">
+              No sets yet — paste a URL above to analyze one.
+            </p>
+          ) : (
+            <ul className="scroll-thin max-h-[460px] divide-y divide-line overflow-y-auto">
+              {visibleSets.map((s) => (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(s.id)}
+                    aria-current={s.id === selectedId}
+                    className={`flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-fill ${
+                      s.id === selectedId ? "bg-fill" : ""
+                    }`}
+                  >
+                    <Radio
+                      size={15}
+                      className={s.id === selectedId ? "text-accent" : "text-ink-faint"}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm text-heading">{s.title}</span>
+                      <span className="font-num block text-[11px] text-ink-dim">
+                        {s.artist || "unknown"} · {fmtClock(s.duration_seconds)} ·{" "}
+                        {s.passage_count} passages
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="flex min-w-0 flex-col gap-3">
+          {!selected ? (
+            <EmptyState title="NO SET SELECTED" hint="Pick a set to inspect its passages." />
+          ) : (
+            <>
+              <div className="panel flex flex-wrap items-center gap-3 p-3">
+                <div className="min-w-0 flex-1">
+                  <h2 className="truncate text-lg font-semibold text-heading">{selected.title}</h2>
+                  <p className="font-num text-[11px] text-ink-dim">
+                    {fmtClock(selected.duration_seconds)}
+                    {selected.bpm_min != null && selected.bpm_max != null
+                      ? ` · ${fmtBpm(selected.bpm_min)}–${fmtBpm(selected.bpm_max)} BPM`
+                      : ""}
+                  </p>
+                </div>
+                {selected.source_url ? (
+                  <a
+                    className="btn !min-h-0 py-1.5"
+                    href={selected.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    SOURCE
+                  </a>
+                ) : null}
+                <Link className="btn !min-h-0 py-1.5" to={`/dig?mode=catalog`}>
+                  DIG
+                </Link>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div role="tablist" aria-label="Set detail views" className="flex gap-2">
+                  {VIEW_TABS.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={view === t.id}
+                      onClick={() => setView(t.id)}
+                      className="btn !min-h-0 py-1.5 font-mono text-[10px]"
+                      style={
+                        view === t.id
+                          ? { borderColor: "var(--color-accent)", color: "var(--color-accent)" }
+                          : undefined
+                      }
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <label className="flex items-center gap-2 font-mono text-[10px] uppercase text-ink-dim">
+                  BPM ±
+                  <input
+                    type="number"
+                    min={0}
+                    max={40}
+                    className="input !w-16"
+                    value={bpmTolerance}
+                    onChange={(e) => setBpmTolerance(Number(e.target.value))}
+                    aria-label="BPM tolerance"
+                  />
+                </label>
+                <label className="flex items-center gap-2 font-mono text-[10px] uppercase text-ink-dim">
+                  LIMIT
+                  <select
+                    className="input !w-auto"
+                    value={limit}
+                    onChange={(e) => setLimit(Number(e.target.value))}
+                    aria-label="Result limit"
+                  >
+                    {[10, 20, 30, 50].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  className="input max-w-[160px]"
+                  placeholder="genre"
+                  value={genre}
+                  onChange={(e) => setGenre(e.target.value)}
+                  aria-label="Genre filter"
+                />
+                <label className="flex items-center gap-2 font-mono text-[10px] uppercase text-ink-dim">
+                  <input
+                    type="checkbox"
+                    checked={excludeHeard}
+                    onChange={(e) => setExcludeHeard(e.target.checked)}
+                    className="h-4 w-4 accent-accent"
+                  />
+                  HIDE HEARD
+                </label>
+              </div>
+
+              {busy && !detail ? <Loading label="LOADING SET…" /> : null}
+
+              {view === "tracklist" && detail?.passages ? (
+                <>
+                  <Timeline passages={detail.passages} />
+                  <div className="panel">
+                    <PanelHead title={`PASSAGES — ${detail.passages.length}`} />
+                    <div className="divide-y divide-line">
+                      {detail.passages.map((p, i) => (
+                        <div key={i} className="flex flex-col gap-2 px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-num text-xs text-ink-faint">
+                              {fmtClock(p.start_seconds)}–{fmtClock(p.end_seconds)}
+                            </span>
+                            {p.bpm != null ? (
+                              <span className="font-num text-xs text-heading">
+                                {fmtBpm(p.bpm)} BPM
+                              </span>
+                            ) : null}
+                            <KeyPill k={p.key} />
+                            {p.exact_id_title ? (
+                              <span className="pill font-mono text-[10px] uppercase text-accent">
+                                ID · {p.exact_id_artist} — {p.exact_id_title}
+                              </span>
+                            ) : null}
+                            {p.matches.length > 0 ? (
+                              <span className="font-num text-[10px] text-ink-faint">
+                                {p.matches.length} match(es)
+                              </span>
+                            ) : null}
+                          </div>
+                          {p.matches.slice(0, 3).map((m) => (
+                            <TrackRow
+                              key={m.track.id}
+                              track={m.track}
+                              showMatch={Math.round(m.similarity * 100)}
+                            />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {view === "tracks" && detail?.matches ? (
+                detail.matches.length === 0 ? (
+                  <EmptyState title="NO MATCHES" hint="Try a wider BPM tolerance." />
+                ) : (
+                  <div className="panel">
+                    {detail.matches.map((m) => (
+                      <TrackRow
+                        key={m.track.id}
+                        track={m.track}
+                        showMatch={Math.round(m.similarity * 100)}
+                      />
+                    ))}
+                  </div>
+                )
+              ) : null}
+
+              {view === "sets" && detail?.sets ? (
+                detail.sets.length === 0 ? (
+                  <EmptyState title="NO SIMILAR SETS" hint="Analyze more sets to compare them." />
+                ) : (
+                  <div className="panel">
+                    {detail.sets.map((s) => (
+                      <button
+                        key={s.set.id}
+                        type="button"
+                        onClick={() => setSelectedId(s.set.id)}
+                        className="flex w-full items-center gap-3 border-b border-line px-3 py-2 text-left last:border-b-0 hover:bg-fill"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm text-heading">{s.set.title}</span>
+                          <span className="font-num block text-[11px] text-ink-dim">
+                            {s.set.artist || "unknown"} · {fmtClock(s.set.duration_seconds)} ·{" "}
+                            {s.set.passage_count} passages
+                          </span>
+                        </span>
+                        <span className="font-num text-sm text-accent">
+                          {fmtPercent(s.similarity * 100)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              ) : null}
+            </>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}

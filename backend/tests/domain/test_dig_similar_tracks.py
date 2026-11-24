@@ -328,3 +328,101 @@ async def test_negative_bpm_tolerance_is_rejected() -> None:
 
     with pytest.raises(ValueError):
         await use_case.execute("ref", SearchFilter(), bpm_tolerance=-1.0)
+
+
+async def test_energy_boost_widens_the_harmonic_allow_list() -> None:
+    tracks = [
+        make_track("ref", key="8A"),
+        make_track("close", key="8A"),
+        make_track("mid", key="6A"),  # two fifths up: strict rejects it
+        make_track("far", key="9B"),  # a fifth across the relative major
+        make_track("opposite", key="2B"),  # unrelated
+    ]
+    repository = FakeTrackRepository(tracks)
+    use_case = DigSimilarTracks(track_repository=repository)
+
+    result = await use_case.execute(
+        "ref",
+        SearchFilter(limit=10),
+        harmonic=True,
+        harmonic_mode="energy_boost",
+    )
+
+    _, used_filter = repository.similar_calls[-1]
+    assert {key.notation for key in used_filter.camelot_keys} == {
+        "6A",
+        "7A",
+        "8A",
+        "9A",
+        "10A",
+        "7B",
+        "8B",
+        "9B",
+    }
+    assert [match.track.id for match in result.matches] == ["close", "mid", "far"]
+
+
+async def test_strict_mode_keeps_the_narrow_harmonic_set() -> None:
+    repository = FakeTrackRepository([make_track("ref", key="8A")])
+    use_case = DigSimilarTracks(track_repository=repository)
+
+    await use_case.execute(
+        "ref", SearchFilter(limit=10), harmonic=True, harmonic_mode="strict"
+    )
+
+    _, used_filter = repository.similar_calls[-1]
+    assert {key.notation for key in used_filter.camelot_keys} == {
+        "7A",
+        "8A",
+        "9A",
+        "8B",
+    }
+
+
+async def test_unknown_harmonic_mode_is_rejected() -> None:
+    use_case = make_use_case([make_track("ref")])
+
+    with pytest.raises(ValueError):
+        await use_case.execute("ref", SearchFilter(), harmonic_mode="smooth")
+
+
+async def test_max_per_artist_caps_matches_and_still_fills_the_limit() -> None:
+    tracks = [
+        make_track("ref"),
+        replace(make_track("close"), artist="Solomun"),
+        replace(make_track("mid"), artist="Solomun"),
+        replace(make_track("far"), artist="ARTBAT"),
+        replace(make_track("opposite"), artist="Tale Of Us"),
+    ]
+    repository = FakeTrackRepository(tracks)
+    use_case = DigSimilarTracks(track_repository=repository)
+
+    result = await use_case.execute("ref", SearchFilter(limit=10), max_per_artist=1)
+
+    assert [match.track.id for match in result.matches] == [
+        "close",
+        "far",
+        "opposite",
+    ]
+    # A capped query asks for a deeper pool than the plain over-fetch of one.
+    _, used_filter = repository.similar_calls[-1]
+    assert used_filter.limit > SearchFilter(limit=10).limit + 1
+
+
+async def test_max_per_artist_still_respects_the_limit() -> None:
+    tracks = [make_track("ref")] + [
+        replace(make_track("mid"), id=f"t{index}", artist=f"Artist {index}")
+        for index in range(6)
+    ]
+    use_case = make_use_case(tracks)
+
+    result = await use_case.execute("ref", SearchFilter(limit=3), max_per_artist=2)
+
+    assert len(result.matches) == 3
+
+
+async def test_negative_max_per_artist_is_rejected() -> None:
+    use_case = make_use_case([make_track("ref")])
+
+    with pytest.raises(ValueError):
+        await use_case.execute("ref", SearchFilter(), max_per_artist=-1)
