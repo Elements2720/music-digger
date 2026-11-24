@@ -74,7 +74,8 @@ const JOBS: { kind: string; label: string; desc: string; fields: FieldSpec[] }[]
     fields: [
       { key: "limit", label: "LIMIT", type: "number", default_: 500 },
       { key: "batch_size", label: "BATCH SIZE", type: "number", default_: 16 },
-      { key: "track_ids", label: "TRACK IDS (comma separated, optional)", type: "text", default_: "" },
+      { key: "track_ids", label: "TRACK IDS (optional, comma separated)", type: "text", default_: "" },
+
       { key: "reindex", label: "REINDEX ALL", type: "checkbox", default_: false },
     ],
   },
@@ -151,8 +152,11 @@ function JobCard({
 
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {spec.fields.map((f) => (
-          <label key={f.key} className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
-            {f.label}
+          <label
+            key={f.key}
+            className="flex min-w-0 flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim"
+          >
+            <span className="break-words">{f.label}</span>
             {f.type === "checkbox" ? (
               <input
                 type="checkbox"
