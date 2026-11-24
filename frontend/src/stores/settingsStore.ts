@@ -20,11 +20,16 @@ export interface TasteProfile {
   genre: string | null;
 }
 
+export type MaxPerArtist = 0 | 1 | 2 | 3;
+
+/** Upper bound of the per-artist cap offered in Settings (0 means unlimited). */
+const MAX_PER_ARTIST: MaxPerArtist = 3;
+
 export interface SettingsState {
   profiles: TasteProfile[];
   activeProfileId: string;
 
-  maxPerArtist: 0 | 1 | 2 | 3;
+  maxPerArtist: MaxPerArtist;
   hideHeard: boolean;
   excludeLocal: boolean;
 
@@ -273,8 +278,14 @@ export const useSettingsStore = create<SettingsState>()(
             (next as Record<string, unknown>)[key] = v;
           }
         }
-        if (incoming.maxPerArtist === 0 || incoming.maxPerArtist === 1 || incoming.maxPerArtist === 2 || incoming.maxPerArtist === 3) {
-          next.maxPerArtist = incoming.maxPerArtist;
+        const maxPerArtist = incoming.maxPerArtist;
+        if (
+          typeof maxPerArtist === "number" &&
+          Number.isInteger(maxPerArtist) &&
+          maxPerArtist >= 0 &&
+          maxPerArtist <= MAX_PER_ARTIST
+        ) {
+          next.maxPerArtist = maxPerArtist as SettingsState["maxPerArtist"];
         }
         if (typeof incoming.m3u8PathPrefix === "string") {
           next.m3u8PathPrefix = incoming.m3u8PathPrefix.slice(0, 80);
