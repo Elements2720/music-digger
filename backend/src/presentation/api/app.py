@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .job_manager import JobManager
@@ -116,7 +117,24 @@ def create_app(container: Any | None = None) -> FastAPI:
     async def api_catch_all(full_path: str) -> None:
         raise HTTPException(status_code=404, detail="API endpoint not found")
 
-    if FRONTEND_DIR.is_dir():
+    dist_index = FRONTEND_DIR / "dist" / "index.html"
+    if dist_index.is_file():
+        # Built React bundle (ui-editorial-crate): assets + SPA fallback.
+        app.mount(
+            "/assets",
+            StaticFiles(directory=FRONTEND_DIR / "dist" / "assets"),
+            name="frontend-assets",
+        )
+
+        @app.get("/{spa_path:path}", include_in_schema=False)
+        async def spa_fallback(spa_path: str) -> FileResponse:
+            dist_dir = (FRONTEND_DIR / "dist").resolve()
+            candidate = (dist_dir / spa_path).resolve()
+            if spa_path and candidate.is_file() and candidate.is_relative_to(dist_dir):
+                return FileResponse(candidate)
+            return FileResponse(dist_index)
+
+    elif FRONTEND_DIR.is_dir():
         app.mount(
             "/",
             StaticFiles(directory=FRONTEND_DIR, html=True),
