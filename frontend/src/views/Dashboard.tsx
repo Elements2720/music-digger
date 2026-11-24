@@ -55,6 +55,16 @@ function CamelotWheel({
   );
 }
 
+function bpmLabelToRange(label: string): { min: number; max: number } | null {
+  const under = /^<\s*(\d+)$/.exec(label);
+  if (under) return { min: 0, max: Number(under[1]) - 1 };
+  const over = /^(\d+)\+$/.exec(label);
+  if (over) return { min: Number(over[1]), max: 200 };
+  const span = /^(\d+)\s*-\s*(\d+)$/.exec(label);
+  if (span) return { min: Number(span[1]), max: Number(span[2]) };
+  return null;
+}
+
 function BpmHistogram({
   buckets,
 }: {
@@ -66,17 +76,41 @@ function BpmHistogram({
     <div className="panel">
       <PanelHead title="BPM HISTOGRAM" />
       <div className="flex h-36 items-end gap-1 p-3">
-        {buckets.map((b) => (
-          <div key={b.label} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-            <span className="font-num text-[9px] text-ink-faint">{b.track_count}</span>
+        {buckets.map((b) => {
+          const range = bpmLabelToRange(b.label);
+          const to = range
+            ? `/dig?mode=vibe&bpm_min=${range.min}&bpm_max=${range.max}`
+            : null;
+          const bar = (
+            <>
+              <span className="font-num text-[9px] text-ink-faint">{b.track_count}</span>
+              <div
+                className="w-full rounded-t-[2px] bg-accent/70 transition-colors group-hover:brightness-125"
+                style={{ height: `${Math.max(4, (b.track_count / max) * 100)}%` }}
+              />
+              <span className="font-num text-[9px] text-ink-faint">{b.label}</span>
+            </>
+          );
+          return to ? (
+            <Link
+              key={b.label}
+              to={to}
+              className="group flex min-w-0 flex-1 flex-col items-center gap-1"
+              title={`Filter catalog to ${b.label} BPM`}
+              aria-label={`Dig ${b.label} BPM, ${b.track_count} tracks`}
+            >
+              {bar}
+            </Link>
+          ) : (
             <div
-              className="w-full rounded-t-[2px] bg-accent/70"
-              style={{ height: `${Math.max(4, (b.track_count / max) * 100)}%` }}
+              key={b.label}
+              className="flex min-w-0 flex-1 flex-col items-center gap-1"
               title={`${b.label}: ${b.track_count}`}
-            />
-            <span className="font-num text-[9px] text-ink-faint">{b.label}</span>
-          </div>
-        ))}
+            >
+              {bar}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

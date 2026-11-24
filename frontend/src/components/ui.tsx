@@ -1,5 +1,7 @@
-import { Heart } from "lucide-react";
+import { Heart, ExternalLink } from "lucide-react";
+import { useState } from "react";
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useLikesStore } from "../stores/likesStore";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
@@ -87,6 +89,75 @@ export function LocalBadge({ has }: { has: boolean }) {
 export function SourcePill({ source }: { source: string | null | undefined }) {
   if (!source) return null;
   return <span className="pill font-num uppercase text-ink-dim">{source}</span>;
+}
+
+// ------------------------------------------------------- download action
+
+export function DownloadButton({ track }: { track: Track }) {
+  const [state, setState] = useState<"idle" | "busy" | "done" | "error">(
+    track.has_local_file ? "done" : "idle",
+  );
+  const [message, setMessage] = useState<string | null>(null);
+
+  if (state === "done") return <LocalBadge has />;
+
+  const download = async () => {
+    setState("busy");
+    setMessage(null);
+    try {
+      await api.downloadTrack(track.id);
+      setState("done");
+    } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : "Download failed");
+    }
+  };
+
+  return (
+    <span className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => void download()}
+        disabled={state === "busy"}
+        className="btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px]"
+        aria-label={`Download ${track.title}`}
+        title={message ?? "Download full track from source"}
+      >
+        {state === "busy" ? "…" : state === "error" ? "RETRY" : "↓ DL"}
+      </button>
+    </span>
+  );
+}
+
+function ItunesLink({ track }: { track: Track }) {
+  const url = track.store_url ?? track.preview_url;
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="btn btn-ghost !min-h-0 p-2 font-mono text-[10px] text-ink-faint hover:text-heading"
+      aria-label={`Open ${track.title} on iTunes`}
+      title="Open on iTunes"
+    >
+      <ExternalLink size={14} />
+      <span className="hidden lg:inline">iTUNES</span>
+    </a>
+  );
+}
+
+function DigLink({ track }: { track: Track }) {
+  return (
+    <Link
+      to={`/dig?mode=match&seed=${encodeURIComponent(track.id)}`}
+      className="btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px]"
+      aria-label={`Dig tracks similar to ${track.title}`}
+      title="Dig similar tracks"
+    >
+      DIG
+    </Link>
+  );
 }
 
 // ------------------------------------------------------------- feedback
@@ -221,7 +292,6 @@ export function TrackRow({
         {showMatch != null ? <TasteBadge percent={showMatch} /> : null}
         <BpmPill bpm={track.bpm} />
         <KeyPill k={track.key} />
-        <LocalBadge has={track.has_local_file} />
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <button
@@ -246,6 +316,9 @@ export function TrackRow({
         >
           {inCrateNow ? "IN CRATE" : "+ SET"}
         </button>
+        <DigLink track={track} />
+        <DownloadButton track={track} />
+        <ItunesLink track={track} />
         {trailing}
       </div>
     </div>

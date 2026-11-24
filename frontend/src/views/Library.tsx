@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Heart, Plus, Search, ShieldOff, Trash2, X } from "lucide-react";
 import { api } from "../api/client";
 import type {
@@ -61,6 +62,14 @@ function ArtistModal({
                 : "no taste score"}
             </span>
           </span>
+          <Link
+            to={`/dig?mode=foryou&artist=${encodeURIComponent(summary.artist)}`}
+            className="btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px]"
+            title="Dig this artist's taste"
+            onClick={onClose}
+          >
+            DIG
+          </Link>
           <button
             type="button"
             className="btn btn-ghost !min-h-0 p-2"
@@ -202,6 +211,13 @@ function ArtistsHub() {
                   </span>
                 ))}
               </span>
+              <Link
+                to={`/dig?mode=foryou&artist=${encodeURIComponent(a.artist)}`}
+                className="btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px]"
+                title="Dig tracks by this artist and similar taste"
+              >
+                DIG
+              </Link>
               <button
                 type="button"
                 className="btn btn-ghost !min-h-0 p-2"

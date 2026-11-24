@@ -126,7 +126,7 @@ export interface SeedPurgeBody {
 
 export interface DigResponse {
   matches: Match[];
-  seed: Track;
+  reference: Track;
 }
 
 export interface VibeSearchResponse {

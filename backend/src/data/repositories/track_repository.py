@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Sequence
 from dataclasses import replace
@@ -250,15 +251,25 @@ class HybridTrackRepository(ITrackRepository):
         needle = query.strip()
         if not needle:
             return ()
-        pattern = f"%{needle}%"
+        # Tokenize so "Artist - Title" queries match across the artist and
+        # title columns; every token must appear in title or artist (AND).
+        tokens = [t for t in re.split(r"[\s\-&/]+", needle) if t]
+        if not tokens:
+            return ()
+        clauses = " AND ".join("(title LIKE ? OR artist LIKE ?)" for _ in tokens)
+        parameters: list[object] = []
+        for token in tokens:
+            pattern = f"%{token}%"
+            parameters.extend((pattern, pattern))
+        parameters.append(limit)
         rows = await self._sqlite.fetchall(
-            """
+            f"""
             SELECT * FROM tracks
-            WHERE title LIKE ? OR artist LIKE ?
+            WHERE {clauses}
             ORDER BY is_embedded DESC, artist COLLATE NOCASE, title COLLATE NOCASE
             LIMIT ?
             """,
-            (pattern, pattern, limit),
+            tuple(parameters),
         )
         return tuple(row_to_track(row) for row in rows)
 

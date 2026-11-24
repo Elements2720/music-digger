@@ -427,6 +427,27 @@ async def test_search_tracks_matches_title_or_artist_case_insensitively(
     assert await repository.search_tracks("   ") == ()
 
 
+async def test_search_tracks_tokenizes_artist_title_queries(
+    repository: HybridTrackRepository,
+) -> None:
+    await repository.upsert_many(
+        [
+            _track("itunes:1", title="Symphony", artist="Alar & Korolova"),
+            _track("itunes:2", title="Symphony No. 3", artist="Someone Else"),
+            _track("itunes:3", title="Night Drive", artist="Solomun"),
+        ]
+    )
+
+    hits = await repository.search_tracks("Alar & Korolova - Symphony")
+    assert [track.id for track in hits] == ["itunes:1"]
+
+    slash_hits = await repository.search_tracks("Korolova/Symphony")
+    assert [track.id for track in slash_hits] == ["itunes:1"]
+
+    assert await repository.search_tracks("Alar Korolova Missing") == ()
+    assert await repository.search_tracks("- & /") == ()
+
+
 async def test_search_tracks_respects_the_limit_and_orders_embedded_first(
     repository: HybridTrackRepository,
 ) -> None:

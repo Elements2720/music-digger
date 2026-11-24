@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Disc3, Search, Sparkles } from "lucide-react";
 import { api } from "../api/client";
@@ -29,6 +29,19 @@ const TASTE_MODES: { id: "both" | "local" | "liked"; label: string }[] = [
   { id: "both", label: "BOTH" },
 ];
 
+const CAMELOT_KEYS = Array.from({ length: 12 }, (_, i) => `${i + 1}A`).flatMap((k) => [
+  k,
+  `${k.slice(0, -1)}B`,
+]);
+
+const SOURCES = ["local", "itunes", "deezer"] as const;
+
+/** Backend similarity is 0-100; older payloads may still be 0-1. Never *100 twice. */
+export function normalizePct(n: number): number {
+  const pct = n > 0 && n <= 1 ? n * 100 : n;
+  return Math.round(pct);
+}
+
 export function DigView() {
   const [params, setParams] = useSearchParams();
   const mode = (params.get("mode") as SubMode) || "match";
@@ -38,10 +51,16 @@ export function DigView() {
   // match-a-track
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<Track[]>([]);
+  const [searchState, setSearchState] = useState<"idle" | "error" | "empty" | "ok">(
+    "idle",
+  );
+  const [searchMessage, setSearchMessage] = useState<string | null>(null);
   const [seed, setSeed] = useState<Track | null>(null);
   const [digResult, setDigResult] = useState<DigResponse | null>(null);
   const [harmonic, setHarmonic] = useState(true);
   const [bpmTolerance, setBpmTolerance] = useState(4);
+  // seed preloaded from a deep link (?mode=match&seed=<id>) — runs once per seed
+  const seedRequested = useRef<string | null>(null);
 
   // for you
   const [tasteMode, setTasteMode] = useState<"both" | "local" | "liked">("local");
@@ -50,6 +69,12 @@ export function DigView() {
   // vibe
   const [vibeQuery, setVibeQuery] = useState("");
   const [vibeResult, setVibeResult] = useState<VibeSearchResponse | null>(null);
+  const [filterKey, setFilterKey] = useState("");
+  const [filterBpmMin, setFilterBpmMin] = useState("");
+  const [filterBpmMax, setFilterBpmMax] = useState("");
+  const [filterSource, setFilterSource] = useState("");
+  const [filterResult, setFilterResult] = useState<Track[] | null>(null);
+  const camelotRequested = useRef<string | null>(null);
 
   const setMode = (m: SubMode) => {
     const next = new URLSearchParams(params);
@@ -77,13 +102,19 @@ export function DigView() {
   const search = useCallback(async (q: string) => {
     if (q.trim().length < 2) {
       setOptions([]);
+      setSearchState("idle");
+      setSearchMessage(null);
       return;
     }
+    setSearchMessage(null);
     try {
       const res = await api.searchTracks(q, 8);
       setOptions(res.tracks);
-    } catch {
+      setSearchState(res.tracks.length === 0 ? "empty" : "ok");
+    } catch (err) {
       setOptions([]);
+      setSearchState("error");
+      setSearchMessage(err instanceof Error ? err.message : "Search failed");
     }
   }, []);
 
@@ -96,6 +127,7 @@ export function DigView() {
     setSeed(track);
     setOptions([]);
     setQuery("");
+    setSearchState("idle");
     setBusy(true);
     setError(null);
     try {
@@ -112,19 +144,88 @@ export function DigView() {
     }
   };
 
+  // Deep link: /dig?mode=match&seed=<track id> — load the seed and dig it once.
+  const seedParam = params.get("seed");
+  useEffect(() => {
+    if (mode !== "match" || !seedParam || seedRequested.current === seedParam)
+      return;
+    seedRequested.current = seedParam;
+    let alive = true;
+    setBusy(true);
+    setError(null);
+    api
+      .dig(seedParam, { limit: 20, bpm_tolerance: bpmTolerance, harmonic })
+      .then((res) => {
+        if (!alive) return;
+        setSeed(res.reference);
+        setDigResult(res);
+      })
+      .catch((err: unknown) => {
+        if (alive && err instanceof Error) setError(err.message);
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, seedParam]);
+
   const runVibe = async () => {
-    if (!vibeQuery.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await api.vibeSearch({ query: vibeQuery, limit: 30 });
-      setVibeResult(res);
+      if (vibeQuery.trim()) {
+        const res = await api.vibeSearch({ query: vibeQuery, limit: 30 });
+        setVibeResult(res);
+        setFilterResult(null);
+      } else {
+        const res = await api.filterCatalog({
+          key: filterKey || undefined,
+          bpm_min: filterBpmMin ? Number(filterBpmMin) : undefined,
+          bpm_max: filterBpmMax ? Number(filterBpmMax) : undefined,
+          source: filterSource || undefined,
+          limit: 60,
+        });
+        setFilterResult(res.tracks);
+        setVibeResult(null);
+      }
     } catch (err) {
       if (err instanceof Error) setError(err.message);
     } finally {
       setBusy(false);
     }
   };
+
+  // Deep link: /dig?mode=vibe&camelot=12A — prefill the key and run immediately.
+  const camelotParam = params.get("camelot");
+  useEffect(() => {
+    if (
+      mode !== "vibe" ||
+      !camelotParam ||
+      camelotRequested.current === camelotParam
+    )
+      return;
+    camelotRequested.current = camelotParam;
+    let alive = true;
+    setFilterKey(camelotParam);
+    setBusy(true);
+    setError(null);
+    api
+      .filterCatalog({ key: camelotParam, limit: 60 })
+      .then((res) => alive && setFilterResult(res.tracks))
+      .catch((err: unknown) => {
+        if (alive && err instanceof Error) setError(err.message);
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, camelotParam]);
 
   const modeHint = useMemo(
     () => MODES.find((m) => m.id === mode)?.hint ?? "",
@@ -180,6 +281,22 @@ export function DigView() {
               onChange={(e) => setQuery(e.target.value)}
               autoComplete="off"
             />
+            {searchState === "error" ? (
+              <p
+                className="mt-2 font-mono text-[11px] uppercase tracking-[0.1em]"
+                style={{ color: "var(--color-warn)" }}
+                role="status"
+              >
+                SEARCH FAILED — {searchMessage ?? "try again"}
+              </p>
+            ) : searchState === "empty" ? (
+              <p
+                className="mt-2 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-faint"
+                role="status"
+              >
+                NO TRACKS FOUND
+              </p>
+            ) : null}
             {options.length > 0 ? (
               <ul className="mt-2 divide-y divide-line border border-line">
                 {options.map((t) => (
@@ -240,7 +357,7 @@ export function DigView() {
                     key={m.track.id}
                     track={m.track}
                     queue={digResult.matches.map((x) => x.track)}
-                    showMatch={Math.round(m.similarity * 100)}
+                    showMatch={normalizePct(m.similarity)}
                   />
                 ))}
               </div>
@@ -290,7 +407,7 @@ export function DigView() {
                     track={m}
                     index={i}
                     queue={taste.matches}
-                    showMatch={Math.round(m.taste_percent)}
+                    showMatch={normalizePct(m.taste_percent)}
                   />
                 ))}
               </div>
@@ -300,26 +417,124 @@ export function DigView() {
       ) : null}
 
       {mode === "vibe" ? (
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-3" data-testid="vibe-panel">
           <form
-            className="panel flex gap-2 p-4"
+            className="panel flex flex-col gap-3 p-4"
             onSubmit={(e) => {
               e.preventDefault();
               void runVibe();
             }}
           >
-            <input
-              className="input flex-1"
-              placeholder="Describe the vibe — e.g. rolling melodic techno after midnight"
-              value={vibeQuery}
-              onChange={(e) => setVibeQuery(e.target.value)}
-              aria-label="Vibe query"
-            />
-            <button type="submit" className="btn btn-primary" disabled={busy}>
-              {busy ? "SEARCHING…" : "SEARCH"}
-            </button>
+            <div className="flex gap-2">
+              <input
+                className="input flex-1"
+                placeholder="Describe the vibe — e.g. rolling melodic techno after midnight"
+                value={vibeQuery}
+                onChange={(e) => setVibeQuery(e.target.value)}
+                aria-label="Vibe query"
+              />
+              <button type="submit" className="btn btn-primary" disabled={busy}>
+                {busy ? "SEARCHING…" : "SEARCH"}
+              </button>
+            </div>
+
+            <fieldset className="flex flex-wrap items-end gap-3 border-t border-line pt-3">
+              <legend className="eyebrow mb-1">CATALOG FILTERS</legend>
+              <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+                CAMELOT KEY
+                <select
+                  className="input !w-auto font-num"
+                  value={filterKey}
+                  onChange={(e) => setFilterKey(e.target.value)}
+                  aria-label="Camelot key filter"
+                >
+                  <option value="">ANY</option>
+                  {CAMELOT_KEYS.map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+                BPM MIN
+                <input
+                  className="input !w-20 font-num"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={200}
+                  value={filterBpmMin}
+                  onChange={(e) => setFilterBpmMin(e.target.value)}
+                  aria-label="BPM minimum"
+                />
+              </label>
+              <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+                BPM MAX
+                <input
+                  className="input !w-20 font-num"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={200}
+                  value={filterBpmMax}
+                  onChange={(e) => setFilterBpmMax(e.target.value)}
+                  aria-label="BPM maximum"
+                />
+              </label>
+              <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+                SOURCE
+                <select
+                  className="input !w-auto"
+                  value={filterSource}
+                  onChange={(e) => setFilterSource(e.target.value)}
+                  aria-label="Source filter"
+                >
+                  <option value="">ANY</option>
+                  {SOURCES.map((s) => (
+                    <option key={s} value={s}>
+                      {s.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="btn !min-h-0 py-2 font-mono text-[10px]"
+                onClick={() => {
+                  setFilterKey("");
+                  setFilterBpmMin("");
+                  setFilterBpmMax("");
+                  setFilterSource("");
+                  setFilterResult(null);
+                }}
+              >
+                RESET
+              </button>
+              <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint">
+                Leave the vibe query empty to filter the catalog directly.
+              </p>
+            </fieldset>
           </form>
-          {vibeResult ? (
+          {filterResult ? (
+            filterResult.length === 0 ? (
+              <EmptyState
+                title="NO TRACKS MATCH"
+                hint="Loosen the key, BPM range or source filters."
+              />
+            ) : (
+              <div className="panel" data-testid="filter-results">
+                {filterResult.map((t, i) => (
+                  <TrackRow
+                    key={t.id}
+                    track={t}
+                    index={i}
+                    queue={filterResult}
+                  />
+                ))}
+              </div>
+            )
+          ) : vibeResult ? (
             vibeResult.matches.length === 0 ? (
               <EmptyState title="NO RESULTS" hint="Try a different description." />
             ) : (
@@ -329,7 +544,7 @@ export function DigView() {
                     key={m.track.id}
                     track={m.track}
                     queue={vibeResult.matches.map((x) => x.track)}
-                    showMatch={Math.round(m.similarity * 100)}
+                    showMatch={normalizePct(m.similarity)}
                   />
                 ))}
               </div>
@@ -337,7 +552,7 @@ export function DigView() {
           ) : (
             <EmptyState
               title="VIBE SEARCH"
-              hint="Semantic CLAP search over your embedded catalog. Describe a mood, energy or scene."
+              hint="Semantic CLAP search over your embedded catalog. Describe a mood, energy or scene — or use the catalog filters below."
             />
           )}
         </section>

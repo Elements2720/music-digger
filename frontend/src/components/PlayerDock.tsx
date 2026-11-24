@@ -2,6 +2,7 @@ import { ListMusic, Volume2, VolumeX, SkipBack, SkipForward, Play, Pause, Repeat
 import { useCallback, useEffect, useRef } from "react";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
+import { DownloadButton } from "./ui";
 import { fmtClock } from "../lib/format";
 
 export function PlayerDock() {
@@ -106,6 +107,7 @@ export function PlayerDock() {
                   {current.artist}
                 </span>
               </p>
+              <DownloadButton track={current} />
             </>
           ) : (
             <span className="eyebrow">NO TRACK LOADED</span>
