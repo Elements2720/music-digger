@@ -85,6 +85,7 @@ class FakeTrackRepository(ITrackRepository):
     ) -> None:
         self.tracks: dict[str, Track] = {track.id: track for track in tracks}
         self.heard: set[str] = set(heard)
+        self.taste_kwargs: dict[str, object] = {}
 
     async def upsert_many(self, tracks: Sequence[Track]) -> int:
         for track in tracks:
@@ -156,9 +157,24 @@ class FakeTrackRepository(ITrackRepository):
         liked_artist_keys: frozenset[str] = frozenset(),
         genre: str | None = None,
         source: str | None = None,
+        liked_weight: float = 2.0,
+        local_weight: float = 1.0,
+        max_per_artist: int = 0,
+        hide_heard: bool = False,
+        exclude_local: bool = False,
     ) -> dict[str, float]:
         from domain._validation import normalize_artist_key
 
+        self.taste_kwargs = {
+            "mode": mode,
+            "genre": genre,
+            "source": source,
+            "liked_weight": liked_weight,
+            "local_weight": local_weight,
+            "max_per_artist": max_per_artist,
+            "hide_heard": hide_heard,
+            "exclude_local": exclude_local,
+        }
         liked_norm = {normalize_artist_key(k) for k in liked_artist_keys}
         scores: dict[str, float] = {}
         for t in self.tracks.values():
@@ -167,6 +183,10 @@ class FakeTrackRepository(ITrackRepository):
             if genre and (t.genre or "").casefold() != genre.casefold():
                 continue
             if source and t.source != source:
+                continue
+            if hide_heard and t.id in self.heard:
+                continue
+            if exclude_local and t.source == "local":
                 continue
             is_local = t.source == "local"
             is_liked = normalize_artist_key(t.artist) in liked_norm
@@ -178,6 +198,18 @@ class FakeTrackRepository(ITrackRepository):
             if mode == "both" and is_liked:
                 base = min(99.0, base + 5.0)
             scores[t.id] = min(99.0, base)
+        if max_per_artist > 0:
+            kept: dict[str, float] = {}
+            seen: dict[str, int] = {}
+            for tid, score in sorted(
+                scores.items(), key=lambda kv: kv[1], reverse=True
+            ):
+                artist = normalize_artist_key(self.tracks[tid].artist)
+                if seen.get(artist, 0) >= max_per_artist:
+                    continue
+                seen[artist] = seen.get(artist, 0) + 1
+                kept[tid] = score
+            scores = kept
         return scores
 
     async def count(self) -> int:

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Disc3, Search, Sparkles } from "lucide-react";
 import { api } from "../api/client";
@@ -14,6 +14,10 @@ import {
   Loading,
   TrackRow,
 } from "../components/ui";
+import { DigSeedPanel } from "../components/DigSeedPanel";
+import { SeedCard } from "../components/SeedCard";
+import { useDigTrailStore } from "../stores/digTrailStore";
+import { useActiveProfile, useSettingsStore } from "../stores/settingsStore";
 
 type SubMode = "match" | "foryou" | "vibe";
 
@@ -49,16 +53,34 @@ export function DigView() {
   const [busy, setBusy] = useState(false);
 
   // match-a-track
-  const [query, setQuery] = useState("");
-  const [options, setOptions] = useState<Track[]>([]);
-  const [searchState, setSearchState] = useState<"idle" | "error" | "empty" | "ok">(
-    "idle",
+  const seeds = useDigTrailStore((s) => s.seeds);
+  const activeId = useDigTrailStore((s) => s.activeId);
+  const pushSeed = useDigTrailStore((s) => s.push);
+  const setActiveSeed = useDigTrailStore((s) => s.setActive);
+  const source = useDigTrailStore((s) => s.source);
+  const setSource = useDigTrailStore((s) => s.setSource);
+  const activeSeed = useMemo(
+    () => seeds.find((t) => t.id === activeId) ?? null,
+    [seeds, activeId],
   );
-  const [searchMessage, setSearchMessage] = useState<string | null>(null);
-  const [seed, setSeed] = useState<Track | null>(null);
   const [digResult, setDigResult] = useState<DigResponse | null>(null);
-  const [harmonic, setHarmonic] = useState(true);
-  const [bpmTolerance, setBpmTolerance] = useState(4);
+  const profile = useActiveProfile();
+  const profiles = useSettingsStore((s) => s.profiles);
+  const setActiveProfile = useSettingsStore((s) => s.setActiveProfile);
+  const maxPerArtist = useSettingsStore((s) => s.maxPerArtist);
+  const hideHeard = useSettingsStore((s) => s.hideHeard);
+  const excludeLocal = useSettingsStore((s) => s.excludeLocal);
+  const harmonicMode = useSettingsStore((s) => s.harmonicMode);
+  const [harmonic, setHarmonic] = useState(() => {
+    const s = useSettingsStore.getState();
+    return s.defaultHarmonic;
+  });
+  const [bpmTolerance, setBpmTolerance] = useState(() => {
+    const s = useSettingsStore.getState();
+    return s.defaultBpmTolerance;
+  });
+  // the last dig actually requested, so a re-render never re-queries the same seed
+  const fetchedKey = useRef<string | null>(null);
   // seed preloaded from a deep link (?mode=match&seed=<id>) — runs once per seed
   const seedRequested = useRef<string | null>(null);
 
@@ -88,7 +110,16 @@ export function DigView() {
     setBusy(true);
     setError(null);
     api
-      .tasteRanking({ mode: tasteMode, limit: 30 })
+      .tasteRanking({
+        mode: tasteMode,
+        limit: profile?.defaultLimit ?? 30,
+        genre: profile?.genre ?? undefined,
+        liked_weight: profile?.likedWeight,
+        local_weight: profile?.localWeight,
+        max_per_artist: maxPerArtist,
+        hide_heard: hideHeard,
+        exclude_local: excludeLocal,
+      })
       .then((res) => alive && setTaste(res))
       .catch((err: unknown) => {
         if (alive && err instanceof Error) setError(err.message);
@@ -97,52 +128,48 @@ export function DigView() {
     return () => {
       alive = false;
     };
-  }, [mode, tasteMode]);
+  }, [mode, tasteMode, profile, maxPerArtist, hideHeard, excludeLocal]);
 
-  const search = useCallback(async (q: string) => {
-    if (q.trim().length < 2) {
-      setOptions([]);
-      setSearchState("idle");
-      setSearchMessage(null);
-      return;
-    }
-    setSearchMessage(null);
-    try {
-      const res = await api.searchTracks(q, 8);
-      setOptions(res.tracks);
-      setSearchState(res.tracks.length === 0 ? "empty" : "ok");
-    } catch (err) {
-      setOptions([]);
-      setSearchState("error");
-      setSearchMessage(err instanceof Error ? err.message : "Search failed");
-    }
-  }, []);
+  const runDig = (track: Track) => {
+    setError(null);
+    pushSeed(track);
+  };
 
+  // One place fetches matches: the active trail seed, the BPM window or the
+  // harmonic switch changing. Debounced so dragging the slider is one request.
+  const seedId = activeSeed?.id ?? null;
   useEffect(() => {
-    const t = window.setTimeout(() => void search(query), 250);
-    return () => window.clearTimeout(t);
-  }, [query, search]);
-
-  const runDig = async (track: Track) => {
-    setSeed(track);
-    setOptions([]);
-    setQuery("");
-    setSearchState("idle");
+    if (mode !== "match" || !seedId) return;
+    const key = `${seedId}|${bpmTolerance}|${harmonic}`;
+    if (fetchedKey.current === key) return;
+    let alive = true;
     setBusy(true);
     setError(null);
-    try {
-      const res = await api.dig(track.id, {
-        limit: 20,
-        bpm_tolerance: bpmTolerance,
-        harmonic,
-      });
-      setDigResult(res);
-    } catch (err) {
-      if (err instanceof Error) setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
+    const timer = window.setTimeout(() => {
+      fetchedKey.current = key;
+      api
+        .dig(seedId, {
+          limit: 20,
+          bpm_tolerance: bpmTolerance,
+          harmonic,
+          harmonic_mode: harmonicMode,
+          max_per_artist: maxPerArtist,
+        })
+        .then((res) => {
+          if (alive) setDigResult(res);
+        })
+        .catch((err: unknown) => {
+          if (alive && err instanceof Error) setError(err.message);
+        })
+        .finally(() => {
+          if (alive) setBusy(false);
+        });
+    }, 250);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [mode, seedId, bpmTolerance, harmonic, harmonicMode, maxPerArtist]);
 
   // Deep link: /dig?mode=match&seed=<track id> — load the seed and dig it once.
   const seedParam = params.get("seed");
@@ -150,6 +177,10 @@ export function DigView() {
     if (mode !== "match" || !seedParam || seedRequested.current === seedParam)
       return;
     seedRequested.current = seedParam;
+    if (useDigTrailStore.getState().seeds.some((t) => t.id === seedParam)) {
+      setActiveSeed(seedParam);
+      return;
+    }
     let alive = true;
     setBusy(true);
     setError(null);
@@ -157,8 +188,9 @@ export function DigView() {
       .dig(seedParam, { limit: 20, bpm_tolerance: bpmTolerance, harmonic })
       .then((res) => {
         if (!alive) return;
-        setSeed(res.reference);
+        pushSeed(res.reference);
         setDigResult(res);
+        fetchedKey.current = `${seedParam}|${bpmTolerance}|${harmonic}`;
       })
       .catch((err: unknown) => {
         if (alive && err instanceof Error) setError(err.message);
@@ -268,101 +300,100 @@ export function DigView() {
       {error ? <ErrorState message={error} /> : null}
 
       {mode === "match" ? (
-        <section className="flex flex-col gap-3">
-          <div className="panel p-4">
-            <label htmlFor="dig-search" className="eyebrow mb-2 block">
-              SEED TRACK
-            </label>
-            <input
-              id="dig-search"
-              className="input"
-              placeholder="Search your catalog by title or artist…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              autoComplete="off"
-            />
-            {searchState === "error" ? (
-              <p
-                className="mt-2 font-mono text-[11px] uppercase tracking-[0.1em]"
-                style={{ color: "var(--color-warn)" }}
-                role="status"
-              >
-                SEARCH FAILED — {searchMessage ?? "try again"}
-              </p>
-            ) : searchState === "empty" ? (
-              <p
-                className="mt-2 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-faint"
-                role="status"
-              >
-                NO TRACKS FOUND
-              </p>
-            ) : null}
-            {options.length > 0 ? (
-              <ul className="mt-2 divide-y divide-line border border-line">
-                {options.map((t) => (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      className="w-full px-3 py-2 text-left hover:bg-panel-2"
-                      onClick={() => void runDig(t)}
-                    >
-                      <span className="block truncate text-sm text-heading">{t.title}</span>
-                      <span className="block truncate text-xs text-ink-dim">{t.artist}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="mt-3 flex flex-wrap items-center gap-4">
-              <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-dim">
-                <input
-                  type="checkbox"
-                  checked={harmonic}
-                  onChange={(e) => setHarmonic(e.target.checked)}
-                  className="h-4 w-4 accent-accent"
-                />
-                HARMONIC
-              </label>
-              <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-dim">
-                BPM ±{bpmTolerance}
-                <input
-                  type="range"
-                  min={0}
-                  max={10}
-                  value={bpmTolerance}
-                  onChange={(e) => setBpmTolerance(Number(e.target.value))}
-                  className="w-32 accent-accent"
-                  aria-label="BPM tolerance"
-                />
-              </label>
-            </div>
-          </div>
+        <section
+          data-testid="dig-match"
+          className="grid items-start gap-4 lg:grid-cols-[260px_minmax(0,1fr)]"
+        >
+          <DigSeedPanel
+            activeId={activeId}
+            onSelect={runDig}
+            source={source}
+            onSource={setSource}
+          />
 
-          {seed ? (
-            <p className="eyebrow">
-              SEED — {seed.artist} / {seed.title}
-            </p>
-          ) : null}
-          {busy ? <Loading label="DIGGING…" /> : null}
-          {digResult ? (
-            digResult.matches.length === 0 ? (
-              <EmptyState
-                title="NO MATCHES"
-                hint="Widen the BPM tolerance or turn off harmonic filtering."
+          <div className="flex min-w-0 flex-col gap-3">
+            {activeSeed ? (
+              <SeedCard
+                track={activeSeed}
+                onVibe={() => {
+                  const next = new URLSearchParams(params);
+                  next.set("mode", "vibe");
+                  if (activeSeed.key) next.set("camelot", activeSeed.key);
+                  camelotRequested.current = null;
+                  setParams(next, { replace: true });
+                }}
               />
             ) : (
-              <div className="panel">
-                {digResult.matches.map((m) => (
-                  <TrackRow
-                    key={m.track.id}
-                    track={m.track}
-                    queue={digResult.matches.map((x) => x.track)}
-                    showMatch={normalizePct(m.similarity)}
-                  />
-                ))}
+              <div className="panel p-6">
+                <p className="eyebrow">NO SEED SELECTED</p>
+                <p className="mt-2 max-w-md text-sm text-ink-dim">
+                  Pick a track in Dig Seeds — search for one, or hit DIG on any
+                  row in the app. Every track you dig stays in the trail.
+                </p>
               </div>
-            )
-          ) : null}
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="eyebrow">SIMILAR MATCHES</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 border border-line bg-panel-2 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+                  BPM ±{bpmTolerance}
+                  <input
+                    type="range"
+                    min={0}
+                    max={10}
+                    value={bpmTolerance}
+                    onChange={(e) => setBpmTolerance(Number(e.target.value))}
+                    className="w-24 accent-accent"
+                    aria-label="BPM tolerance"
+                  />
+                </label>
+                <button
+                  type="button"
+                  aria-pressed={harmonic}
+                  onClick={() => setHarmonic((v) => !v)}
+                  className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.1em] transition-colors ${
+                    harmonic
+                      ? "border-accent/60 bg-accent/10"
+                      : "border-line bg-panel-2 hover:border-line-strong"
+                  }`}
+                  style={{
+                    color: harmonic
+                      ? "var(--color-accent)"
+                      : "var(--color-ink-dim)",
+                  }}
+                >
+                  HARMONIC {harmonic ? "ON" : "OFF"}
+                </button>
+              </div>
+            </div>
+
+            {busy ? <Loading label="DIGGING…" /> : null}
+            {digResult ? (
+              digResult.matches.length === 0 ? (
+                <EmptyState
+                  title="NO MATCHES"
+                  hint="Widen the BPM tolerance or turn off harmonic filtering."
+                />
+              ) : (
+                <div className="panel overflow-hidden">
+                  {digResult.matches.map((m) => (
+                    <TrackRow
+                      key={m.track.id}
+                      track={m.track}
+                      queue={digResult.matches.map((x) => x.track)}
+                      showMatch={normalizePct(m.similarity)}
+                    />
+                  ))}
+                </div>
+              )
+            ) : activeSeed && !busy ? (
+              <EmptyState
+                title="NO MATCHES YET"
+                hint="This seed has no neighbours in the local index."
+              />
+            ) : null}
+          </div>
         </section>
       ) : null}
 
@@ -371,26 +402,43 @@ export function DigView() {
           <div
             role="tablist"
             aria-label="Taste mode"
-            className="flex gap-2"
+            className="flex flex-wrap items-center justify-between gap-2"
             data-testid="taste-modes"
           >
-            {TASTE_MODES.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                role="tab"
-                aria-selected={tasteMode === m.id}
-                onClick={() => setTasteMode(m.id)}
-                className="btn !min-h-0 py-2"
-                style={
-                  tasteMode === m.id
-                    ? { borderColor: "var(--color-accent)", color: "var(--color-accent)" }
-                    : undefined
-                }
+            <div className="flex gap-2">
+              {TASTE_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={tasteMode === m.id}
+                  onClick={() => setTasteMode(m.id)}
+                  className="btn !min-h-0 py-2"
+                  style={
+                    tasteMode === m.id
+                      ? { borderColor: "var(--color-accent)", color: "var(--color-accent)" }
+                      : undefined
+                  }
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <label className="flex min-h-11 items-center gap-2 rounded-pill border border-line bg-white/[0.03] px-3">
+              <span className="eyebrow !text-[9px]">Profile</span>
+              <select
+                aria-label="Taste profile"
+                className="h-9 rounded-pill border-0 bg-transparent pr-5 text-[12px] text-heading outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                value={profile?.id ?? ""}
+                onChange={(event) => setActiveProfile(event.target.value)}
               >
-                {m.label}
-              </button>
-            ))}
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id} className="bg-panel text-ink">
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           {busy && !taste ? <Loading label="RANKING YOUR TASTE…" /> : null}
           {taste ? (

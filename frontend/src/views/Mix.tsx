@@ -3,7 +3,13 @@ import { Link } from "react-router-dom";
 import { AudioWaveform, Radio } from "lucide-react";
 import { api } from "../api/client";
 import type { PassagePayload, SetDetailResponse, SetSummaryPayload, SetsListResponse } from "../types/apiTypes";
-import { EmptyState, ErrorState, Loading, PanelHead } from "../components/ui";
+import {
+  EmptyState,
+  ErrorState,
+  KeyPill,
+  Loading,
+  PanelHead,
+} from "../components/ui";
 import { fmtBpm, fmtClock } from "../lib/format";
 import { useJobsStore } from "../stores/jobsStore";
 
@@ -194,7 +200,7 @@ export function MixView() {
                                 {fmtBpm(p.bpm)} BPM
                               </span>
                             ) : null}
-                            {p.key ? <span className="pill pill-key font-num hidden md:inline-flex">{p.key}</span> : null}
+                            {p.key ? <KeyPill k={p.key} className="hidden md:inline-flex" /> : null}
                           </div>
                         );
                       })}

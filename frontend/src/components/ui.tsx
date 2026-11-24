@@ -1,13 +1,15 @@
-import { Heart, ExternalLink } from "lucide-react";
+import { Heart, ExternalLink, Pause, Play, Plus, Sparkles } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useLikesStore } from "../stores/likesStore";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
+import { useDigTrailStore } from "../stores/digTrailStore";
 import { api } from "../api/client";
 import type { TasteRankedMatch, Track } from "../types/apiTypes";
 import { fmtBpm, hueOf, initials } from "../lib/format";
+import { camelotColor } from "../lib/camelot";
 
 // --------------------------------------------------------------- artwork
 
@@ -15,10 +17,12 @@ export function Artwork({
   track,
   size = 40,
   className = "",
+  fluid = false,
 }: {
   track: Pick<Track, "artwork_url" | "title" | "artist" | "id">;
   size?: number;
   className?: string;
+  fluid?: boolean;
 }) {
   const hue = hueOf(track.artist + track.title);
   if (track.artwork_url) {
@@ -30,7 +34,7 @@ export function Artwork({
         height={size}
         loading="lazy"
         className={`shrink-0 rounded-[3px] object-cover ${className}`}
-        style={{ width: size, height: size }}
+        style={fluid ? undefined : { width: size, height: size }}
       />
     );
   }
@@ -39,8 +43,7 @@ export function Artwork({
       aria-hidden
       className={`flex shrink-0 items-center justify-center rounded-[3px] font-mono text-[10px] text-ink ${className}`}
       style={{
-        width: size,
-        height: size,
+        ...(fluid ? {} : { width: size, height: size }),
         background: `linear-gradient(135deg, hsl(${hue} 22% 18%), hsl(${(hue + 40) % 360} 28% 10%))`,
       }}
     >
@@ -51,9 +54,27 @@ export function Artwork({
 
 // ---------------------------------------------------------------- badges
 
-export function KeyPill({ k }: { k: string | null | undefined }) {
-  if (!k) return <span className="pill font-num text-ink-faint">—</span>;
-  return <span className="pill pill-key font-num">{k}</span>;
+export function KeyPill({
+  k,
+  className = "",
+}: {
+  k: string | null | undefined;
+  className?: string;
+}) {
+  const tone = camelotColor(k);
+  if (!k) {
+    return <span className={`pill font-num text-ink-faint ${className}`}>—</span>;
+  }
+  if (!tone) return <span className={`pill pill-key font-num ${className}`}>{k}</span>;
+  return (
+    <span
+      className={`pill font-num ${className}`}
+      style={{ color: tone.color, borderColor: tone.border, background: tone.bg }}
+      title={`Camelot ${tone.key}`}
+    >
+      {tone.key}
+    </span>
+  );
 }
 
 export function BpmPill({ bpm }: { bpm: number | null | undefined }) {
@@ -79,7 +100,7 @@ export function LocalBadge({ has }: { has: boolean }) {
   return (
     <span
       className="pill font-num"
-      style={{ color: "var(--color-accent)", borderColor: "var(--color-line)" }}
+      style={{ color: "var(--color-ok)", borderColor: "var(--color-line)" }}
     >
       LOCAL
     </span>
@@ -148,14 +169,17 @@ function ItunesLink({ track }: { track: Track }) {
 }
 
 function DigLink({ track }: { track: Track }) {
+  const pushSeed = useDigTrailStore((s) => s.push);
   return (
     <Link
       to={`/dig?mode=match&seed=${encodeURIComponent(track.id)}`}
-      className="btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px]"
+      onClick={() => pushSeed(track)}
+      className="btn btn-ghost !min-h-0 gap-1 px-1.5 py-2 font-mono text-[9px] sm:px-2"
       aria-label={`Dig tracks similar to ${track.title}`}
       title="Dig similar tracks"
     >
-      DIG
+      <Sparkles size={14} className="sm:hidden" />
+      <span className="hidden sm:inline">DIG</span>
     </Link>
   );
 }
@@ -259,45 +283,60 @@ export function TrackRow({
 
   return (
     <div
-      className={`flex items-center gap-3 border-b border-line px-3 py-2 transition-colors ${
-        isCurrent ? "bg-panel-2" : "hover:bg-panel-2/60"
+      className={`group flex items-center gap-2 border-b border-line px-2 py-2 transition-colors sm:gap-3 sm:px-3 ${
+        isCurrent ? "bg-fill" : "hover:bg-fill"
       }`}
     >
       {index != null ? (
-        <span className="font-num w-6 text-right text-[11px] text-ink-faint">
+        <span className="font-num w-5 shrink-0 text-right text-[11px] text-ink-faint">
           {index + 1}
         </span>
       ) : null}
       <button
         type="button"
         onClick={() => play(track, queue)}
-        className="btn btn-ghost !min-h-0 shrink-0 !p-0"
+        className="btn btn-ghost !min-h-0 shrink-0 !border-0 !bg-transparent !p-0"
         aria-label={`Play ${track.title} by ${track.artist}`}
       >
-        <Artwork track={track} size={40} />
+        <Artwork
+          track={track}
+          size={40}
+          className="!rounded-[3px] ring-1 ring-white/5 transition-transform duration-200 group-hover:scale-[1.03]"
+        />
       </button>
       <button
         type="button"
         onClick={() => play(track, queue)}
-        className="min-w-0 flex-1 text-left"
+        className="min-w-0 flex-1 overflow-hidden text-left"
       >
         <p
-          className={`truncate text-sm ${isCurrent ? "text-accent" : "text-heading"}`}
+          className={`line-clamp-3 break-words text-[13px] leading-snug sm:line-clamp-2 sm:text-sm ${isCurrent ? "text-accent" : "text-heading"}`}
         >
           {track.title}
         </p>
-        <p className="truncate text-xs text-ink-dim">{track.artist}</p>
+        <p className="line-clamp-3 break-words text-xs leading-snug text-ink-dim sm:line-clamp-2">
+          {track.artist}
+        </p>
+        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-num text-[10px] text-ink-faint md:hidden">
+          <span>{fmtBpm(track.bpm)} BPM</span>
+          {track.key ? (
+            <KeyPill k={track.key} className="!px-1.5 !py-0 !text-[9px]" />
+          ) : null}
+          {track.has_local_file ? (
+            <span style={{ color: "var(--color-ok)" }}>LOCAL</span>
+          ) : null}
+        </span>
       </button>
-      <div className="hidden items-center gap-2 md:flex">
+      <div className="hidden shrink-0 items-center gap-2 md:flex">
         {showMatch != null ? <TasteBadge percent={showMatch} /> : null}
         <BpmPill bpm={track.bpm} />
         <KeyPill k={track.key} />
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
         <button
           type="button"
           onClick={() => void toggleHeard(track)}
-          className="btn btn-ghost !min-h-0 p-2"
+          className="btn btn-ghost !min-h-0 !border-0 !bg-transparent p-1.5 hover:!bg-fill"
           aria-label={isHeardNow ? `Unlike ${track.title}` : `Like ${track.title}`}
           aria-pressed={isHeardNow}
         >
@@ -311,15 +350,83 @@ export function TrackRow({
           type="button"
           onClick={() => addToCrate(track)}
           disabled={inCrateNow}
-          className="btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px]"
+          className="btn btn-ghost !min-h-0 gap-1 px-1.5 py-2 font-mono text-[9px] sm:px-2"
           aria-label={`Add ${track.title} to Set Crate`}
+          title="Add to Set Crate"
         >
-          {inCrateNow ? "IN CRATE" : "+ SET"}
+          <Plus size={14} className="sm:hidden" />
+          <span className="hidden sm:inline">
+            {inCrateNow ? "IN SET" : "+ SET"}
+          </span>
         </button>
         <DigLink track={track} />
         <DownloadButton track={track} />
         <ItunesLink track={track} />
         {trailing}
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------- album shelves
+
+export function AlbumCard({
+  track,
+  queue,
+  eyebrow,
+}: {
+  track: Track;
+  queue?: Track[];
+  eyebrow?: string;
+}) {
+  const play = usePlayerStore((s) => s.play);
+  const current = usePlayerStore((s) => s.current);
+  const playing = usePlayerStore((s) => s.playing);
+  const toggle = usePlayerStore((s) => s.toggle);
+  const isCurrent = current?.id === track.id;
+  return (
+    <div className="card-lift w-[144px] shrink-0 sm:w-[164px]">
+      <div className="relative aspect-square overflow-hidden rounded-[10px] border border-line bg-fill">
+        <Artwork
+          track={track}
+          fluid
+          className="!h-full !w-full !rounded-none"
+        />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
+        <button
+          type="button"
+          onClick={() => (isCurrent ? toggle() : play(track, queue))}
+          className="absolute bottom-2 right-2 flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-[0_10px_24px_-12px_rgba(0,0,0,0.9)] transition-transform duration-200 hover:scale-105 focus-visible:scale-105"
+          aria-label={
+            isCurrent && playing
+              ? `Pause ${track.title}`
+              : `Play ${track.title} by ${track.artist}`
+          }
+        >
+          {isCurrent && playing ? (
+            <Pause size={15} fill="currentColor" />
+          ) : (
+            <Play size={15} fill="currentColor" className="ml-0.5" />
+          )}
+        </button>
+        {eyebrow ? (
+          <span className="absolute left-2 top-2 rounded-pill border border-white/20 bg-black/60 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-ink-dim backdrop-blur-sm">
+            {eyebrow}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-2 truncate text-[13px] text-heading">{track.title}</p>
+      <p className="truncate text-[11px] text-ink-dim">{track.artist}</p>
+      <div className="mt-1 flex items-center gap-1.5">
+        <span className="font-num text-[10px] text-ink-faint">
+          {fmtBpm(track.bpm)} BPM
+        </span>
+        <KeyPill k={track.key} className="!px-1.5 !py-0 !text-[9px]" />
+        {track.has_local_file ? (
+          <span className="font-num text-[9px]" style={{ color: "var(--color-ok)" }}>
+            LOCAL
+          </span>
+        ) : null}
       </div>
     </div>
   );

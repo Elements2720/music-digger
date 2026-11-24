@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Download, Trash2, X } from "lucide-react";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
 import { api } from "../api/client";
@@ -6,6 +6,8 @@ import type { PlannedSet } from "../types/apiTypes";
 import { useState } from "react";
 import { Artwork, EmptyState } from "./ui";
 import { fmtBpm } from "../lib/format";
+import { useSettingsStore } from "../stores/settingsStore";
+import { buildM3u8, downloadPlaylist } from "../lib/m3u8";
 
 function EnergyCurve({ bpms }: { bpms: number[] }) {
   if (bpms.length < 2) return null;
@@ -57,6 +59,31 @@ export function SetCrateDrawer() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const exportCrate = () => {
+    const settings = useSettingsStore.getState();
+    const { text, skipped } = buildM3u8(tracks, {
+      pathMode: settings.m3u8PathMode,
+      pathPrefix: settings.m3u8PathPrefix,
+      includeMetadata: settings.m3u8IncludeMetadata,
+    });
+    const playable = text
+      .split("\n")
+      .filter((line) => line && !line.startsWith("#")).length;
+    if (playable === 0) {
+      setMessage("No local files in this crate yet — download tracks first.");
+      return;
+    }
+    downloadPlaylist(
+      `set-crate-${new Date().toISOString().slice(0, 10)}.m3u8`,
+      text,
+    );
+    setMessage(
+      skipped > 0
+        ? `Playlist exported — ${skipped} track(s) skipped (no local file).`
+        : "Playlist exported (.m3u8)",
+    );
   };
 
   return (
@@ -158,11 +185,23 @@ export function SetCrateDrawer() {
             </button>
             <button
               type="button"
-              className="btn btn-danger"
+              className="btn btn-ghost"
+              disabled={tracks.length === 0}
+              onClick={exportCrate}
+              aria-label="Export crate as .m3u8"
+              title="Export crate as .m3u8"
+            >
+              <Download size={14} />
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger !px-2.5"
               disabled={tracks.length === 0}
               onClick={clear}
+              aria-label="Clear crate"
+              title="Clear crate"
             >
-              CLEAR
+              <Trash2 size={14} />
             </button>
           </div>
         </div>

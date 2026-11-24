@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -731,3 +732,115 @@ async def test_taste_ranking_unknown_mode_falls_back_to_both(
     response = await client.get("/api/catalog/taste-ranking", params={"mode": "bogus"})
     assert response.status_code == 200
     assert response.json()["mode"] == "both"
+
+
+async def test_taste_ranking_forwards_tuning_params() -> None:
+    container = make_container()
+    transport = httpx.ASGITransport(app=create_app(container=container))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/api/catalog/taste-ranking",
+            params={
+                "mode": "both",
+                "liked_weight": 3.5,
+                "local_weight": 0.5,
+                "max_per_artist": 2,
+                "hide_heard": "true",
+                "exclude_local": "true",
+            },
+        )
+    assert response.status_code == 200
+    assert container.track_repository.taste_kwargs == {
+        "mode": "both",
+        "genre": None,
+        "source": None,
+        "liked_weight": 3.5,
+        "local_weight": 0.5,
+        "max_per_artist": 2,
+        "hide_heard": True,
+        "exclude_local": True,
+    }
+
+
+async def test_taste_ranking_rejects_invalid_tuning(
+    client: httpx.AsyncClient,
+) -> None:
+    for params in (
+        {"liked_weight": -1},
+        {"local_weight": -0.5},
+        {"max_per_artist": -1},
+        {"max_per_artist": 51},
+    ):
+        response = await client.get("/api/catalog/taste-ranking", params=params)
+        assert response.status_code == 422, params
+
+
+def _taste_tracks() -> list:
+    return [
+        replace(make_track("local:1", artist="Repeat"), source="local"),
+        make_track("itunes:2", artist="Repeat"),
+        make_track("itunes:3", artist="Repeat"),
+        make_track("itunes:4", artist="Other", embedding=(0.0, 1.0)),
+    ]
+
+
+async def _taste_client() -> AsyncIterator[httpx.AsyncClient]:
+    container = make_container(tracks=_taste_tracks())
+    transport = httpx.ASGITransport(app=create_app(container=container))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as http_client:
+        yield http_client
+
+
+async def test_taste_ranking_caps_tracks_per_artist() -> None:
+    async for client in _taste_client():
+        response = await client.get(
+            "/api/catalog/taste-ranking",
+            params={"mode": "both", "max_per_artist": 1},
+        )
+        assert response.status_code == 200
+        matches = response.json()["matches"]
+        artists = [match["artist"] for match in matches]
+        assert artists.count("Repeat") == 1
+        assert artists.count("Other") == 1
+
+
+async def test_taste_ranking_hides_heard_and_excludes_local() -> None:
+    async for client in _taste_client():
+        await client.patch("/api/tracks/itunes:2/heard", json={"heard": True})
+
+        hidden = await client.get(
+            "/api/catalog/taste-ranking",
+            params={"mode": "local", "hide_heard": "true", "limit": 50},
+        )
+        hidden_ids = {match["id"] for match in hidden.json()["matches"]}
+        assert "itunes:2" not in hidden_ids
+
+        without_local = await client.get(
+            "/api/catalog/taste-ranking",
+            params={"mode": "both", "exclude_local": "true"},
+        )
+        local_ids = {match["id"] for match in without_local.json()["matches"]}
+        assert "local:1" not in local_ids
+
+
+async def test_dig_accepts_harmonic_mode_and_max_per_artist(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get(
+        "/api/dig/itunes:1",
+        params={"limit": 5, "harmonic": "true", "harmonic_mode": "energy_boost"},
+    )
+    assert response.status_code == 200
+    assert [match["track"]["id"] for match in response.json()["matches"]] == [
+        "itunes:2"
+    ]
+
+    capped = await client.get("/api/dig/itunes:1", params={"max_per_artist": 1})
+    assert capped.status_code == 200
+    assert len(capped.json()["matches"]) == 1
+
+    for params in ({"harmonic_mode": "smooth"}, {"max_per_artist": -1}):
+        rejected = await client.get("/api/dig/itunes:1", params=params)
+        assert rejected.status_code == 422, params

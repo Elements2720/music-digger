@@ -165,6 +165,8 @@ export const api = {
       min_year?: number;
       max_year?: number;
       exclude_heard?: boolean;
+      max_per_artist?: number;
+      harmonic_mode?: "strict" | "energy_boost";
     } = {},
   ): Promise<DigResponse> {
     return request(`/api/dig/${encodedPath(trackId)}`, { params });
@@ -293,6 +295,11 @@ export const api = {
     genre?: string;
     source?: string;
     limit?: number;
+    liked_weight?: number;
+    local_weight?: number;
+    max_per_artist?: number;
+    hide_heard?: boolean;
+    exclude_local?: boolean;
   }): Promise<TasteRankingResponse> {
     return request("/api/catalog/taste-ranking", { params });
   },

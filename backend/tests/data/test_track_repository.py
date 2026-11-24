@@ -711,3 +711,114 @@ async def test_taste_scores_and_sorting(repository: HybridTrackRepository) -> No
     assert analytics.local_taste_count == 1
     assert analytics.total_local == 1
     assert analytics.total_itunes == 2
+
+
+def _axis_vector(index: int, weight: float = 0.9) -> EmbeddingVector:
+    """Unit-ish 8-D vector leaning on one axis, so cosine order is predictable."""
+    values = [0.1] * 8
+    values[index] = weight
+    return EmbeddingVector(values=tuple(values))
+
+
+async def _taste_fixture(repository: HybridTrackRepository) -> None:
+    await repository.upsert_many(
+        [
+            _track(
+                "local:seed",
+                artist="Warm Up",
+                source="local",
+                embedding=_axis_vector(0, 1.0),
+            ),
+            _track(
+                "itunes:liked",
+                artist="Solomun",
+                embedding=_axis_vector(1, 1.0),
+            ),
+            _track("itunes:localish", artist="A", embedding=_axis_vector(0)),
+            _track("itunes:likedish", artist="B", embedding=_axis_vector(1)),
+        ]
+    )
+
+
+async def test_taste_ranking_weights_shift_between_liked_and_local_seeds(
+    repository: HybridTrackRepository,
+) -> None:
+    await _taste_fixture(repository)
+    liked_keys = frozenset({"solomun"})
+
+    default_scores = await repository.get_track_taste_ranking(
+        mode="both", liked_artist_keys=liked_keys
+    )
+    assert default_scores["itunes:likedish"] > default_scores["itunes:localish"]
+
+    local_heavy = await repository.get_track_taste_ranking(
+        mode="both",
+        liked_artist_keys=liked_keys,
+        liked_weight=0.0,
+        local_weight=4.0,
+    )
+    assert local_heavy["itunes:localish"] > local_heavy["itunes:likedish"]
+
+
+async def test_taste_ranking_hide_heard_and_exclude_local(
+    repository: HybridTrackRepository,
+) -> None:
+    await _taste_fixture(repository)
+    await repository.mark_heard("itunes:localish")
+
+    hidden = await repository.get_track_taste_ranking(
+        mode="both", liked_artist_keys=frozenset({"solomun"}), hide_heard=True
+    )
+    assert "itunes:localish" not in hidden
+
+    without_local = await repository.get_track_taste_ranking(
+        mode="both",
+        liked_artist_keys=frozenset({"solomun"}),
+        exclude_local=True,
+    )
+    assert "local:seed" not in without_local
+    assert without_local  # remote candidates remain
+    assert "itunes:likedish" in without_local
+
+
+async def test_taste_ranking_caps_tracks_per_artist(
+    repository: HybridTrackRepository,
+) -> None:
+    await repository.upsert_many(
+        [
+            _track(
+                "local:seed",
+                artist="Repeat",
+                source="local",
+                embedding=_axis_vector(0, 1.0),
+            ),
+            _track(
+                "itunes:r1", title="One", artist="Repeat", embedding=_axis_vector(0)
+            ),
+            _track(
+                "itunes:r2", title="Two", artist="Repeat", embedding=_axis_vector(0)
+            ),
+            _track(
+                "itunes:r3", title="Three", artist="Repeat", embedding=_axis_vector(0)
+            ),
+            _track(
+                "itunes:other", title="Other", artist="Other", embedding=_axis_vector(1)
+            ),
+        ]
+    )
+
+    capped = await repository.get_track_taste_ranking(mode="local", max_per_artist=1)
+    artists = await repository.get_many(list(capped))
+    counts: dict[str, int] = {}
+    for track in artists:
+        counts[track.artist] = counts.get(track.artist, 0) + 1
+    assert counts == {"Repeat": 1, "Other": 1}
+
+
+async def test_taste_ranking_rejects_invalid_tuning(
+    repository: HybridTrackRepository,
+) -> None:
+    with pytest.raises(ValueError):
+        await repository.get_track_taste_ranking(max_per_artist=-1)
+    with pytest.raises(ValueError):
+        await repository.get_track_taste_ranking(liked_weight=-0.5)

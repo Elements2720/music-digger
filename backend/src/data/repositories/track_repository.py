@@ -504,10 +504,14 @@ class HybridTrackRepository(ITrackRepository):
         *,
         mode: Literal["local", "liked", "both"] = "both",
         liked_artist_keys: frozenset[str] = frozenset(),
+        liked_weight: float = 2.0,
+        local_weight: float = 1.0,
     ) -> tuple[list[str], dict[str, float] | None, dict[str, str]]:
         """Pick the embedded seed track IDs (and weights) for a taste mode.
 
         Returns (seed_ids, weights, artist_by_track_id) over all embedded rows.
+        ``liked_weight``/``local_weight`` only matter for ``mode="both"``; a track
+        that is both local and from a liked artist takes the liked weight.
         """
         embedded_rows = await self._sqlite.fetchall(
             "SELECT id, artist, source FROM tracks WHERE is_embedded = 1"
@@ -532,12 +536,12 @@ class HybridTrackRepository(ITrackRepository):
             return local_ids, None, artist_by_tid
         if mode == "liked":
             return liked_ids, None, artist_by_tid
-        # "both": liked seeds count double against local seeds.
+        # "both": liked seeds outweigh local-only seeds by default (2.0 vs 1.0).
         weight_map: dict[str, float] = {}
         for tid in local_ids:
-            weight_map[tid] = 1.0
+            weight_map[tid] = local_weight
         for tid in liked_ids:
-            weight_map[tid] = 2.0
+            weight_map[tid] = liked_weight
         return list(weight_map), weight_map if weight_map else None, artist_by_tid
 
     async def get_track_taste_ranking(
@@ -547,21 +551,41 @@ class HybridTrackRepository(ITrackRepository):
         liked_artist_keys: frozenset[str] = frozenset(),
         genre: str | None = None,
         source: str | None = None,
+        liked_weight: float = 2.0,
+        local_weight: float = 1.0,
+        max_per_artist: int = 0,
+        hide_heard: bool = False,
+        exclude_local: bool = False,
     ) -> dict[str, float]:
         """Rank embedded catalog tracks against the taste profile.
 
         Returns a mapping of track_id to similarity percentage (0.0 to 100.0).
-        ``genre``/``source`` narrow the ranked candidates (not the seeds).
+        ``genre``/``source``/``hide_heard``/``exclude_local`` narrow the ranked
+        candidates (not the seeds); ``max_per_artist`` keeps at most that many
+        tracks per artist (0 = unlimited) after ranking.
         """
-        seed_ids, weights, _artist_by_tid = await self._select_taste_seed_ids(
-            mode=mode, liked_artist_keys=liked_artist_keys
+        if liked_weight < 0.0 or local_weight < 0.0:
+            raise ValueError("taste weights must be >= 0")
+        if max_per_artist < 0:
+            raise ValueError("max_per_artist must be >= 0")
+        seed_ids, weights, artist_by_tid = await self._select_taste_seed_ids(
+            mode=mode,
+            liked_artist_keys=liked_artist_keys,
+            liked_weight=liked_weight,
+            local_weight=local_weight,
         )
         if not seed_ids:
             return {}
         scores = await self._vectors.compute_similarity_to_seed_ids(
             seed_ids, weights=weights
         )
-        if genre is None and source is None:
+        if (
+            genre is None
+            and source is None
+            and not hide_heard
+            and not exclude_local
+            and max_per_artist <= 0
+        ):
             return scores
 
         clauses = ["is_embedded = 1"]
@@ -572,12 +596,29 @@ class HybridTrackRepository(ITrackRepository):
         if source is not None:
             clauses.append("source = ?")
             params.append(source)
+        if exclude_local:
+            clauses.append("source != 'local'")
         candidate_rows = await self._sqlite.fetchall(
             f"SELECT id FROM tracks WHERE {' AND '.join(clauses)}",
             tuple(params),
         )
         candidates = {str(r["id"]) for r in candidate_rows}
-        return {tid: pct for tid, pct in scores.items() if tid in candidates}
+        if hide_heard:
+            candidates -= await self.get_heard_ids()
+        ranked = [(tid, pct) for tid, pct in scores.items() if tid in candidates]
+        if max_per_artist <= 0:
+            return dict(ranked)
+
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        seen_per_artist: dict[str, int] = {}
+        capped: dict[str, float] = {}
+        for tid, pct in ranked:
+            artist_key = normalize_artist_key(artist_by_tid.get(tid, ""))
+            if seen_per_artist.get(artist_key, 0) >= max_per_artist:
+                continue
+            seen_per_artist[artist_key] = seen_per_artist.get(artist_key, 0) + 1
+            capped[tid] = pct
+        return capped
 
     async def get_artist_taste_scores(
         self,

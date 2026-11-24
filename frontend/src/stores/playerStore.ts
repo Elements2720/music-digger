@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type { Track } from "../types/apiTypes";
+import { useLikesStore } from "./likesStore";
+import { useSettingsStore } from "./settingsStore";
 
 type RepeatMode = "off" | "one" | "all";
 
@@ -61,7 +63,12 @@ export const usePlayerStore = create<PlayerState>()((set, get) => ({
     });
     if (changed) {
       audio.src = src;
-      audio.currentTime = 0;
+      const settings = useSettingsStore.getState();
+      const total = track.duration_seconds ?? 0;
+      audio.currentTime =
+        settings.autoSkipIntro && total > 0
+          ? (total * settings.introJumpPercent) / 100
+          : 0;
     }
     void audio.play().catch(() => set({ playing: false }));
   },
@@ -144,13 +151,25 @@ export const usePlayerStore = create<PlayerState>()((set, get) => ({
       repeat: s.repeat === "off" ? "all" : s.repeat === "all" ? "one" : "off",
     })),
 
-  _onTimeUpdate: (t, d) => set({ currentTime: t, duration: d }),
+  _onTimeUpdate: (t, d) => {
+    set({ currentTime: t, duration: d });
+    const settings = useSettingsStore.getState();
+    const { current } = get();
+    if (!settings.autoMarkHeard || !current) return;
+    if (t < settings.heardThresholdSec) return;
+    const likes = useLikesStore.getState();
+    if (!likes.heardIds.has(current.id)) likes.toggleHeard(current.id, true);
+  },
   _onEnded: () => {
     const { repeat } = get();
     if (repeat === "one") {
       get().seek(0);
       const { audio, current } = get();
       if (audio && current) void audio.play().catch(() => undefined);
+      return;
+    }
+    if (!useSettingsStore.getState().autoplayNext) {
+      set({ playing: false, currentTime: 0 });
       return;
     }
     get().next();

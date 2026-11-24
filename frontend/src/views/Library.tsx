@@ -42,6 +42,12 @@ function ArtistModal({
     };
   }, [summary.artist]);
 
+  const heardIds = useLikesStore((s) => s.heardIds);
+  const toggleHeard = useLikesStore((s) => s.toggleHeard);
+  const tracks = data?.tracks ?? [];
+  const allHeard =
+    tracks.length > 0 && tracks.every((track) => heardIds.has(track.id));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden />
@@ -62,6 +68,25 @@ function ArtistModal({
                 : "no taste score"}
             </span>
           </span>
+          <button
+            type="button"
+            className={`flex h-9 min-h-0 items-center gap-1.5 rounded-pill border px-3 text-[10px] transition-colors ${
+              allHeard
+                ? "border-accent/60 bg-accent/15 text-accent"
+                : "border-line text-ink-dim hover:border-white/25 hover:text-heading"
+            }`}
+            aria-pressed={allHeard}
+            aria-label={
+              allHeard ? "Unmark this artist's tracks" : "Like this artist's tracks"
+            }
+            onClick={() => {
+              for (const track of tracks) toggleHeard(track.id, !allHeard);
+            }}
+            title={allHeard ? "Unmark this artist's tracks" : "Like this artist's tracks"}
+          >
+            <Heart size={13} fill={allHeard ? "currentColor" : "none"} />
+            {allHeard ? "Liked" : "Like"}
+          </button>
           <Link
             to={`/dig?mode=foryou&artist=${encodeURIComponent(summary.artist)}`}
             className="btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px]"
@@ -146,7 +171,7 @@ function ArtistsHub() {
             aria-hidden
           />
           <input
-            className="input pl-9"
+            className="input pl-10"
             placeholder="Filter artists…"
             value={q}
             onChange={(e) => setQ(e.target.value)}

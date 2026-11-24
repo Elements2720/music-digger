@@ -1,6 +1,8 @@
 import { useEffect } from "react";
+import type { CSSProperties } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { TopBar, IconRail } from "./components/Shell";
+import { Sidebar, UtilityStrip, useShellStore } from "./components/Shell";
+import { MobileChrome } from "./components/MobileChrome";
 import { PlayerDock } from "./components/PlayerDock";
 import { SetCrateDrawer } from "./components/SetCrateDrawer";
 import { DashboardView } from "./views/Dashboard";
@@ -9,9 +11,11 @@ import { BuilderView } from "./views/Builder";
 import { MixView } from "./views/Mix";
 import { LibraryView } from "./views/Library";
 import { PipelineView } from "./views/Pipeline";
+import { SettingsView } from "./views/Settings";
 import { useJobsStore } from "./stores/jobsStore";
 import { usePlayerStore } from "./stores/playerStore";
 import { useCrateStore } from "./stores/crateStore";
+import { useSettingsStore } from "./stores/settingsStore";
 
 function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
@@ -62,6 +66,23 @@ function ScrollToTop() {
 export function App() {
   const connect = useJobsStore((s) => s.connect);
   const refreshJobs = useJobsStore((s) => s.refresh);
+  const collapsed = useShellStore((s) => s.collapsed);
+  const accentTheme = useSettingsStore((s) => s.accentTheme);
+  const ambientGlow = useSettingsStore((s) => s.ambientGlow);
+  const rowDensity = useSettingsStore((s) => s.rowDensity);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.accent = accentTheme;
+    root.dataset.glow = ambientGlow ? "on" : "off";
+    root.dataset.density = rowDensity;
+  }, [accentTheme, ambientGlow, rowDensity]);
+
+  useEffect(() => {
+    if (useSettingsStore.getState().defaultCrateOpen) {
+      useCrateStore.getState().setOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     const close = connect();
@@ -70,24 +91,31 @@ export function App() {
   }, [connect, refreshJobs]);
 
   return (
-    <div className="min-h-full lg:pl-[56px]">
+    <div
+      className="app-shell min-h-full"
+      style={{ "--shell-w": collapsed ? "64px" : "224px" } as CSSProperties}
+    >
       <KeyboardShortcuts />
       <ScrollToTop />
-      <TopBar />
-      <main className="mx-auto w-full max-w-[1440px] px-4 pb-28 pt-4 sm:px-6">
-        <Routes>
-          <Route path="/" element={<DashboardView />} />
-          <Route path="/dig" element={<DigView />} />
-          <Route path="/builder" element={<BuilderView />} />
-          <Route path="/mix" element={<MixView />} />
-          <Route path="/library" element={<LibraryView />} />
-          <Route path="/pipeline" element={<PipelineView />} />
-          <Route path="*" element={<DashboardView />} />
-        </Routes>
-      </main>
+      <Sidebar />
+      <MobileChrome />
+      <div className="flex min-h-full flex-col">
+        <UtilityStrip />
+        <main className="mx-auto w-full max-w-[1440px] px-4 pb-[164px] pt-20 sm:px-6 lg:pb-32 lg:pt-5">
+          <Routes>
+            <Route path="/" element={<DashboardView />} />
+            <Route path="/dig" element={<DigView />} />
+            <Route path="/builder" element={<BuilderView />} />
+            <Route path="/mix" element={<MixView />} />
+            <Route path="/library" element={<LibraryView />} />
+            <Route path="/pipeline" element={<PipelineView />} />
+            <Route path="/settings" element={<SettingsView />} />
+            <Route path="*" element={<DashboardView />} />
+          </Routes>
+        </main>
+      </div>
       <SetCrateDrawer />
       <PlayerDock />
-      <IconRail />
     </div>
   );
 }

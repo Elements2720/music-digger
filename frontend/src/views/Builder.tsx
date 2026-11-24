@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, Save, Trash2, Wand2 } from "lucide-react";
 import { api } from "../api/client";
+import { useSettingsStore } from "../stores/settingsStore";
+import { downloadPlaylist, remapM3u8 } from "../lib/m3u8";
 import type { EvaluateSequenceResponse, PlannedSet } from "../types/apiTypes";
 import { EmptyState, ErrorState, TrackRow } from "../components/ui";
 import { useCrateStore } from "../stores/crateStore";
@@ -86,14 +88,13 @@ export function BuilderView() {
 
   const exportM3u8 = async (id: number) => {
     try {
-      const text = await api.exportPlannedSetM3u8(id);
-      const blob = new Blob([text], { type: "audio/x-mpegurl" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `set-${id}.m3u8`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const settings = useSettingsStore.getState();
+      const text = remapM3u8(await api.exportPlannedSetM3u8(id), {
+        pathMode: settings.m3u8PathMode,
+        pathPrefix: settings.m3u8PathPrefix,
+        includeMetadata: settings.m3u8IncludeMetadata,
+      });
+      downloadPlaylist(`set-${id}.m3u8`, text);
       setStatus("Playlist exported (.m3u8)");
     } catch (err) {
       if (err instanceof Error) setError(err.message);

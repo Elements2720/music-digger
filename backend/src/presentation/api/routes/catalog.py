@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -154,6 +154,8 @@ async def dig(
     limit: int = Query(10, ge=1, le=500),
     bpm_tolerance: float | None = Query(None, ge=0),
     harmonic: bool = Query(False),
+    harmonic_mode: Literal["strict", "energy_boost"] = Query("strict"),
+    max_per_artist: int = Query(0, ge=0, le=50),
     genre: str | None = Query(None),
     genres: str | None = Query(None),
     min_year: int | None = Query(None, ge=1900, le=2100),
@@ -179,6 +181,8 @@ async def dig(
             search_filter,
             bpm_tolerance=bpm_tolerance,
             harmonic=harmonic,
+            harmonic_mode=harmonic_mode,
+            max_per_artist=max_per_artist,
         )
     except TrackNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -405,12 +409,20 @@ async def get_taste_ranking(
     genre: str | None = Query(None),
     source: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
+    liked_weight: float = Query(2.0, ge=0.0, le=10.0),
+    local_weight: float = Query(1.0, ge=0.0, le=10.0),
+    max_per_artist: int = Query(0, ge=0, le=50),
+    hide_heard: bool = Query(False),
+    exclude_local: bool = Query(False),
     container: Any = Depends(get_container),
 ) -> dict[str, Any]:
     """Rank the full embedded catalog against the CLAP taste vector.
 
     ``mode`` selects the taste profile seeds: ``local`` (downloaded tracks),
-    ``liked`` (liked artists' catalog tracks) or ``both`` (liked weighted 2x).
+    ``liked`` (liked artists' catalog tracks) or ``both`` (liked weighted 2x by
+    default; ``liked_weight``/``local_weight`` tune that blend for
+    ``mode="both"``). ``max_per_artist`` caps tracks per artist (0 = unlimited);
+    ``hide_heard`` and ``exclude_local`` narrow the ranked candidates.
     """
     liked_keys = (
         await container.liked_artist_repository.get_liked_keys()
@@ -423,6 +435,11 @@ async def get_taste_ranking(
         liked_artist_keys=liked_keys,
         genre=genre,
         source=source,
+        liked_weight=liked_weight,
+        local_weight=local_weight,
+        max_per_artist=max_per_artist,
+        hide_heard=hide_heard,
+        exclude_local=exclude_local,
     )
     ordered = sorted(ranking.items(), key=lambda kv: kv[1], reverse=True)[:limit]
     tracks = await container.track_repository.get_many([tid for tid, _ in ordered])
