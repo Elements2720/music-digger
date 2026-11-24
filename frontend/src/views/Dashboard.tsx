@@ -377,23 +377,6 @@ function ShelfArrows({
   );
 }
 
-function TrackShelf({
-  tracks,
-  queue,
-}: {
-  tracks: DashboardResponse["recent_tracks"];
-  queue: DashboardResponse["recent_tracks"];
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  return (
-    <div ref={ref} className="shelf no-scrollbar px-3 py-3">
-      {tracks.map((t) => (
-        <AlbumCard key={t.id} track={t} queue={queue} />
-      ))}
-    </div>
-  );
-}
-
 function TopPicks() {
   const [tracks, setTracks] = useState<Track[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -416,7 +399,7 @@ function TopPicks() {
 
   return (
     <section className="panel overflow-hidden">
-      <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+      <div className="flex items-center justify-between gap-3 px-5 py-3">
         <p className="eyebrow">Top picks for you</p>
         <div className="flex items-center gap-2">
           <ShelfArrows onScroll={scroll} className="hidden sm:flex" />
@@ -426,11 +409,11 @@ function TopPicks() {
         </div>
       </div>
       {failed ? (
-        <p className="border-t border-line px-3.5 py-4 text-[12px] text-ink-faint">
+        <p className="border-t border-line px-5 py-4 text-[12px] text-ink-faint">
           Taste ranking is unavailable right now — start Digging to seed it.
         </p>
       ) : tracks === null ? (
-        <div className="flex gap-3 border-t border-line p-3">
+        <div className="flex gap-3 border-t border-line px-5 py-4">
           {[0, 1, 2, 3, 4, 5].map((i) => (
             <div
               key={i}
@@ -439,12 +422,15 @@ function TopPicks() {
           ))}
         </div>
       ) : tracks.length === 0 ? (
-        <p className="border-t border-line px-3.5 py-4 text-[12px] text-ink-faint">
+        <p className="border-t border-line px-5 py-4 text-[12px] text-ink-faint">
           No picks yet — like a few tracks or run the catalog index to build your taste
           profile.
         </p>
       ) : (
-        <div ref={ref} className="shelf no-scrollbar border-t border-line px-3 py-3">
+        <div
+          ref={ref}
+          className="shelf no-scrollbar border-t border-line px-5 py-4 scroll-px-5"
+        >
           {tracks.map((t) => (
             <AlbumCard key={t.id} track={t} queue={tracks} />
           ))}
@@ -604,14 +590,11 @@ export function DashboardView() {
             hint="Run the Pipeline jobs to build your catalog."
           />
         ) : (
-          <>
-            <TrackShelf tracks={recent.slice(0, 10)} queue={recent} />
-            <div className="mt-3 border-t border-line">
-              {recent.slice(0, 12).map((t) => (
-                <TrackRow key={t.id} track={t} queue={recent} />
-              ))}
-            </div>
-          </>
+          <div className="border-t border-line px-2 py-2">
+            {recent.slice(0, 12).map((t) => (
+              <TrackRow key={t.id} track={t} queue={recent} />
+            ))}
+          </div>
         )}
       </section>
     </div>

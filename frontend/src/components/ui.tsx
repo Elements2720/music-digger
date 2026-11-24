@@ -283,7 +283,7 @@ export function TrackRow({
 
   return (
     <div
-      className={`group flex items-center gap-2 border-b border-line px-2 py-2 transition-colors sm:gap-3 sm:px-3 ${
+      className={`group flex flex-wrap items-center gap-2 border-b border-line px-2 py-2 transition-colors sm:gap-3 sm:px-3 ${
         isCurrent ? "bg-fill" : "hover:bg-fill"
       }`}
     >
@@ -332,7 +332,7 @@ export function TrackRow({
         <BpmPill bpm={track.bpm} />
         <KeyPill k={track.key} />
       </div>
-      <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+      <div className="flex shrink-0 basis-full items-center justify-end gap-0.5 sm:basis-auto sm:justify-start sm:gap-1">
         <button
           type="button"
           onClick={() => void toggleHeard(track)}
