@@ -61,6 +61,33 @@ function renderDeck() {
   add.dataset.id = t.id;
 }
 
+/* Seeded pseudo-waveform: deterministic per src, so a track always shows the
+ * same bar silhouette. Purely decorative — seeking is by time, not samples. */
+function seedWave(src) {
+  let seed = 0;
+  for (let i = 0; i < src.length; i++) seed = (seed * 31 + src.charCodeAt(i)) >>> 0;
+  const bars = 60;
+  const heights = [];
+  for (let i = 0; i < bars; i++) {
+    seed = (seed * 1103515245 + 12345) >>> 0;
+    const t = i / bars;
+    // Soft envelope so the bar breathes in the middle, like a real set.
+    const env = 0.35 + 0.65 * Math.sin(Math.PI * Math.min(1, Math.max(0, t)));
+    heights.push(Math.max(0.12, env * (0.35 + ((seed >>> 16) % 1000) / 1000)));
+  }
+  return heights;
+}
+
+function renderWave() {
+  const svg = el("deck-wave-svg");
+  if (!svg) return;
+  const h = seedWave(audio.src || currentTrack?.id || "empty");
+  const bw = 240 / h.length;
+  svg.innerHTML = h
+    .map((v, i) => `<rect x="${(i * bw).toFixed(2)}" y="${(((1 - v) * 36) / 2).toFixed(2)}" width="${(bw * 0.7).toFixed(2)}" height="${(v * 36).toFixed(2)}" rx="1"/>`)
+    .join("");
+}
+
 function playIndex(i) {
   if (i < 0 || i >= queue.length) return;
   queueIndex = i;
@@ -82,6 +109,8 @@ export function loadTrack(track, queueTracks = null) {
 
   renderDeck();
   audio.src = url;
+  renderWave();
+  el("deck-wave-progress").style.width = "0%";
   audio.play().catch(() => {
     el("deck-play").innerHTML = iconPlay();
     toast("Playback blocked or failed — press play", "error");
@@ -92,7 +121,7 @@ export function loadTrack(track, queueTracks = null) {
 
 export function setupPlayer() {
   const playBtn = el("deck-play");
-  const seek = el("deck-seek");
+  const wave = el("deck-wave");
   const vol = el("deck-vol");
   vol.value = String(audio.volume * 100);
 
@@ -118,11 +147,33 @@ export function setupPlayer() {
   audio.addEventListener("timeupdate", () => {
     if (!Number.isFinite(audio.duration) || audio.duration === 0) return;
     el("deck-time").textContent = `${fmt(audio.currentTime)} / ${fmt(audio.duration)}`;
-    seek.value = String((audio.currentTime / audio.duration) * 100);
+    const pct = (audio.currentTime / audio.duration) * 100;
+    el("deck-wave-progress").style.width = `${pct}%`;
+    wave.setAttribute("aria-valuenow", String(Math.round(pct)));
   });
-  seek.addEventListener("input", () => {
-    if (Number.isFinite(audio.duration) && audio.duration > 0) {
-      audio.currentTime = (Number(seek.value) / 100) * audio.duration;
+  const seekTo = (clientX) => {
+    if (!Number.isFinite(audio.duration) || audio.duration === 0) return;
+    const rect = wave.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    audio.currentTime = frac * audio.duration;
+  };
+  wave.addEventListener("pointerdown", (e) => {
+    wave.setPointerCapture(e.pointerId);
+    seekTo(e.clientX);
+    const move = (ev) => seekTo(ev.clientX);
+    const up = () => {
+      wave.removeEventListener("pointermove", move);
+      wave.removeEventListener("pointerup", up);
+    };
+    wave.addEventListener("pointermove", move);
+    wave.addEventListener("pointerup", up);
+  });
+  wave.addEventListener("keydown", (e) => {
+    if (!Number.isFinite(audio.duration) || audio.duration === 0) return;
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const step = e.key === "ArrowLeft" ? -10 : 10;
+      audio.currentTime = Math.min(audio.duration, Math.max(0, audio.currentTime + step));
     }
   });
   vol.addEventListener("input", () => {

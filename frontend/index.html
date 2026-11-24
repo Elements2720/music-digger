@@ -17,6 +17,10 @@
       <span class="status-dot" id="health-dot"></span>
       <span id="health-label">checking…</span>
     </div>
+    <button class="crate-toggle" id="crate-toggle" aria-label="Open Set Crate" aria-expanded="false" aria-controls="crate">
+      <span class="mono">SET CRATE</span>
+      <span class="crate-count" id="crate-count-badge">0</span>
+    </button>
   </header>
 
   <nav class="nav" role="tablist" aria-label="Workspaces">
@@ -433,6 +437,21 @@
     </section>
   </main>
 
+  <!-- ============ Set Crate drawer ============ -->
+  <aside class="crate" id="crate" aria-label="Set Crate" aria-hidden="true">
+    <div class="crate-scrim" data-close-crate></div>
+    <div class="crate-panel" role="dialog" aria-label="Set Builder playlist">
+      <div class="crate-head">
+        <span class="eyebrow">Set Crate</span>
+        <button class="icon-btn" id="crate-close" aria-label="Close Set Crate"></button>
+      </div>
+      <div class="crate-body" id="crate-body"></div>
+      <div class="crate-foot">
+        <button class="btn primary" id="crate-open-builder">Open in Set Builder</button>
+      </div>
+    </div>
+  </aside>
+
   <!-- ============ Persistent mini deck ============ -->
   <footer class="deck" id="deck" aria-label="Mini deck">
     <img class="deck-art" id="deck-art" src="" alt="" hidden>
@@ -450,7 +469,10 @@
     </div>
     <div class="deck-progress">
       <span class="deck-time" id="deck-time">0:00 / 0:00</span>
-      <input type="range" id="deck-seek" min="0" max="100" value="0" step="0.1" aria-label="Seek">
+      <div class="deck-wave" id="deck-wave" role="slider" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+        <svg id="deck-wave-svg" preserveAspectRatio="none" viewBox="0 0 240 36" aria-hidden="true"></svg>
+        <span class="deck-wave-progress" id="deck-wave-progress"></span>
+      </div>
     </div>
     <div class="deck-cue" id="deck-cue">
       <span>BPM <span class="t-meta" id="cue-bpm">—</span></span>
@@ -494,5 +516,6 @@
   </div>
 
   <script type="module" src="./js/main.js"></script>
+  <script type="module" src="./js/crate.js"></script>
 </body>
 </html>

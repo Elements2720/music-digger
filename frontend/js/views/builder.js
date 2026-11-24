@@ -4,7 +4,7 @@
  */
 
 import { api } from "../api.js";
-import { on } from "../events.js";
+import { on, emit } from "../events.js";
 import { emptyHTML, errorHTML, bindRetries, esc, toast } from "../ui.js";
 import { trackRowHTML, bindTrackRows } from "../components.js";
 import { iconUp, iconDown, iconClose } from "../icons.js";
@@ -26,6 +26,8 @@ function pctLabel(s) {
 
 function renderPlaylist() {
   const el = document.getElementById("builder-tracks");
+  // Set Crate drawer renders from the same snapshot — one source of truth.
+  emit("set:changed", playlist.map((t) => ({ ...t })));
   if (!playlist.length) {
     el.innerHTML = emptyHTML("Empty set", "Search on the right and click a track to add it.");
     return;
@@ -339,6 +341,17 @@ export function setupBuilder() {
   on("set:add-track", (track) => {
     if (track && !playlist.some((p) => p.id === track.id)) {
       playlist.push(track);
+      lastEvals = [];
+      renderPlaylist();
+    }
+  });
+
+  // Set Crate drawer removals come back through the same bus.
+  document.addEventListener("builder:remove-track", (e) => {
+    const track = e.detail;
+    const idx = track ? playlist.findIndex((p) => p.id === track.id) : -1;
+    if (idx >= 0) {
+      playlist.splice(idx, 1);
       lastEvals = [];
       renderPlaylist();
     }

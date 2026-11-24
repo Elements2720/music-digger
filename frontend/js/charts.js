@@ -98,14 +98,14 @@ export function camelotWheel(keys, { size = 340, onPick = null } = {}) {
 
     // Major (outer ring) — energy 8..1 mapping per Camelot convention
     const mOpacity = major ? 0.35 + 0.65 * (major / maxV) : 0.08;
-    out += `<g class="wheel-segment" data-key="${n}B"><path class="wheel-cell" d="${annularSector(cx, cy, rInnerMajor, rOuter, a0, a1)}" fill="var(--accent)" fill-opacity="${mOpacity}" stroke="#2a3441"/>`;
+    out += `<g class="wheel-segment" data-key="${n}B"><path class="wheel-cell" d="${annularSector(cx, cy, rInnerMajor, rOuter, a0, a1)}" fill="var(--accent)" fill-opacity="${mOpacity}" stroke="var(--border)"/>`;
     const [lx, ly] = polar(cx, cy, (rInnerMajor + rOuter) / 2, a0 + segDeg / 2);
     out += `<text class="wheel-label" x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="middle">${n}B</text>`;
     out += `<text class="wheel-sub" x="${lx}" y="${ly + 9}" text-anchor="middle" dominant-baseline="middle">${major}</text></g>`;
 
     // Minor (inner ring)
     const miOpacity = minor ? 0.35 + 0.65 * (minor / maxV) : 0.08;
-    out += `<g class="wheel-segment" data-key="${n}A"><path class="wheel-cell" d="${annularSector(cx, cy, rInnerMinor, rInnerMajor - 4, a0, a1)}" fill="var(--info)" fill-opacity="${miOpacity}" stroke="#2a3441"/>`;
+    out += `<g class="wheel-segment" data-key="${n}A"><path class="wheel-cell" d="${annularSector(cx, cy, rInnerMinor, rInnerMajor - 4, a0, a1)}" fill="var(--info)" fill-opacity="${miOpacity}" stroke="var(--border)"/>`;
     const [mx, my] = polar(cx, cy, (rInnerMinor + rInnerMajor - 4) / 2, a0 + segDeg / 2);
     out += `<text class="wheel-label" x="${mx}" y="${my - 4}" text-anchor="middle" dominant-baseline="middle">${n}A</text>`;
     out += `<text class="wheel-sub" x="${mx}" y="${my + 7}" text-anchor="middle" dominant-baseline="middle">${minor}</text></g>`;

@@ -9,6 +9,7 @@ import { setupMix } from "./views/mix.js";
 import { setupLibrary } from "./views/library.js";
 import { setupPipeline } from "./views/pipeline.js";
 import { setupPlayer } from "./player.js";
+import { setupCrate } from "./crate.js";
 
 const teardowns = [];
 
@@ -81,6 +82,7 @@ async function main() {
   teardowns.push(setupLibrary());
   teardowns.push(setupPipeline());
   setupPlayer();
+  setupCrate();
   // Boot default only: never clobber a tab the user already clicked while
   // the boot fetches above were still in flight.
   if (currentTab() === "dashboard") activate("dashboard");

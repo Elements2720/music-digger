@@ -1,30 +1,32 @@
 /*
- * DigDeeper — DJ Command Center
- * Studio-console direction: rigorous dark grid, mono status labels,
- * one accent. Tokens defined once; nothing hardcodes colour or size.
+ * DigDeeper — Editorial Crate
+ * Pure-black editorial aesthetic: hairline chrome, white grotesk type,
+ * colour only on artwork, Camelot pills and emerald status.
+ * Tokens defined once; nothing hardcodes colour or size.
  */
 
 :root {
-  /* Palette (Studio Console spec) */
-  --bg: #101418;
-  --bg-raised: #161b21;
-  --surface: #1b222a;
-  --surface-2: #222b35;
-  --border: #2a3441;
-  --border-strong: #3a4757;
+  /* Palette (Editorial Crate spec) */
+  --bg: #000000;
+  --bg-raised: #0a0a0c;
+  --surface: #0a0a0c;
+  --surface-2: #141417;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
   --text: #e9eef5;
   --heading: #f4f7fb;
   --muted: #8b98a9;
   --faint: #7d8ca0;
-  --accent: #3dd68c;
-  --accent-dim: rgba(61, 214, 140, 0.14);
+  --accent: #22c55e;
+  --accent-bright: #34d399;
+  --accent-dim: rgba(34, 197, 94, 0.14);
   --warn: #e8b34b;
   --danger: #e5534b;
   --info: #58a6ff;
 
-  /* Type — system mono for status/instruments, system sans for prose */
+  /* Type — Inter-first grotesk for prose/display, system mono for status/instruments */
   --font-mono: "SFMono-Regular", ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-  --font-sans: -apple-system, "Segoe UI", Roboto, "Inter", system-ui, sans-serif;
+  --font-sans: "Inter", -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
   --fs-2xs: 0.6875rem;
   --fs-xs: 0.75rem;
   --fs-sm: 0.8125rem;
@@ -68,6 +70,16 @@ h1 { font-size: var(--fs-2xl); letter-spacing: -0.02em; }
 h2 { font-size: var(--fs-xl); letter-spacing: -0.01em; }
 h3 { font-size: var(--fs-lg); }
 
+/* Editorial page titles — large, tight-tracked grotesk */
+.workspace-head h2 {
+  font-size: 32px;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+@media (max-width: 768px) {
+  .workspace-head h2 { font-size: 24px; }
+}
+
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
@@ -94,7 +106,7 @@ code, .mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
   align-items: center;
   gap: var(--s4);
   padding: var(--s3) var(--s5);
-  background: rgba(16, 20, 24, 0.92);
+  background: rgba(0, 0, 0, 0.92);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(8px);
 }
@@ -245,7 +257,7 @@ code, .mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
   color: #0b1512;
   font-weight: 600;
 }
-.btn.primary:hover { background: #55e0a0; }
+.btn.primary:hover { background: var(--accent-bright); }
 .btn.danger { border-color: var(--danger); color: #f2807a; background: transparent; }
 .btn.danger:hover { background: rgba(229, 83, 75, 0.12); }
 .btn.sm { min-height: 32px; padding: 0 var(--s3); }
@@ -387,6 +399,56 @@ select { cursor: pointer; max-width: 100%; }
 .key-badge[data-segment="11"] { color: #ff8fcd; border-color: #ff6bc055; }
 .key-badge[data-segment="12"] { color: #ff8fa8; border-color: #ff6b8f55; }
 
+/* ============ Set Crate drawer (signature element) ============ */
+.crate { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+.crate-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); opacity: 0; transition: opacity var(--t-med) var(--ease); }
+.crate-panel {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(380px, 92vw);
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transform: translateX(100%);
+  transition: transform var(--t-med) var(--ease);
+}
+.crate.open { pointer-events: auto; }
+.crate.open .crate-scrim { opacity: 1; }
+.crate.open .crate-panel { transform: translateX(0); }
+.crate-head { display: flex; align-items: center; justify-content: space-between; padding: var(--s4); border-bottom: 1px solid var(--border); }
+.crate-head .eyebrow { margin: 0; }
+.crate-body { flex: 1; overflow-y: auto; padding: var(--s3) var(--s4); }
+.crate-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) 0; border-bottom: 1px solid var(--border); min-height: 44px; }
+.crate-art { width: 36px; height: 36px; border-radius: var(--r-sm); object-fit: cover; flex: none; }
+.crate-row .t-main { flex: 1; min-width: 0; }
+.crate-row .t-title { font-size: var(--fs-sm); color: var(--heading); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crate-row .t-artist { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crate-row .t-meta { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--faint); }
+.crate-empty { color: var(--muted); font-size: var(--fs-sm); line-height: 1.6; padding: var(--s4) 0; }
+.crate-foot { padding: var(--s4); border-top: 1px solid var(--border); }
+.crate-foot .btn { width: 100%; }
+
+.crate-toggle {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 0 var(--s3); min-height: 36px; font: inherit; font-size: var(--fs-xs);
+  cursor: pointer; transition: border-color var(--t-fast) var(--ease);
+}
+.crate-toggle:hover { border-color: var(--border-strong); }
+.crate-toggle .mono { font-family: var(--font-mono); letter-spacing: 0.06em; }
+.crate-count { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--accent); min-width: 1.5em; text-align: center; }
+
+/* ============ Waveform seekbar ============ */
+.deck-wave { position: relative; flex: 1; min-width: 120px; height: 36px; cursor: pointer; touch-action: none; }
+.deck-wave:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.deck-wave svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.deck-wave svg rect { fill: rgba(255, 255, 255, 0.28); }
+.deck-wave-progress {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+  background: var(--accent-dim); pointer-events: none;
+  border-right: 2px solid var(--accent);
+}
+
 /* Empty / loading / error states */
 .state-block {
   padding: var(--s7) var(--s4);
@@ -450,7 +512,7 @@ select { cursor: pointer; max-width: 100%; }
   align-items: center;
   gap: var(--s4);
   padding: 0 var(--s4);
-  background: rgba(22, 27, 33, 0.97);
+  background: rgba(10, 10, 12, 0.97);
   border-top: 1px solid var(--border);
   backdrop-filter: blur(8px);
 }
@@ -489,7 +551,7 @@ img.deck-art {
 .transport-btn:hover { border-color: var(--accent); color: var(--accent); }
 .transport-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .transport-btn.play { background: var(--accent); border-color: var(--accent); color: #0b1512; }
-.transport-btn.play:hover { background: #55e0a0; }
+.transport-btn.play:hover { background: var(--accent-bright); }
 
 .deck-progress {
   display: flex;
