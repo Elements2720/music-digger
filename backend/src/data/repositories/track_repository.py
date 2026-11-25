@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -851,6 +851,88 @@ class HybridTrackRepository(ITrackRepository):
             summaries = summaries[offset : offset + limit]
 
         return (tuple(summaries), total_artists)
+
+    async def list_artists_summary_by_names(
+        self,
+        artist_names: Sequence[str],
+        *,
+        genre: str | None = None,
+        source: str | None = None,
+        taste_scores: Mapping[str, float | None] | None = None,
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        """Summaries for the given artist names only (no artwork subquery)."""
+        names = [name for name in {n for n in artist_names if n}]
+        clauses: list[str] = []
+        params: list[Any] = []
+        if genre and genre.strip():
+            clauses.append("LOWER(genre) = LOWER(?)")
+            params.append(genre.strip())
+        if source and source.strip():
+            clauses.append("source = ?")
+            params.append(source.strip())
+        where_scope = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        count_row = await self._sqlite.fetchone(
+            f"SELECT COUNT(DISTINCT artist) AS total FROM tracks {where_scope}",
+            tuple(params),
+        )
+        total_in_scope = int(count_row["total"]) if count_row is not None else 0
+        if not names or total_in_scope == 0:
+            return ((), total_in_scope)
+
+        scores = taste_scores or {}
+        summaries: list[ArtistSummary] = []
+        for start in range(0, len(names), 900):
+            chunk = names[start : start + 900]
+            placeholders = ", ".join("?" for _ in chunk)
+            sql = f"""
+            SELECT
+                artist,
+                COUNT(*) AS track_count,
+                SUM(is_embedded) AS embedded_count,
+                MIN(release_year) AS year_min,
+                MAX(release_year) AS year_max,
+                GROUP_CONCAT(DISTINCT genre) AS genres_concat,
+                GROUP_CONCAT(DISTINCT source) AS sources_concat
+            FROM tracks
+            WHERE artist IN ({placeholders})
+            """
+            if clauses:
+                sql += f"AND {' AND '.join(clauses)} "
+            sql += (
+                "GROUP BY artist ORDER BY track_count DESC, artist COLLATE NOCASE ASC"
+            )
+            rows = await self._sqlite.fetchall(sql, (*chunk, *params))
+            for row in rows:
+                artist_name = str(row["artist"])
+                norm_key = normalize_artist_key(artist_name)
+                taste_pct = scores.get(artist_name)
+                genres = tuple(g for g in (row["genres_concat"] or "").split(",") if g)
+                sources = tuple(
+                    s for s in (row["sources_concat"] or "").split(",") if s
+                )
+                summaries.append(
+                    ArtistSummary(
+                        artist=artist_name,
+                        track_count=int(row["track_count"] or 0),
+                        embedded_count=int(row["embedded_count"] or 0),
+                        genres=genres,
+                        sources=sources,
+                        sample_track_id=None,
+                        sample_track_title=None,
+                        year_min=int(row["year_min"])
+                        if row["year_min"] is not None
+                        else None,
+                        year_max=int(row["year_max"])
+                        if row["year_max"] is not None
+                        else None,
+                        taste_match_percent=taste_pct,
+                        artwork_url=None,
+                        is_liked=norm_key in liked_artist_keys,
+                    )
+                )
+
+        return (tuple(summaries), total_in_scope)
 
     async def get_catalog_analytics(self) -> CatalogAnalytics:
         """Return high-level analytics and distributions across the catalog."""

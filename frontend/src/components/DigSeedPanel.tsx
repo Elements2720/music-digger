@@ -1,9 +1,11 @@
-import { Search, X } from "lucide-react";
+import { Pause, Play, Search, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { Track } from "../types/apiTypes";
 import { useDigTrailStore } from "../stores/digTrailStore";
 import type { SeedSource } from "../stores/digTrailStore";
+import { usePlayerStore } from "../stores/playerStore";
+import { fmtBpm } from "../lib/format";
 import { Artwork, KeyPill } from "./ui";
 
 const SOURCES: { id: SeedSource; label: string }[] = [
@@ -17,12 +19,14 @@ function SeedThumb({
   active,
   onSelect,
   onRemove,
+  removable = true,
   chip = false,
 }: {
   track: Track;
   active: boolean;
   onSelect: () => void;
   onRemove: () => void;
+  removable?: boolean;
   chip?: boolean;
 }) {
   return (
@@ -34,7 +38,6 @@ function SeedThumb({
           ? "border-accent/60 bg-fill"
           : "border-transparent hover:bg-fill"
       }`}
-      style={active ? { boxShadow: "inset 0 0 0 1px rgba(61,214,140,0.45)" } : undefined}
     >
       <button
         type="button"
@@ -71,14 +74,20 @@ function SeedThumb({
           <KeyPill k={track.key} className="!px-1.5 !py-0 !text-[9px]" />
         ) : null}
       </button>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] text-ink-faint opacity-0 transition-opacity hover:bg-fill hover:text-heading focus-visible:opacity-100 group-hover:opacity-100"
-        aria-label={`Remove ${track.title} from dig trail`}
-      >
-        <X size={12} />
-      </button>
+      {removable ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] text-ink-faint transition-opacity hover:bg-fill hover:text-heading focus-visible:opacity-100 ${
+            chip
+              ? "opacity-70 hover:opacity-100"
+              : "opacity-0 group-hover:opacity-100"
+          }`}
+          aria-label={`Remove ${track.title} from dig trail`}
+        >
+          <X size={12} />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -97,6 +106,10 @@ export function DigSeedPanel({
 }) {
   const seeds = useDigTrailStore((s) => s.seeds);
   const remove = useDigTrailStore((s) => s.remove);
+  const currentTrack = usePlayerStore((s) => s.current);
+  const playing = usePlayerStore((s) => s.playing);
+  const play = usePlayerStore((s) => s.play);
+  const toggle = usePlayerStore((s) => s.toggle);
 
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<Track[]>([]);
@@ -224,25 +237,47 @@ export function DigSeedPanel({
       ) : null}
       {options.length > 0 ? (
         <ul className="mt-2 overflow-hidden rounded-[3px] border border-line">
-          {options.map((t) => (
-            <li key={t.id}>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-fill"
-                onClick={() => pick(t)}
-              >
-                <Artwork track={t} size={28} className="!rounded-[3px]" />
-                <span className="min-w-0">
-                  <span className="block truncate text-[12px] text-heading">
-                    {t.title}
+          {options.map((t) => {
+            const isCurrent = currentTrack?.id === t.id;
+            return (
+              <li key={t.id} className="flex items-center gap-1 pr-1">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left hover:bg-fill"
+                  onClick={() => pick(t)}
+                >
+                  <Artwork track={t} size={28} className="!rounded-[3px]" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12px] text-heading">
+                      {t.title}
+                    </span>
+                    <span className="block truncate text-[10px] text-ink-dim">
+                      {t.artist}
+                    </span>
+                    <span className="mt-0.5 flex items-center gap-1.5">
+                      <span className="font-num text-[9px] text-ink-faint">
+                        {t.bpm ? `${fmtBpm(t.bpm)} BPM` : "— BPM"}
+                      </span>
+                      <KeyPill k={t.key} className="!px-1.5 !py-0 !text-[9px]" />
+                    </span>
                   </span>
-                  <span className="block truncate text-[10px] text-ink-dim">
-                    {t.artist}
-                  </span>
-                </span>
-              </button>
-            </li>
-          ))}
+                </button>
+                <button
+                  type="button"
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-[3px] text-ink-dim hover:bg-fill hover:text-heading focus-visible:ring-2 focus-visible:ring-accent/70"
+                  aria-label={
+                    isCurrent && playing ? `Pause ${t.title}` : `Play ${t.title}`
+                  }
+                  onClick={() => {
+                    if (isCurrent) toggle();
+                    else play(t, options);
+                  }}
+                >
+                  {isCurrent && playing ? <Pause size={12} /> : <Play size={12} />}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 
@@ -255,6 +290,7 @@ export function DigSeedPanel({
             aria-selected={source === s.id}
             onClick={() => onSource(s.id)}
             className="flex-1"
+            aria-label={`Show ${s.label.toLowerCase()} seeds`}
           >
             {s.label}
           </button>
@@ -299,6 +335,7 @@ export function DigSeedPanel({
                 active={t.id === activeId}
                 onSelect={() => onSelect(t)}
                 onRemove={() => remove(t.id)}
+                removable={source === "recent"}
               />
             ))}
           </div>
@@ -311,6 +348,7 @@ export function DigSeedPanel({
                   active={t.id === activeId}
                   onSelect={() => onSelect(t)}
                   onRemove={() => remove(t.id)}
+                  removable={source === "recent"}
                 />
               </li>
             ))}

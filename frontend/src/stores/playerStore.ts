@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type { Track } from "../types/apiTypes";
 import { useLikesStore } from "./likesStore";
 import { useSettingsStore } from "./settingsStore";
@@ -36,52 +37,78 @@ function previewSrc(track: Track): string | null {
   return track.preview_url ?? null;
 }
 
-export const usePlayerStore = create<PlayerState>()((set, get) => ({
-  audio: null,
-  current: null,
-  queue: [],
-  playing: false,
-  currentTime: 0,
-  duration: 0,
-  muted: false,
-  volume: 0.9,
-  repeat: "off" as RepeatMode,
+export const usePlayerStore = create<PlayerState>()(
+  persist(
+    (set, get) => ({
+      audio: null,
+      current: null,
+      queue: [],
+      playing: false,
+      currentTime: 0,
+      duration: 0,
+      muted: false,
+      volume: 0.9,
+      repeat: "off" as RepeatMode,
 
-  attach: (audio) => set({ audio }),
+      attach: (audio) => {
+        const { current, volume, muted } = get();
+        // Re-bind the restored track to the freshly mounted <audio> element.
+        if (current) {
+          const src = previewSrc(current);
+          if (src && audio.src !== new URL(src, window.location.origin).href) {
+            audio.src = src;
+          }
+          audio.volume = volume;
+          audio.muted = muted;
+        }
+        set({ audio });
+      },
 
-  play: (track, queue) => {
-    const { audio, current } = get();
-    if (!audio) return;
-    const src = previewSrc(track);
-    if (!src) return;
-    const changed = current?.id !== track.id;
-    set({
-      current: track,
-      playing: true,
-      queue: queue ?? (current ? get().queue : []),
-      ...(changed ? { currentTime: 0, duration: track.duration_seconds ?? 0 } : {}),
-    });
-    if (changed) {
-      audio.src = src;
-      const settings = useSettingsStore.getState();
-      const total = track.duration_seconds ?? 0;
-      audio.currentTime =
-        settings.autoSkipIntro && total > 0
-          ? (total * settings.introJumpPercent) / 100
-          : 0;
-    }
-    void audio.play().catch(() => set({ playing: false }));
-  },
+      play: (track, queue) => {
+        const { audio, current } = get();
+        const src = previewSrc(track);
+        if (!src) return;
+        if (!audio) {
+          // The <audio> element may not be mounted yet (PlayerDock lazy-mounts
+          // once a track exists); persist the selection and let attach() bind it.
+          set({
+            current: track,
+            playing: false,
+            queue: queue ?? (current ? get().queue : []),
+            ...(current?.id !== track.id ? { currentTime: 0 } : {}),
+          });
+          return;
+        }
+        const changed = current?.id !== track.id;
+        set({
+          current: track,
+          playing: true,
+          queue: queue ?? (current ? get().queue : []),
+          ...(changed ? { currentTime: 0, duration: track.duration_seconds ?? 0 } : {}),
+        });
+        if (changed) {
+          audio.src = src;
+          const settings = useSettingsStore.getState();
+          const total = track.duration_seconds ?? 0;
+          audio.currentTime =
+            settings.autoSkipIntro && total > 0
+              ? (total * settings.introJumpPercent) / 100
+              : 0;
+        }
+        void audio.play().catch(() => set({ playing: false }));
+      },
 
   toggle: () => {
-    const { audio, playing, current } = get();
+    const { audio, current } = get();
     if (!audio || !current) return;
-    if (playing) {
+    if (!audio.paused) {
       audio.pause();
       set({ playing: false });
-    } else {
-      void audio.play().catch(() => set({ playing: false }));
+      return;
     }
+    if (audio.ended) audio.currentTime = 0;
+    set({ playing: true });
+    void audio.play().catch(() => set({ playing: false }));
   },
 
   stop: () => {
@@ -89,6 +116,7 @@ export const usePlayerStore = create<PlayerState>()((set, get) => ({
     if (!audio) return;
     audio.pause();
     audio.removeAttribute("src");
+    audio.load();
     set({ current: null, playing: false, currentTime: 0, duration: 0 });
   },
 
@@ -174,4 +202,17 @@ export const usePlayerStore = create<PlayerState>()((set, get) => ({
     }
     get().next();
   },
-}));
+    }),
+    {
+      name: "player",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        current: state.current,
+        queue: state.queue,
+        volume: state.volume,
+        muted: state.muted,
+        repeat: state.repeat,
+      }),
+    },
+  ),
+);

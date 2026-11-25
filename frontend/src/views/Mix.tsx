@@ -89,6 +89,8 @@ export function MixView() {
   const [comments, setComments] = useState(true);
   const [keepAudio, setKeepAudio] = useState(false);
   const [cookiesFile, setCookiesFile] = useState("");
+  const [cookiesBrowser, setCookiesBrowser] = useState("");
+  const [openMatches, setOpenMatches] = useState<Set<number>>(new Set());
 
   const job = useJobsStore((s) => s.job);
   const active = useJobsStore((s) => s.active);
@@ -137,6 +139,7 @@ export function MixView() {
         parse_comments: comments,
         keep_audio: keepAudio,
         cookies_file: cookiesFile.trim() || null,
+        cookies_from_browser: cookiesBrowser.trim() || null,
       });
       setError(null);
       setShowAnalyze(false);
@@ -173,15 +176,15 @@ export function MixView() {
             void analyze();
           }}
         >
-          <p className="eyebrow mb-2">NEW ANALYSIS — YOUTUBE OR AUDIO URL</p>
+          <p className="eyebrow mb-2">ANALYZE A SET — URL OR LOCAL FILE</p>
           <input
             className="input"
-            placeholder="https://www.youtube.com/watch?v=…"
+            placeholder="https://www.youtube.com/watch?v=… or D:\sets\set.mp3"
             value={source}
             onChange={(e) => setSource(e.target.value)}
             aria-label="DJ set source URL"
           />
-          <div className="mt-3 flex flex-wrap items-center gap-4">
+          <div className="mt-3 flex flex-col gap-2">
             <label className="flex items-center gap-2 font-mono text-[11px] uppercase text-ink-dim">
               <input
                 type="checkbox"
@@ -189,7 +192,7 @@ export function MixView() {
                 onChange={(e) => setShazam(e.target.checked)}
                 className="h-4 w-4 accent-accent"
               />
-              SHAZAM PASS
+              SHAZAM UNIDENTIFIED PASSAGES
             </label>
             <label className="flex items-center gap-2 font-mono text-[11px] uppercase text-ink-dim">
               <input
@@ -198,7 +201,7 @@ export function MixView() {
                 onChange={(e) => setComments(e.target.checked)}
                 className="h-4 w-4 accent-accent"
               />
-              PARSE TOP-100 COMMENTS
+              PARSE TRACKLIST FROM COMMENTS
             </label>
             <label className="flex items-center gap-2 font-mono text-[11px] uppercase text-ink-dim">
               <input
@@ -207,18 +210,38 @@ export function MixView() {
                 onChange={(e) => setKeepAudio(e.target.checked)}
                 className="h-4 w-4 accent-accent"
               />
-              KEEP AUDIO FILE
+              KEEP DOWNLOADED AUDIO
             </label>
-            <input
-              className="input max-w-[220px]"
-              placeholder="cookies.txt path (optional)"
-              value={cookiesFile}
-              onChange={(e) => setCookiesFile(e.target.value)}
-              aria-label="Cookies file path"
-            />
-            <button type="submit" className="btn btn-primary ml-auto" disabled={!source.trim()}>
-              START ANALYSIS
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="font-mono text-[10px] uppercase text-ink-dim">
+              COOKIES.TXT (OPTIONAL)
+              <input
+                className="input mt-1"
+                placeholder="C:\path\cookies.txt"
+                value={cookiesFile}
+                onChange={(e) => setCookiesFile(e.target.value)}
+                aria-label="Cookies file path"
+              />
+            </label>
+            <label className="font-mono text-[10px] uppercase text-ink-dim">
+              COOKIES FROM BROWSER (OPTIONAL)
+              <input
+                className="input mt-1"
+                placeholder="firefox, edge, chrome…"
+                value={cookiesBrowser}
+                onChange={(e) => setCookiesBrowser(e.target.value)}
+                aria-label="Cookies from browser"
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button type="submit" className="btn btn-primary" disabled={!source.trim()}>
+              ANALYZE
             </button>
+            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-faint">
+              progress opens in Pipeline
+            </span>
           </div>
         </form>
       ) : null}
@@ -237,18 +260,26 @@ export function MixView() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
         <section className="panel self-start">
           <div className="panel-head">
-            <span className="eyebrow">YOUR SETS</span>
-            <span className="pill font-num">{sets?.sets.length ?? 0}</span>
+            <span className="eyebrow">STORED SETS</span>
+            <span className="flex items-center gap-2">
+              <span className="pill font-num">{sets?.sets.length ?? 0}</span>
+              <button
+                type="button"
+                className="btn btn-ghost !min-h-0 px-2 py-1 font-mono text-[9px]"
+                onClick={refresh}
+              >
+                REFRESH
+              </button>
+            </span>
           </div>
           <div className="px-3 py-2">
-            <div className="relative">
+            <div className="input-icon-wrap">
               <Search
                 size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint"
                 aria-hidden
               />
               <input
-                className="input pl-10"
+                className="input"
                 placeholder="Filter sets…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
@@ -282,8 +313,10 @@ export function MixView() {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-heading">{s.title}</span>
                       <span className="font-num block text-[11px] text-ink-dim">
-                        {s.artist || "unknown"} · {fmtClock(s.duration_seconds)} ·{" "}
-                        {s.passage_count} passages
+                        {s.artist || "unknown"} · {s.passage_count} passages
+                        {s.bpm_min != null && s.bpm_max != null
+                          ? ` · ${fmtBpm(s.bpm_min)}–${fmtBpm(s.bpm_max)} BPM`
+                          : ""}
                       </span>
                     </span>
                   </button>
@@ -299,9 +332,20 @@ export function MixView() {
           ) : (
             <>
               <div className="panel flex flex-wrap items-center gap-3 p-3">
+                <button
+                  type="button"
+                  className="btn btn-ghost !min-h-0 px-2 py-1.5 font-mono text-[9px]"
+                  onClick={() => {
+                    setSelectedId(null);
+                    setDetail(null);
+                  }}
+                >
+                  ← BACK
+                </button>
                 <div className="min-w-0 flex-1">
                   <h2 className="truncate text-lg font-semibold text-heading">{selected.title}</h2>
                   <p className="font-num text-[11px] text-ink-dim">
+                    {selected.artist || "unknown artist"} · {selected.passage_count} passages ·{" "}
                     {fmtClock(selected.duration_seconds)}
                     {selected.bpm_min != null && selected.bpm_max != null
                       ? ` · ${fmtBpm(selected.bpm_min)}–${fmtBpm(selected.bpm_max)} BPM`
@@ -400,7 +444,7 @@ export function MixView() {
                         <div key={i} className="flex flex-col gap-2 px-3 py-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-num text-xs text-ink-faint">
-                              {fmtClock(p.start_seconds)}–{fmtClock(p.end_seconds)}
+                              {fmtClock(p.start_seconds)} – {fmtClock(p.end_seconds)}
                             </span>
                             {p.bpm != null ? (
                               <span className="font-num text-xs text-heading">
@@ -409,23 +453,47 @@ export function MixView() {
                             ) : null}
                             <KeyPill k={p.key} />
                             {p.exact_id_title ? (
-                              <span className="pill font-mono text-[10px] uppercase text-accent">
-                                ID · {p.exact_id_artist} — {p.exact_id_title}
+                              <span className="min-w-0 break-words text-sm text-heading">
+                                {p.exact_id_artist ? `${p.exact_id_artist} — ` : ""}
+                                {p.exact_id_title}
+                              </span>
+                            ) : (
+                              <span className="text-sm italic text-ink-faint">unidentified</span>
+                            )}
+                            {p.exact_id_source ? (
+                              <span className="pill font-mono text-[9px] lowercase text-ink-dim">
+                                {p.exact_id_source}
                               </span>
                             ) : null}
                             {p.matches.length > 0 ? (
-                              <span className="font-num text-[10px] text-ink-faint">
-                                {p.matches.length} match(es)
-                              </span>
+                              <button
+                                type="button"
+                                className="font-mono text-[10px] text-ink-faint hover:text-accent"
+                                aria-expanded={openMatches.has(i)}
+                                onClick={() =>
+                                  setOpenMatches((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(i)) next.delete(i);
+                                    else next.add(i);
+                                    return next;
+                                  })
+                                }
+                              >
+                                {openMatches.has(i) ? "▾" : "▸"} {p.matches.length} closest
+                                matches
+                              </button>
                             ) : null}
                           </div>
-                          {p.matches.slice(0, 3).map((m) => (
-                            <TrackRow
-                              key={m.track.id}
-                              track={m.track}
-                              showMatch={Math.round(m.similarity * 100)}
-                            />
-                          ))}
+                          {openMatches.has(i)
+                            ? p.matches.map((m) => (
+                                <TrackRow
+                                  key={m.track.id}
+                                  track={m.track}
+                                  queue={p.matches.map((x) => x.track)}
+                                  showMatch={Math.round(m.similarity * 100)}
+                                />
+                              ))
+                            : null}
                         </div>
                       ))}
                     </div>

@@ -1,4 +1,5 @@
 import {
+  ExternalLink,
   Heart,
   ListMusic,
   Volume2,
@@ -11,7 +12,9 @@ import {
   Repeat1,
 } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { useCrateStore } from "../stores/crateStore";
+import { useDigTrailStore } from "../stores/digTrailStore";
 import { useLikesStore } from "../stores/likesStore";
 import { usePlayerStore } from "../stores/playerStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -43,6 +46,7 @@ export function PlayerDock() {
   const toggleCrate = useCrateStore((s) => s.toggle);
   const heardIds = useLikesStore((s) => s.heardIds);
   const toggleHeard = useLikesStore((s) => s.toggleHeard);
+  const pushSeed = useDigTrailStore((s) => s.push);
   const seekStepSec = useSettingsStore((s) => s.seekStepSec);
   const heard = current ? heardIds.has(current.id) : false;
 
@@ -53,13 +57,19 @@ export function PlayerDock() {
     if (!el) return;
     attach(el);
     const onTime = () => _onTimeUpdate(el.currentTime, el.duration || 0);
+    const onPlay = () => usePlayerStore.setState({ playing: true });
+    const onPause = () => usePlayerStore.setState({ playing: false });
     el.addEventListener("timeupdate", onTime);
     el.addEventListener("durationchange", onTime);
     el.addEventListener("ended", _onEnded);
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
     return () => {
       el.removeEventListener("timeupdate", onTime);
       el.removeEventListener("durationchange", onTime);
       el.removeEventListener("ended", _onEnded);
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
     };
   }, [attach, _onTimeUpdate, _onEnded]);
 
@@ -141,6 +151,25 @@ export function PlayerDock() {
                   <Heart size={15} fill={heard ? "currentColor" : "none"} />
                 </button>
                 <DownloadButton track={current} />
+                {current.store_url ? (
+                  <a
+                    href={current.store_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hidden h-9 items-center gap-1 rounded-full border border-line px-2.5 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-line-strong hover:text-heading md:flex"
+                    title="Open this track on iTunes"
+                  >
+                    STORE <ExternalLink size={11} />
+                  </a>
+                ) : null}
+                <Link
+                  to={`/dig?mode=match&seed=${encodeURIComponent(current.id)}`}
+                  onClick={() => pushSeed(current)}
+                  className="hidden h-9 items-center gap-1 rounded-full border border-line px-2.5 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-accent/60 hover:text-accent md:flex"
+                  title="Dig tracks similar to this one"
+                >
+                  DIG &gt;
+                </Link>
               </div>
             </>
           ) : (
@@ -150,7 +179,7 @@ export function PlayerDock() {
               </span>
               <span className="text-[12px] text-ink-faint">
                 No track loaded
-                <span className="mt-0.5 block text-[11px] text-ink-faint/80">
+                <span className="mt-0.5 block text-[11px] text-ink-dim">
                   Pick a row to load the deck
                 </span>
               </span>
@@ -302,7 +331,7 @@ export function PlayerDock() {
             type="button"
             className="btn !min-h-0 h-9 gap-1.5 px-2.5 text-[9px]"
             onClick={toggleCrate}
-            aria-label={`Open Set Crate (${crate.length} tracks)`}
+            aria-label={`Open Set Crate (${crate.length} ${crate.length === 1 ? "track" : "tracks"})`}
           >
             <ListMusic size={14} />
             Crate

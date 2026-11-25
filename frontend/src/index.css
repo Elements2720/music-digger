@@ -14,7 +14,7 @@
   --color-heading: #ffffff;
   --color-accent: #fa233b;
   --color-accent-dim: #d2162c;
-  --color-accent-ink: #ffffff;
+  --color-accent-ink: #1a0509;
   --color-warn: #f0b23c;
   --color-danger: #ff5c6e;
   --color-info: #7aa7ff;
@@ -36,7 +36,7 @@
 html[data-accent="violet"] {
   --color-accent: #8b5cf6;
   --color-accent-dim: #7440e6;
-  --color-accent-ink: #ffffff;
+  --color-accent-ink: #0e0618;
 }
 html[data-accent="amber"] {
   --color-accent: #f5b942;
@@ -124,8 +124,11 @@ h2 {
   color: var(--color-accent-ink);
 }
 
-/* ---- shared console primitives ------------------------------------- */
-
+/* ---- shared console primitives -------------------------------------
+   Wrapped in @layer components so Tailwind utilities (pl-9, lg:hidden,
+   !min-h-0, …) always win over these classes. Unlayered CSS would beat
+   the utilities layer and break icon padding and responsive hiding. */
+@layer components {
 .font-num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -441,6 +444,7 @@ select:focus-visible,
   transform: translateY(-2px);
   box-shadow: var(--shadow-lift);
 }
+}
 
 /* ---- instruments ---------------------------------------------------- */
 
@@ -473,26 +477,82 @@ select:focus-visible,
   color: var(--color-heading);
 }
 
-.shortcut-key {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 30px;
-  min-height: 26px;
-  padding: 0 7px;
-  border: 1px solid var(--color-line-strong);
-  border-bottom-width: 2px;
-  border-radius: 3px;
-  background: var(--color-panel-2);
-  color: var(--color-heading);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-
 @media (min-width: 1024px) {
   .scroll-arrows {
     display: flex;
+  }
+}
+
+/* ---- audit fixes ------------------------------------------------------ */
+
+/* search inputs with a leading icon: keep text clear of the magnifier */
+.input-icon-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1;
+}
+.input-icon-wrap > svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--color-ink-faint);
+}
+.input-icon-wrap .input {
+  padding-left: 34px;
+}
+
+/* stacked filter fields (BPM MIN/MAX, SOURCE, …): aligned labels above inputs */
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* selects: consistent height, single-line options, custom arrow */
+select.input {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a0a0a8' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+select.input option {
+  background: var(--color-panel);
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+/* Library sub-tabs: one line, 44px targets, horizontal scroll instead of wrap/overflow */
+.lib-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.lib-tabs::-webkit-scrollbar {
+  display: none;
+}
+.lib-tabs [data-libmode] {
+  min-height: 44px;
+  padding: 0 14px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+/* TrackRow action row: 44px touch targets on touch screens */
+@media (hover: none) and (pointer: coarse) {
+  .track-actions > * {
+    min-height: 44px;
+    min-width: 44px;
+    justify-content: center;
+  }
+  .track-actions {
+    gap: 2px;
   }
 }

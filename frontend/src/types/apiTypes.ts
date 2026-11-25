@@ -274,6 +274,7 @@ export interface BulkDeleteArtistsResponse {
 export interface BulkCleanupPreviewResponse {
   artist_count: number;
   track_count: number;
+  skipped_count: number;
   sample_artists: ArtistSummary[];
 }
 

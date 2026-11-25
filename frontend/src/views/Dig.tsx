@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Disc3, Search, Sparkles } from "lucide-react";
+import { Disc3, Search, Sparkles, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type {
   DigResponse,
@@ -79,6 +79,13 @@ export function DigView() {
     const s = useSettingsStore.getState();
     return s.defaultBpmTolerance;
   });
+  const [limit, setLimit] = useState<number>(profile?.defaultLimit ?? 20);
+  const [digGenre, setDigGenre] = useState(profile?.genre ?? "");
+  const [digMinYear, setDigMinYear] = useState("");
+  const [excludeHeard, setExcludeHeard] = useState(
+    () => useSettingsStore.getState().hideHeard,
+  );
+  const [digNonce, setDigNonce] = useState(0);
   // the last dig actually requested, so a re-render never re-queries the same seed
   const fetchedKey = useRef<string | null>(null);
   // seed preloaded from a deep link (?mode=match&seed=<id>) — runs once per seed
@@ -96,9 +103,12 @@ export function DigView() {
   const [filterBpmMax, setFilterBpmMax] = useState("");
   const [filterSource, setFilterSource] = useState("");
   const [filterResult, setFilterResult] = useState<Track[] | null>(null);
+  const [vibeRangeError, setVibeRangeError] = useState<string | null>(null);
   const camelotRequested = useRef<string | null>(null);
 
   const setMode = (m: SubMode) => {
+    // a pending match/foryou request must not bleed its busy state into the new mode
+    setBusy(false);
     const next = new URLSearchParams(params);
     next.set("mode", m);
     setParams(next, { replace: true });
@@ -109,24 +119,33 @@ export function DigView() {
     let alive = true;
     setBusy(true);
     setError(null);
+    const controller = new AbortController();
     api
-      .tasteRanking({
-        mode: tasteMode,
-        limit: profile?.defaultLimit ?? 30,
-        genre: profile?.genre ?? undefined,
-        liked_weight: profile?.likedWeight,
-        local_weight: profile?.localWeight,
-        max_per_artist: maxPerArtist,
-        hide_heard: hideHeard,
-        exclude_local: excludeLocal,
-      })
+      .tasteRanking(
+        {
+          mode: tasteMode,
+          limit: profile?.defaultLimit ?? 30,
+          genre: profile?.genre ?? undefined,
+          liked_weight: profile?.likedWeight,
+          local_weight: profile?.localWeight,
+          max_per_artist: maxPerArtist,
+          hide_heard: hideHeard,
+          exclude_local: excludeLocal,
+        },
+        { signal: controller.signal },
+      )
       .then((res) => alive && setTaste(res))
       .catch((err: unknown) => {
-        if (alive && err instanceof Error) setError(err.message);
+        // aborts are expected when the effect re-runs — do not surface them
+        if (alive && err instanceof Error && err.name !== "AbortError")
+          setError(err.message);
       })
-      .finally(() => setBusy(false));
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
     return () => {
       alive = false;
+      controller.abort();
     };
   }, [mode, tasteMode, profile, maxPerArtist, hideHeard, excludeLocal]);
 
@@ -140,7 +159,7 @@ export function DigView() {
   const seedId = activeSeed?.id ?? null;
   useEffect(() => {
     if (mode !== "match" || !seedId) return;
-    const key = `${seedId}|${bpmTolerance}|${harmonic}`;
+    const key = `${seedId}|${bpmTolerance}|${harmonic}|${limit}|${digGenre}|${digMinYear}|${excludeHeard}|${harmonicMode}|${maxPerArtist}|${digNonce}`;
     if (fetchedKey.current === key) return;
     let alive = true;
     setBusy(true);
@@ -149,11 +168,14 @@ export function DigView() {
       fetchedKey.current = key;
       api
         .dig(seedId, {
-          limit: 20,
+          limit,
           bpm_tolerance: bpmTolerance,
           harmonic,
           harmonic_mode: harmonicMode,
           max_per_artist: maxPerArtist,
+          genre: digGenre.trim() || undefined,
+          min_year: digMinYear ? Number(digMinYear) : undefined,
+          exclude_heard: excludeHeard || undefined,
         })
         .then((res) => {
           if (alive) setDigResult(res);
@@ -169,7 +191,34 @@ export function DigView() {
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [mode, seedId, bpmTolerance, harmonic, harmonicMode, maxPerArtist]);
+  }, [
+    mode,
+    seedId,
+    bpmTolerance,
+    harmonic,
+    harmonicMode,
+    maxPerArtist,
+    limit,
+    digGenre,
+    digMinYear,
+    excludeHeard,
+    digNonce,
+  ]);
+
+  const deleteTrackFromCatalog = async (track: Track) => {
+    if (!window.confirm(`Delete “${track.title}” from the catalog?`)) return;
+    try {
+      await api.deleteTrack(track.id);
+      setDigResult((prev) =>
+        prev ? { ...prev, matches: prev.matches.filter((m) => m.track.id !== track.id) } : prev,
+      );
+      setTaste((prev) =>
+        prev ? { ...prev, matches: prev.matches.filter((m) => m.id !== track.id) } : prev,
+      );
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+    }
+  };
 
   // Deep link: /dig?mode=match&seed=<track id> — load the seed and dig it once.
   const seedParam = params.get("seed");
@@ -205,6 +254,15 @@ export function DigView() {
   }, [mode, seedParam]);
 
   const runVibe = async () => {
+    const min = filterBpmMin ? Number(filterBpmMin) : null;
+    const max = filterBpmMax ? Number(filterBpmMax) : null;
+    if (min != null && max != null && min > max) {
+      setVibeRangeError("BPM MIN is above BPM MAX — swap the values");
+      setFilterResult(null);
+      setVibeResult(null);
+      return;
+    }
+    setVibeRangeError(null);
     setBusy(true);
     setError(null);
     try {
@@ -215,8 +273,8 @@ export function DigView() {
       } else {
         const res = await api.filterCatalog({
           key: filterKey || undefined,
-          bpm_min: filterBpmMin ? Number(filterBpmMin) : undefined,
-          bpm_max: filterBpmMax ? Number(filterBpmMax) : undefined,
+          bpm_min: min ?? undefined,
+          bpm_max: max ?? undefined,
           source: filterSource || undefined,
           limit: 60,
         });
@@ -302,7 +360,7 @@ export function DigView() {
       {mode === "match" ? (
         <section
           data-testid="dig-match"
-          className="grid items-start gap-4 lg:grid-cols-[260px_minmax(0,1fr)]"
+          className="grid min-w-0 grid-cols-1 items-start gap-4 lg:grid-cols-[260px_minmax(0,1fr)]"
         >
           <DigSeedPanel
             activeId={activeId}
@@ -335,38 +393,92 @@ export function DigView() {
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="eyebrow">SIMILAR MATCHES</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2 border border-line bg-panel-2 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
-                  BPM ±{bpmTolerance}
-                  <input
-                    type="range"
-                    min={0}
-                    max={10}
-                    value={bpmTolerance}
-                    onChange={(e) => setBpmTolerance(Number(e.target.value))}
-                    className="w-24 accent-accent"
-                    aria-label="BPM tolerance"
-                  />
-                </label>
-                <button
-                  type="button"
-                  aria-pressed={harmonic}
-                  onClick={() => setHarmonic((v) => !v)}
-                  className={`border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.1em] transition-colors ${
-                    harmonic
-                      ? "border-accent/60 bg-accent/10"
-                      : "border-line bg-panel-2 hover:border-line-strong"
-                  }`}
-                  style={{
-                    color: harmonic
-                      ? "var(--color-accent)"
-                      : "var(--color-ink-dim)",
-                  }}
-                >
-                  HARMONIC {harmonic ? "ON" : "OFF"}
-                </button>
-              </div>
+              <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-ink-faint">
+                digging from this track
+              </span>
             </div>
+            <form
+              className="panel flex flex-wrap items-end gap-2 p-2.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setDigNonce((n) => n + 1);
+              }}
+            >
+              <label className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+                LIMIT
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  className="input mt-1 !min-h-0 !w-[76px] py-1.5 font-num text-xs"
+                  value={limit}
+                  onChange={(e) => setLimit(Math.max(1, Number(e.target.value) || 1))}
+                  aria-label="Result limit"
+                />
+              </label>
+              <label className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+                BPM ±
+                <input
+                  type="number"
+                  min={0}
+                  max={30}
+                  className="input mt-1 !min-h-0 !w-[76px] py-1.5 font-num text-xs"
+                  value={bpmTolerance}
+                  onChange={(e) =>
+                    setBpmTolerance(Math.max(0, Number(e.target.value) || 0))
+                  }
+                  aria-label="BPM tolerance"
+                />
+              </label>
+              <label className="min-w-[110px] flex-1 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+                GENRE
+                <input
+                  className="input mt-1 !min-h-0 py-1.5 text-xs"
+                  placeholder="exact genre"
+                  value={digGenre}
+                  onChange={(e) => setDigGenre(e.target.value)}
+                  aria-label="Genre filter"
+                />
+              </label>
+              <label className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+                MIN YEAR
+                <input
+                  type="number"
+                  min={1900}
+                  max={2100}
+                  className="input mt-1 !min-h-0 !w-[96px] py-1.5 font-num text-xs"
+                  placeholder="any"
+                  value={digMinYear}
+                  onChange={(e) => setDigMinYear(e.target.value)}
+                  aria-label="Minimum year"
+                />
+              </label>
+              <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase text-ink-dim">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 accent-accent"
+                  checked={harmonic}
+                  onChange={(e) => setHarmonic(e.target.checked)}
+                />
+                HARMONIC
+              </label>
+              <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase text-ink-dim">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 accent-accent"
+                  checked={excludeHeard}
+                  onChange={(e) => setExcludeHeard(e.target.checked)}
+                />
+                HIDE HEARD
+              </label>
+              <button
+                type="submit"
+                className="btn btn-primary !min-h-0 py-2 font-mono text-[10px]"
+                disabled={!activeSeed}
+              >
+                DIG &gt;
+              </button>
+            </form>
 
             {busy ? <Loading label="DIGGING…" /> : null}
             {digResult ? (
@@ -383,6 +495,17 @@ export function DigView() {
                       track={m.track}
                       queue={digResult.matches.map((x) => x.track)}
                       showMatch={normalizePct(m.similarity)}
+                      trailing={
+                        <button
+                          type="button"
+                          className="btn btn-ghost !min-h-0 !border-0 p-1.5 text-danger hover:!bg-fill"
+                          onClick={() => void deleteTrackFromCatalog(m.track)}
+                          aria-label={`Delete ${m.track.title} from the catalog`}
+                          title="Delete this track from the catalog"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      }
                     />
                   ))}
                 </div>
@@ -456,6 +579,17 @@ export function DigView() {
                     index={i}
                     queue={taste.matches}
                     showMatch={normalizePct(m.taste_percent)}
+                    trailing={
+                      <button
+                        type="button"
+                        className="btn btn-ghost !min-h-0 !border-0 p-1.5 text-danger hover:!bg-fill"
+                        onClick={() => void deleteTrackFromCatalog(m)}
+                        aria-label={`Delete ${m.title} from the catalog`}
+                        title="Delete this track from the catalog"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    }
                   />
                 ))}
               </div>
@@ -470,6 +604,7 @@ export function DigView() {
             className="panel flex flex-col gap-3 p-4"
             onSubmit={(e) => {
               e.preventDefault();
+              if (vibeRangeError) return;
               void runVibe();
             }}
           >
@@ -514,6 +649,7 @@ export function DigView() {
                   max={200}
                   value={filterBpmMin}
                   onChange={(e) => setFilterBpmMin(e.target.value)}
+                  aria-invalid={Boolean(vibeRangeError)}
                   aria-label="BPM minimum"
                 />
               </label>
@@ -527,6 +663,7 @@ export function DigView() {
                   max={200}
                   value={filterBpmMax}
                   onChange={(e) => setFilterBpmMax(e.target.value)}
+                  aria-invalid={Boolean(vibeRangeError)}
                   aria-label="BPM maximum"
                 />
               </label>
@@ -550,18 +687,28 @@ export function DigView() {
                 type="button"
                 className="btn !min-h-0 py-2 font-mono text-[10px]"
                 onClick={() => {
+                  setVibeQuery("");
                   setFilterKey("");
                   setFilterBpmMin("");
                   setFilterBpmMax("");
                   setFilterSource("");
                   setFilterResult(null);
+                  setVibeResult(null);
+                  setVibeRangeError(null);
+                  setError(null);
                 }}
               >
                 RESET
               </button>
-              <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint">
-                Leave the vibe query empty to filter the catalog directly.
-              </p>
+              {vibeRangeError ? (
+                <p role="alert" className="font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "var(--color-danger)" }}>
+                  {vibeRangeError}
+                </p>
+              ) : (
+                <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint">
+                  Leave the vibe query empty to filter the catalog directly.
+                </p>
+              )}
             </fieldset>
           </form>
           {filterResult ? (

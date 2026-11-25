@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowDown, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import type { DashboardResponse, Track } from "../types/apiTypes";
 import {
@@ -13,48 +13,6 @@ import {
 } from "../components/ui";
 import { fmtCount } from "../lib/format";
 import { useJobsStore } from "../stores/jobsStore";
-
-// ------------------------------------------------------------- keyboard
-
-const SHORTCUTS = [
-  { keys: ["Space"], action: "Play / pause the deck" },
-  { keys: ["M"], action: "Mute or unmute" },
-  { keys: ["C"], action: "Open the Set Crate" },
-  { keys: ["Shift", "←"], action: "Jump to the dashboard" },
-  { keys: ["Shift", "→"], action: "Jump to the pipeline" },
-];
-
-function ShortcutLegend() {
-  return (
-    <div className="panel overflow-hidden">
-      <div className="panel-head">
-        <span className="eyebrow">Keyboard legend</span>
-        <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">
-          {String(SHORTCUTS.length).padStart(2, "0")} bindings
-        </span>
-      </div>
-      <dl>
-        {SHORTCUTS.map((s) => (
-          <div
-            key={s.action}
-            className="flex items-center justify-between gap-3 border-b border-line px-3 py-2 last:border-b-0"
-          >
-            <dt className="flex items-center gap-1">
-              {s.keys.map((k) => (
-                <kbd key={k} className="shortcut-key">
-                  {k}
-                </kbd>
-              ))}
-            </dt>
-            <dd className="text-right text-[11px] leading-tight text-ink-dim">
-              {s.action}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
 
 // --------------------------------------------------------------- camelot
 
@@ -440,35 +398,137 @@ function TopPicks() {
   );
 }
 
+// ------------------------------------------------------------ top genres
+
+function TopGenres({ genres }: { genres: { genre: string; track_count: number }[] }) {
+  const rows = genres.slice(0, 8);
+  const max = rows.length ? Math.max(...rows.map((g) => g.track_count)) : 0;
+  return (
+    <section className="panel overflow-hidden" aria-label="Top genres">
+      <PanelHead
+        title="TOP GENRES"
+        right={
+          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">
+            {genres.length ? `${genres.length} genres` : "no data"}
+          </span>
+        }
+      />
+      {rows.length === 0 ? (
+        <EmptyState
+          title="No genre data yet"
+          hint="Index tracks to chart the genres in your crate."
+        />
+      ) : (
+        <div className="flex flex-col gap-2 px-3 py-3.5">
+          {rows.map((g) => {
+            const pct = max ? Math.max(3, Math.round((g.track_count / max) * 100)) : 0;
+            return (
+              <div key={g.genre} className="flex items-center gap-2.5">
+                <span className="w-[86px] shrink-0 truncate text-[11px] leading-tight text-ink-dim sm:w-[104px]">
+                  {g.genre}
+                </span>
+                <span className="h-[7px] min-w-0 flex-1 overflow-hidden rounded-[2px] bg-white/[0.05]">
+                  <span
+                    className="block h-full rounded-[2px]"
+                    style={{
+                      width: `${pct}%`,
+                      background:
+                        "linear-gradient(90deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 45%, transparent))",
+                    }}
+                  />
+                </span>
+                <span className="font-num w-[44px] shrink-0 text-right text-[10px] leading-none text-ink-faint">
+                  {fmtCount(g.track_count)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ----------------------------------------------------------- dashboard
 
-const KPIS = [
-  ["CATALOG", (d: DashboardResponse) => d.analytics?.total_tracks ?? d.stats.tracks.total],
-  ["EMBEDDED", (d: DashboardResponse) => d.analytics?.total_embedded ?? d.stats.tracks.embedded],
-  ["ARTISTS", (d: DashboardResponse) => d.analytics?.total_artists ?? 0],
-  ["LOCAL FILES", (d: DashboardResponse) => d.analytics?.total_local ?? 0],
-  ["SEEDS", (d: DashboardResponse) => d.stats.seeds.total],
-  ["DJ SETS", (d: DashboardResponse) => d.stats.sets.total],
-] as const;
+type Kpi = {
+  label: string;
+  value: (d: DashboardResponse) => number;
+  sub?: (d: DashboardResponse) => string;
+};
+
+function pct(part: number, whole: number): string {
+  return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "0%";
+}
+
+const KPIS: Kpi[] = [
+  {
+    label: "TOTAL TRACKS",
+    value: (d) => d.analytics?.total_tracks ?? d.stats.tracks.total,
+    sub: (d) =>
+      `${pct(d.analytics?.total_embedded ?? 0, d.analytics?.total_tracks || 1)} embedded`,
+  },
+  {
+    label: "EMBEDDED",
+    value: (d) => d.analytics?.total_embedded ?? d.stats.tracks.embedded,
+    sub: (d) =>
+      `${pct(d.analytics?.total_embedded ?? 0, d.analytics?.total_tracks || 1)} ready`,
+  },
+  {
+    label: "TOTAL ARTISTS",
+    value: (d) => d.analytics?.total_artists ?? 0,
+  },
+  {
+    label: "LOCAL FILES",
+    value: (d) => d.analytics?.total_local ?? 0,
+  },
+  {
+    label: "ITUNES TRACKS",
+    value: (d) => d.analytics?.total_itunes ?? 0,
+  },
+  {
+    label: "DJ SETS",
+    value: (d) => d.stats.sets.total,
+    sub: () => "analyzed",
+  },
+  {
+    label: "SEED ARTISTS",
+    value: (d) => d.stats.seeds.total,
+    sub: (d) => `${fmtCount(d.stats.seeds.pending)} pending`,
+  },
+  {
+    label: "TASTE PROFILE",
+    value: (d) => d.analytics?.local_taste_count ?? 0,
+    sub: (d) => `${fmtCount(d.analytics?.local_taste_count ?? 0)} local tracks active`,
+  },
+];
 
 export function DashboardView() {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const job = useJobsStore((s) => s.job);
   const active = useJobsStore((s) => s.active);
 
   useEffect(() => {
     let alive = true;
+    setRefreshing(true);
     api
       .dashboard()
-      .then((res) => alive && setData(res))
+      .then((res) => {
+        if (!alive) return;
+        setData(res);
+        setError(null);
+      })
       .catch((err: unknown) =>
         alive && err instanceof Error ? setError(err.message) : undefined,
-      );
+      )
+      .finally(() => alive && setRefreshing(false));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   if (error) return <ErrorState message={error} />;
   if (!data) return <Loading label="LOADING DASHBOARD…" />;
@@ -487,7 +547,7 @@ export function DashboardView() {
               "linear-gradient(90deg, var(--color-accent), transparent 55%)",
           }}
         />
-        <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,1fr)] lg:items-center lg:gap-8">
+        <div className="grid gap-5 p-5 sm:p-6 lg:gap-8">
           <div>
             <p className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.2em] text-ink-faint">
               <span
@@ -504,7 +564,7 @@ export function DashboardView() {
               </span>
             </h1>
             <p className="mt-3 max-w-xl text-[13px] leading-relaxed text-ink-dim">
-              Six workspaces on a single dark grid: dig with three search modes,
+              Six workspaces on a single dark grid, plus Settings: dig with three search modes,
               plot harmony on the Camelot wheel, audit mixes, and keep the deck
               one keystroke away.
             </p>
@@ -521,7 +581,6 @@ export function DashboardView() {
               </span>
             </div>
           </div>
-          <ShortcutLegend />
         </div>
       </section>
 
@@ -550,27 +609,44 @@ export function DashboardView() {
             Open Dig →
           </Link>
         </div>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.95fr)]">
           <CamelotWheel keys={analytics?.top_keys ?? []} />
           <BpmHistogram buckets={analytics?.bpm_buckets ?? []} />
+          <TopGenres genres={analytics?.genres ?? []} />
         </div>
       </div>
 
-      <section
-        className="panel grid grid-cols-2 gap-px overflow-hidden bg-line sm:grid-cols-3 lg:grid-cols-6"
-        aria-label="Catalog readouts"
-      >
-        {KPIS.map(([label, read]) => (
-          <div key={label} className="bg-panel px-3.5 py-3">
-            <p className="eyebrow !text-[9px]">{label}</p>
-            <p
-              className="font-num mt-1.5 text-[22px] leading-none text-heading"
-              data-kpi={label}
-            >
-              {fmtCount(read(data))}
-            </p>
-          </div>
-        ))}
+      <section className="panel overflow-hidden" aria-label="Library overview">
+        <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+          <p className="eyebrow">Library overview</p>
+          <button
+            type="button"
+            className="btn btn-ghost !min-h-0 px-2.5 py-1.5 font-mono text-[10px]"
+            onClick={() => setReloadKey((k) => k + 1)}
+            disabled={refreshing}
+          >
+            <RefreshCw size={12} className={refreshing ? "animate-spin" : undefined} />
+            {refreshing ? "REFRESHING" : "REFRESH"}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-px border-t border-line bg-line sm:grid-cols-4 lg:grid-cols-8">
+          {KPIS.map((kpi) => (
+            <div key={kpi.label} className="bg-panel px-3 py-3">
+              <p className="eyebrow !text-[8.5px]">{kpi.label}</p>
+              <p
+                className="font-num mt-1.5 text-[21px] leading-none text-heading"
+                data-kpi={kpi.label}
+              >
+                {fmtCount(kpi.value(data))}
+              </p>
+              {kpi.sub ? (
+                <p className="mt-1.5 truncate text-[10px] leading-tight text-ink-faint">
+                  {kpi.sub(data)}
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </div>
       </section>
 
       <TopPicks />

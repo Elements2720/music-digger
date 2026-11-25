@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type { Track } from "../types/apiTypes";
 
 /** The Set Crate: the working, ordered track list shared by every workspace. */
@@ -15,28 +16,37 @@ interface CrateState {
   has: (id: string) => boolean;
 }
 
-export const useCrateStore = create<CrateState>()((set, get) => ({
-  tracks: [],
-  open: false,
-  toggle: () => set((s) => ({ open: !s.open })),
-  setOpen: (open) => set({ open }),
-  add: (track) =>
-    set((s) =>
-      s.tracks.some((t) => t.id === track.id)
-        ? s
-        : { tracks: [...s.tracks, track] },
-    ),
-  remove: (id) => set((s) => ({ tracks: s.tracks.filter((t) => t.id !== id) })),
-  move: (id, toIndex) =>
-    set((s) => {
-      const from = s.tracks.findIndex((t) => t.id === id);
-      if (from === -1 || toIndex < 0 || toIndex >= s.tracks.length) return s;
-      const tracks = [...s.tracks];
-      const [item] = tracks.splice(from, 1);
-      tracks.splice(toIndex, 0, item);
-      return { tracks };
+export const useCrateStore = create<CrateState>()(
+  persist(
+    (set, get) => ({
+      tracks: [],
+      open: false,
+      toggle: () => set((s) => ({ open: !s.open })),
+      setOpen: (open) => set({ open }),
+      add: (track) =>
+        set((s) =>
+          s.tracks.some((t) => t.id === track.id)
+            ? s
+            : { tracks: [...s.tracks, track] },
+        ),
+      remove: (id) => set((s) => ({ tracks: s.tracks.filter((t) => t.id !== id) })),
+      move: (id, toIndex) =>
+        set((s) => {
+          const from = s.tracks.findIndex((t) => t.id === id);
+          if (from === -1 || toIndex < 0 || toIndex >= s.tracks.length) return s;
+          const tracks = [...s.tracks];
+          const [item] = tracks.splice(from, 1);
+          tracks.splice(toIndex, 0, item);
+          return { tracks };
+        }),
+      clear: () => set({ tracks: [] }),
+      replaceAll: (tracks) => set({ tracks }),
+      has: (id) => get().tracks.some((t) => t.id === id),
     }),
-  clear: () => set({ tracks: [] }),
-  replaceAll: (tracks) => set({ tracks }),
-  has: (id) => get().tracks.some((t) => t.id === id),
-}));
+    {
+      name: "set-crate",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ tracks: state.tracks }),
+    },
+  ),
+);

@@ -2,7 +2,12 @@ import { Activity, ListMusic, Pause, Play, Settings2 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
-import { Artwork } from "./ui";
+import { useLikesStore } from "../stores/likesStore";
+import { fmtBpm, fmtClock } from "../lib/format";
+import { Artwork, DownloadButton, KeyPill } from "./ui";
+import { Link } from "react-router-dom";
+import { Heart, Volume2, VolumeX, Repeat, Repeat1, SkipBack, SkipForward, ChevronDown } from "lucide-react";
+import { useState } from "react";
 import { NAV_ITEMS } from "./Shell";
 
 const SHORT_LABEL: Record<string, string> = {
@@ -26,6 +31,7 @@ export function MobileChrome() {
   const duration = usePlayerStore((s) => s.duration);
   const crateCount = useCrateStore((s) => s.tracks.length);
   const toggleCrate = useCrateStore((s) => s.toggle);
+  const [deckOpen, setDeckOpen] = useState(false);
 
   const pct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
 
@@ -65,7 +71,7 @@ export function MobileChrome() {
             type="button"
             onClick={toggleCrate}
             className="relative flex h-11 w-11 items-center justify-center rounded-pill border border-white/12 bg-white/[0.04] text-ink-dim transition-colors active:bg-white/10"
-            aria-label={`Open Set Crate (${crateCount} tracks)`}
+            aria-label={`Open Set Crate (${crateCount} ${crateCount === 1 ? "track" : "tracks"})`}
           >
             <ListMusic size={16} />
             {crateCount > 0 ? (
@@ -124,11 +130,11 @@ export function MobileChrome() {
               />
               <button
                 type="button"
-                onClick={toggle}
+                onClick={() => setDeckOpen(true)}
                 className="min-w-0 flex-1 text-left"
-                aria-label={
-                  playing ? `Pause ${current.title}` : `Play ${current.title}`
-                }
+                aria-label={`Expand deck — now playing ${current.title} by ${current.artist}`}
+                aria-expanded={deckOpen}
+                aria-controls="mobile-deck-sheet"
               >
                 <p className="truncate text-[13px] leading-tight text-heading">
                   {current.title}
@@ -141,7 +147,7 @@ export function MobileChrome() {
                 type="button"
                 onClick={toggle}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-black transition-transform active:scale-95 disabled:opacity-40"
-                aria-label={playing ? "Pause" : "Play"}
+                aria-label={playing ? `Pause ${current.title}` : `Play ${current.title}`}
               >
                 {playing ? (
                   <Pause size={16} fill="currentColor" />
@@ -191,6 +197,201 @@ export function MobileChrome() {
             );
           })}
         </nav>
+      </div>
+
+      {current ? (
+        <MobileDeckSheet open={deckOpen} onClose={() => setDeckOpen(false)} />
+      ) : null}
+    </div>
+  );
+}
+
+/** Full-screen expanded deck for touch screens — every dock control, reachable. */
+function MobileDeckSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const current = usePlayerStore((s) => s.current);
+  const playing = usePlayerStore((s) => s.playing);
+  const toggle = usePlayerStore((s) => s.toggle);
+  const next = usePlayerStore((s) => s.next);
+  const previous = usePlayerStore((s) => s.previous);
+  const currentTime = usePlayerStore((s) => s.currentTime);
+  const duration = usePlayerStore((s) => s.duration);
+  const muted = usePlayerStore((s) => s.muted);
+  const volume = usePlayerStore((s) => s.volume);
+  const setVolume = usePlayerStore((s) => s.setVolume);
+  const toggleMute = usePlayerStore((s) => s.toggleMute);
+  const cycleRepeat = usePlayerStore((s) => s.cycleRepeat);
+  const repeat = usePlayerStore((s) => s.repeat);
+  const heardIds = useLikesStore((s) => s.heardIds);
+  const toggleHeard = useLikesStore((s) => s.toggleHeard);
+  const [scrubRatio, setScrubRatio] = useState<number | null>(null);
+
+  if (!open || !current) return null;
+
+  const heard = heardIds.has(current.id);
+
+  const scrub = (ratio: number) => {
+    setScrubRatio(ratio);
+    usePlayerStore.getState().seek(ratio * duration);
+  };
+
+  return (
+    <div
+      id="mobile-deck-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Now playing — ${current.title}`}
+      className="fixed inset-0 z-[70] flex flex-col lg:hidden"
+      style={{ background: "rgba(0,0,0,0.92)", backdropFilter: "blur(28px)" }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+      }}
+      tabIndex={-1}
+    >
+      <div className="flex items-center justify-between px-4 pt-4">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-11 w-11 items-center justify-center rounded-pill border border-white/12 text-ink-dim active:bg-white/10"
+          aria-label="Close deck"
+        >
+          <ChevronDown size={20} />
+        </button>
+        <p className="eyebrow !text-[9px]">NOW PLAYING</p>
+        <span className="w-11" aria-hidden />
+      </div>
+
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6">
+        <Artwork
+          track={current}
+          size={192}
+          className="!rounded-[20px] ring-1 ring-white/12"
+        />
+        <div className="min-w-0 text-center">
+          <h2 className="truncate text-lg font-semibold text-heading">{current.title}</h2>
+          <p className="truncate text-sm text-ink-dim">{current.artist}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="readout text-[15px]">{current.bpm != null ? fmtBpm(current.bpm) : "--"}</span>
+          <span className="eyebrow !text-[8px]">BPM</span>
+          {current.key ? <KeyPill k={current.key} /> : null}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 px-6 pb-[max(18px,env(safe-area-inset-bottom))]">
+        <div className="flex items-center gap-2.5">
+          <span className="font-num w-9 shrink-0 text-right text-[10px] text-ink-dim">
+            {fmtClock(currentTime)}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={1000}
+            value={Math.round((scrubRatio ?? (duration > 0 ? currentTime / duration : 0)) * 1000)}
+            onChange={(e) => scrub(Number(e.target.value) / 1000)}
+            aria-label="Seek"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(duration || 0)}
+            aria-valuenow={Math.round(currentTime)}
+            className="h-11 min-w-0 flex-1 accent-accent"
+          />
+          <span className="font-num w-9 shrink-0 text-[10px] text-ink-faint">
+            {fmtClock(duration || current.duration_seconds)}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-center gap-5">
+          <button
+            type="button"
+            onClick={previous}
+            className="flex h-12 w-12 items-center justify-center rounded-full text-ink-dim active:bg-white/10"
+            aria-label="Previous track"
+          >
+            <SkipBack size={20} />
+          </button>
+          <button
+            type="button"
+            onClick={toggle}
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-black active:scale-95"
+            aria-label={playing ? `Pause ${current.title}` : `Play ${current.title}`}
+          >
+            {playing ? (
+              <Pause size={24} fill="currentColor" />
+            ) : (
+              <Play size={24} fill="currentColor" className="ml-1" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={next}
+            className="flex h-12 w-12 items-center justify-center rounded-full text-ink-dim active:bg-white/10"
+            aria-label="Next track"
+          >
+            <SkipForward size={20} />
+          </button>
+          <button
+            type="button"
+            onClick={cycleRepeat}
+            className="flex h-12 w-12 items-center justify-center rounded-full active:bg-white/10"
+            aria-label={`Repeat mode: ${repeat}`}
+          >
+            {repeat === "one" ? (
+              <Repeat1 size={18} className="text-accent" />
+            ) : (
+              <Repeat size={18} className={repeat === "off" ? "text-ink-faint" : "text-accent"} />
+            )}
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={toggleMute}
+            className="flex h-11 w-11 items-center justify-center rounded-pill border border-white/12 text-ink-dim active:bg-white/10"
+            aria-label={muted ? "Unmute" : "Mute"}
+          >
+            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={muted ? 0 : volume}
+            onChange={(e) => setVolume(Number(e.target.value))}
+            aria-label="Volume"
+            className="h-11 min-w-0 flex-1 accent-accent"
+          />
+          <button
+            type="button"
+            onClick={() => toggleHeard(current.id, !heard)}
+            className={`flex h-11 w-11 items-center justify-center rounded-pill border border-white/12 active:bg-white/10 ${heard ? "text-accent" : "text-ink-faint"}`}
+            aria-label={heard ? `Unmark ${current.title} heard` : `Mark ${current.title} heard`}
+            aria-pressed={heard}
+          >
+            <Heart size={16} fill={heard ? "currentColor" : "none"} />
+          </button>
+          <DownloadButton track={current} />
+        </div>
+
+        <div className="flex items-center gap-2">
+          {current.store_url ? (
+            <a
+              href={current.store_url}
+              target="_blank"
+              rel="noreferrer"
+              className="btn !min-h-11 flex-1 gap-1.5 text-[10px]"
+            >
+              STORE <span aria-hidden>↗</span>
+            </a>
+          ) : null}
+          <Link
+            to={`/dig?mode=match&seed=${encodeURIComponent(current.id)}`}
+            onClick={onClose}
+            className="btn btn-primary !min-h-11 flex-1 gap-1.5 text-[10px]"
+          >
+            DIG &gt;
+          </Link>
+        </div>
       </div>
     </div>
   );

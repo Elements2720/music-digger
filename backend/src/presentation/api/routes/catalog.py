@@ -541,6 +541,7 @@ async def preview_bulk_cleanup_endpoint(
     return {
         "artist_count": preview.artist_count,
         "track_count": preview.track_count,
+        "skipped_count": preview.skipped_count,
         "sample_artists": [artist_summary_payload(a) for a in preview.sample_artists],
     }
 

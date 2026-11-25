@@ -1,9 +1,9 @@
 import { Download, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
 import { api } from "../api/client";
 import type { PlannedSet } from "../types/apiTypes";
-import { useState } from "react";
 import { Artwork, EmptyState } from "./ui";
 import { fmtBpm } from "../lib/format";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -38,6 +38,20 @@ export function SetCrateDrawer() {
   const play = usePlayerStore((s) => s.play);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, setOpen]);
+
+  useEffect(() => {
+    if (open) drawerRef.current?.focus();
+  }, [open]);
 
   if (!open) return null;
 
@@ -94,10 +108,16 @@ export function SetCrateDrawer() {
         aria-hidden
       />
       <aside
+        ref={drawerRef}
         role="dialog"
+        aria-modal="true"
         aria-label="Set Crate"
+        tabIndex={-1}
         data-testid="crate-drawer"
-        className="fixed inset-y-0 right-0 z-50 flex w-[300px] max-w-[88vw] flex-col border-l border-line bg-panel"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+        }}
+        className="fixed inset-y-0 right-0 z-[60] flex w-[300px] max-w-[88vw] flex-col border-l border-line bg-panel focus:outline-none"
       >
         <div className="panel-head">
           <span className="eyebrow">SET CRATE — {tracks.length}</span>

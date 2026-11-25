@@ -59,6 +59,7 @@ interface RequestOptions {
   body?: unknown;
   params?: Record<string, string | number | boolean | undefined | null>;
   raw?: boolean;
+  signal?: AbortSignal;
 }
 
 function buildQuery(params: RequestOptions["params"]): string {
@@ -72,15 +73,17 @@ function buildQuery(params: RequestOptions["params"]): string {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, params, raw = false } = options;
+  const { method = "GET", body, params, raw = false, signal } = options;
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}${buildQuery(params)}`, {
       method,
       headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
     throw new ApiError("Cannot reach the local backend — is the server running?", 0);
   }
   if (raw) {
@@ -290,18 +293,21 @@ export const api = {
     });
   },
 
-  tasteRanking(params: {
-    mode?: "both" | "local" | "liked";
-    genre?: string;
-    source?: string;
-    limit?: number;
-    liked_weight?: number;
-    local_weight?: number;
-    max_per_artist?: number;
-    hide_heard?: boolean;
-    exclude_local?: boolean;
-  }): Promise<TasteRankingResponse> {
-    return request("/api/catalog/taste-ranking", { params });
+  tasteRanking(
+    params: {
+      mode?: "both" | "local" | "liked";
+      genre?: string;
+      source?: string;
+      limit?: number;
+      liked_weight?: number;
+      local_weight?: number;
+      max_per_artist?: number;
+      hide_heard?: boolean;
+      exclude_local?: boolean;
+    },
+    options?: { signal?: AbortSignal },
+  ): Promise<TasteRankingResponse> {
+    return request("/api/catalog/taste-ranking", { params, ...options });
   },
 
   // ------------------------------------------------------------ blacklist

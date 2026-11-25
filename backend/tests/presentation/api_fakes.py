@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -401,7 +402,40 @@ class FakeTrackRepository(ITrackRepository):
             if tid in self.tracks and self.tracks[tid].embedding is not None
         }
 
-    async def get_artist_taste_scores(self) -> tuple[dict[str, float], int]:
+    async def list_artists_summary_by_names(
+        self,
+        artist_names: Sequence[str],
+        *,
+        genre: str | None = None,
+        source: str | None = None,
+        taste_scores: Mapping[str, float | None] | None = None,
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        wanted = {name for name in artist_names}
+        in_scope, total = await self.list_artists_summary(
+            genre=genre,
+            source=source,
+            taste_mode="both",
+            liked_artist_keys=liked_artist_keys,
+            limit=100_000,
+        )
+        matched = []
+        for summary in in_scope:
+            if summary.artist not in wanted:
+                continue
+            if taste_scores is not None and summary.artist in taste_scores:
+                summary = replace(
+                    summary, taste_match_percent=taste_scores[summary.artist]
+                )
+            matched.append(summary)
+        return tuple(matched), total
+
+    async def get_artist_taste_scores(
+        self,
+        *,
+        mode: str = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[dict[str, float], int]:
         local_count = sum(1 for t in self.tracks.values() if t.source == "local")
         return ({}, local_count)
 

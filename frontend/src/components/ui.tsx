@@ -95,6 +95,20 @@ export function TasteBadge({ percent }: { percent: number }) {
   );
 }
 
+export function TasteBadgeCompact({ percent }: { percent: number }) {
+  return (
+    <span
+      className="pill font-num"
+      style={{
+        borderColor: "color-mix(in srgb, var(--color-accent) 55%, transparent)",
+        color: "var(--color-accent)",
+      }}
+    >
+      {percent}%
+    </span>
+  );
+}
+
 export function LocalBadge({ has }: { has: boolean }) {
   if (!has) return null;
   return (
@@ -268,12 +282,14 @@ export function TrackRow({
   index,
   trailing,
   showMatch,
+  note,
 }: {
   track: Track;
   queue?: Track[];
   index?: number;
   trailing?: ReactNode;
   showMatch?: number | null;
+  note?: ReactNode;
 }) {
   const { heard, toggleHeard, addToCrate, inCrate, play } = useTrackActions();
   const current = usePlayerStore((s) => s.current);
@@ -317,6 +333,9 @@ export function TrackRow({
         <p className="line-clamp-3 break-words text-xs leading-snug text-ink-dim sm:line-clamp-2">
           {track.artist}
         </p>
+        {note ? (
+          <p className="font-num mt-0.5 text-[10px] leading-tight text-ink-faint">{note}</p>
+        ) : null}
         <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-num text-[10px] text-ink-faint md:hidden">
           <span>{fmtBpm(track.bpm)} BPM</span>
           {track.key ? (
@@ -332,7 +351,7 @@ export function TrackRow({
         <BpmPill bpm={track.bpm} />
         <KeyPill k={track.key} />
       </div>
-      <div className="flex shrink-0 basis-full items-center justify-end gap-0.5 sm:basis-auto sm:justify-start sm:gap-1">
+      <div className="track-actions flex shrink-0 basis-full items-center justify-end gap-0.5 sm:basis-auto sm:justify-start sm:gap-1">
         <button
           type="button"
           onClick={() => void toggleHeard(track)}
@@ -362,7 +381,7 @@ export function TrackRow({
         <DigLink track={track} />
         <DownloadButton track={track} />
         <ItunesLink track={track} />
-        {trailing}
+        {trailing ? <span className="flex items-center border-l border-line pl-1 sm:pl-1.5">{trailing}</span> : null}
       </div>
     </div>
   );
@@ -415,8 +434,10 @@ export function AlbumCard({
           </span>
         ) : null}
       </div>
-      <p className="mt-2 truncate text-[13px] text-heading">{track.title}</p>
-      <p className="truncate text-[11px] text-ink-dim">{track.artist}</p>
+      <p className="mt-2 line-clamp-2 break-words text-[13px] leading-snug text-heading">
+        {track.title}
+      </p>
+      <p className="line-clamp-1 break-words text-[11px] text-ink-dim">{track.artist}</p>
       <div className="mt-1 flex items-center gap-1.5">
         <span className="font-num text-[10px] text-ink-faint">
           {fmtBpm(track.bpm)} BPM

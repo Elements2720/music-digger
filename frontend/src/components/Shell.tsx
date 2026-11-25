@@ -146,7 +146,7 @@ export function Sidebar() {
   return (
     <aside
       aria-label="Primary"
-      className="fixed inset-y-0 left-0 z-30 hidden flex-col border-r border-line lg:flex"
+      className="fixed left-0 bottom-[84px] top-0 z-30 hidden flex-col border-r border-line lg:flex"
       style={{
         width,
         background:

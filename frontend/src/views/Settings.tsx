@@ -176,6 +176,11 @@ export function SettingsView() {
   const [importOk, setImportOk] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const bpmWindowError =
+    active?.bpmMin != null && active?.bpmMax != null && active.bpmMin > active.bpmMax
+      ? `BPM MIN ${active.bpmMin} is above BPM MAX ${active.bpmMax} — For You will return nothing until the window is corrected.`
+      : null;
+
   const exportSettings = () => {
     const blob = new Blob([settings.exportJson()], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -389,6 +394,7 @@ export function SettingsView() {
                     aria-label="Minimum BPM"
                     placeholder="min"
                     className="input h-10 w-[86px] tabular-nums"
+                    aria-invalid={Boolean(bpmWindowError)}
                     value={active?.bpmMin ?? ""}
                     onChange={(event) =>
                       active &&
@@ -404,6 +410,7 @@ export function SettingsView() {
                     aria-label="Maximum BPM"
                     placeholder="max"
                     className="input h-10 w-[86px] tabular-nums"
+                    aria-invalid={Boolean(bpmWindowError)}
                     value={active?.bpmMax ?? ""}
                     onChange={(event) =>
                       active &&
@@ -413,6 +420,15 @@ export function SettingsView() {
                     }
                   />
                 </div>
+                {bpmWindowError ? (
+                  <p
+                    role="alert"
+                    className="mt-2 font-mono text-[10px] uppercase tracking-[0.1em]"
+                    style={{ color: "var(--color-danger)" }}
+                  >
+                    {bpmWindowError}
+                  </p>
+                ) : null}
               </Field>
               <Field label="Genre lock" hint="Leave empty to span every genre in the catalog.">
                 <input
