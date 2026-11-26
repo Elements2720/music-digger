@@ -95,10 +95,10 @@ export function TasteBadge({ percent }: { percent: number }) {
   );
 }
 
-export function TasteBadgeCompact({ percent }: { percent: number }) {
+export function TasteBadgeCompact({ percent, className }: { percent: number; className?: string }) {
   return (
     <span
-      className="pill font-num"
+      className={`pill font-num ${className ?? ""}`}
       style={{
         borderColor: "color-mix(in srgb, var(--color-accent) 55%, transparent)",
         color: "var(--color-accent)",

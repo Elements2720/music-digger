@@ -25,6 +25,12 @@ import { useLikesStore } from "../stores/likesStore";
 
 type SubTab = "artists" | "cleanup" | "seeds" | "hardware";
 
+// One shared desktop grid template for the Artists Hub header AND every row:
+// identical string, fixed px data columns, only artist/genres flexible —
+// so every column edge is shared and nothing re-solves per row.
+const ARTIST_GRID =
+  "lg:grid lg:grid-cols-[28px_minmax(160px,1.4fr)_56px_92px_84px_minmax(140px,1fr)_64px_80px_200px] lg:items-center lg:gap-x-3";
+
 function ArtistModal({
   summary,
   onClose,
@@ -643,8 +649,8 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
       ) : (
         <div className="panel" data-testid="artist-list">
         <div className="scroll-thin min-w-0 overflow-x-auto">
-          <div className="min-w-0 lg:min-w-[1024px]">
-          <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+          <div className="min-w-0 lg:min-w-[1040px]">
+          <div className={`flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 ${ARTIST_GRID}`}>
             <input
               type="checkbox"
               className="h-4 w-4 shrink-0 accent-accent"
@@ -654,34 +660,48 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
               }
               aria-label="Select all artists"
             />
-            <span className="eyebrow">{fmtCount(total)} ARTISTS</span>
-            <button
-              type="button"
-              className="btn btn-ghost !min-h-0 py-1 font-mono text-[10px]"
-              onClick={() =>
-                setChecked(allChecked ? new Set() : new Set(data.map((a) => a.artist)))
-              }
-            >
-              <CheckSquare size={13} /> {allChecked ? "CLEAR" : "SELECT ALL"}
-            </button>
-            {checked.size > 0 ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="eyebrow">{fmtCount(total)} ARTISTS</span>
               <button
                 type="button"
-                className="btn btn-danger !min-h-0 py-1 font-mono text-[10px]"
-                onClick={() => void bulkDelete()}
+                className="btn btn-ghost !min-h-0 py-1 font-mono text-[10px]"
+                onClick={() =>
+                  setChecked(allChecked ? new Set() : new Set(data.map((a) => a.artist)))
+                }
               >
-                <Trash2 size={13} /> DELETE {checked.size} + BLACKLIST
+                <CheckSquare size={13} /> {allChecked ? "CLEAR" : "SELECT ALL"}
               </button>
-            ) : null}
-            <div className="ml-auto hidden shrink-0 items-center gap-2 font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:flex">
-              <span className="w-[52px] text-right">Tracks</span>
-              <span className="w-[74px] text-right">Embedded</span>
-              <span className="w-[86px] text-right">Years</span>
-              <span className="w-[150px]">Genres</span>
-              <span className="w-[56px] text-right">Taste</span>
-              <span className="w-[80px]">Sources</span>
-              <span className="w-[232px] text-right">Actions</span>
+              {checked.size > 0 ? (
+                <button
+                  type="button"
+                  className="btn btn-danger !min-h-0 py-1 font-mono text-[10px]"
+                  onClick={() => void bulkDelete()}
+                >
+                  <Trash2 size={13} /> DELETE {checked.size} + BLACKLIST
+                </button>
+              ) : null}
             </div>
+            <span className="hidden font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:block">
+              Tracks
+            </span>
+            <span className="hidden font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:block">
+              Embedded
+            </span>
+            <span className="hidden font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:block">
+              Years
+            </span>
+            <span className="hidden font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:block">
+              Genres
+            </span>
+            <span className="hidden font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:block">
+              Taste
+            </span>
+            <span className="hidden font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:block">
+              Sources
+            </span>
+            <span className="hidden font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:block">
+              Actions
+            </span>
           </div>
           {data.map((a) => {
             const embeddedPct =
@@ -689,7 +709,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
             return (
               <div
                 key={a.artist}
-                className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 last:border-b-0 hover:bg-panel-2/60 sm:gap-3"
+                className={`flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 last:border-b-0 hover:bg-panel-2/60 sm:gap-3 ${ARTIST_GRID} lg:py-1`}
               >
                 <input
                   type="checkbox"
@@ -739,17 +759,17 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
                     </span>
                   </span>
                 </button>
-                <div className="hidden shrink-0 items-center gap-2 lg:flex">
-                  <span className="font-num w-[52px] text-right text-[12px] text-heading">
+                <div className="hidden lg:contents">
+                  <span className="font-num text-[12px] text-heading">
                     {fmtCount(a.track_count)}
                   </span>
-                  <span className="font-num w-[74px] text-right text-[11px] text-ink-dim">
+                  <span className="font-num whitespace-nowrap text-[11px] text-ink-dim">
                     {fmtCount(a.embedded_count)} ({fmtPercent(embeddedPct)})
                   </span>
-                  <span className="font-num w-[86px] text-right text-[11px] text-ink-dim">
+                  <span className="font-num text-[11px] text-ink-dim">
                     {a.year_min != null ? `${a.year_min}–${a.year_max ?? a.year_min}` : "—"}
                   </span>
-                  <span className="flex w-[150px] items-center gap-1 overflow-hidden">
+                  <span className="flex min-w-0 items-center gap-1 overflow-hidden">
                     {a.genres.slice(0, 2).map((g) => (
                       <span
                         key={g}
@@ -764,25 +784,25 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
                       </span>
                     ) : null}
                   </span>
-                  <span className="flex w-[56px] justify-end overflow-hidden">
+                  <span className="flex overflow-hidden">
                     {a.taste_match_percent != null ? (
-                      <TasteBadgeCompact percent={a.taste_match_percent} />
+                      <TasteBadgeCompact percent={a.taste_match_percent} className="w-16 justify-center" />
                     ) : (
-                      <span className="font-num text-[10px] text-ink-faint">—</span>
+                      <span className="font-num w-16 text-[10px] text-ink-faint">—</span>
                     )}
                   </span>
-                  <span className="flex w-[80px] gap-1 overflow-hidden">
+                  <span className="flex gap-1 overflow-hidden">
                     {a.sources.slice(0, 1).map((s) => (
                       <span
                         key={s}
-                        className="pill max-w-[76px] truncate font-num uppercase text-ink-faint"
+                        className="pill max-w-[70px] truncate font-num uppercase text-ink-faint"
                       >
                         {s}
                       </span>
                     ))}
                   </span>
                 </div>
-                <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 lg:w-[232px] lg:flex-nowrap lg:justify-end">
+                <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 lg:w-auto lg:flex-nowrap lg:justify-start">
                   <button
                     type="button"
                     className="btn btn-accent !min-h-0 px-2 py-1.5 font-mono text-[9px]"
