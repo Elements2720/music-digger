@@ -1,6 +1,6 @@
 import {
   ExternalLink,
-  Heart,
+  Headphones,
   ListMusic,
   Volume2,
   VolumeX,
@@ -10,6 +10,7 @@ import {
   Pause,
   Repeat,
   Repeat1,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
@@ -41,6 +42,9 @@ export function PlayerDock() {
     cycleRepeat,
     _onTimeUpdate,
     _onEnded,
+    _onAudioError,
+    playbackError,
+    clearError,
   } = usePlayerStore();
   const crate = useCrateStore((s) => s.tracks);
   const toggleCrate = useCrateStore((s) => s.toggle);
@@ -59,19 +63,22 @@ export function PlayerDock() {
     const onTime = () => _onTimeUpdate(el.currentTime, el.duration || 0);
     const onPlay = () => usePlayerStore.setState({ playing: true });
     const onPause = () => usePlayerStore.setState({ playing: false });
+    const onError = () => _onAudioError("Audio failed to load — preview expired or missing");
     el.addEventListener("timeupdate", onTime);
     el.addEventListener("durationchange", onTime);
     el.addEventListener("ended", _onEnded);
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
+    el.addEventListener("error", onError);
     return () => {
       el.removeEventListener("timeupdate", onTime);
       el.removeEventListener("durationchange", onTime);
       el.removeEventListener("ended", _onEnded);
       el.removeEventListener("play", onPlay);
       el.removeEventListener("pause", onPause);
+      el.removeEventListener("error", onError);
     };
-  }, [attach, _onTimeUpdate, _onEnded]);
+  }, [attach, _onTimeUpdate, _onEnded, _onAudioError]);
 
   const onScrub = useCallback(
     (clientX: number) => {
@@ -101,7 +108,7 @@ export function PlayerDock() {
       data-testid="player-dock"
     >
       <audio ref={audioRef} preload="metadata" />
-      <div className="grid h-full grid-cols-[minmax(250px,320px)_minmax(0,1fr)_minmax(250px,330px)] items-center gap-5 px-5">
+      <div className="grid h-full grid-cols-[minmax(330px,430px)_minmax(0,1fr)_minmax(240px,300px)] items-center gap-4 px-5">
         {/* left — deck identity */}
         <div className="flex min-w-0 items-center gap-3">
           {current ? (
@@ -111,7 +118,7 @@ export function PlayerDock() {
                 size={48}
                 className="!rounded-[10px] ring-1 ring-white/12"
               />
-              <div className="min-w-0 flex-1">
+              <div className="min-w-[120px] flex-1">
                 <div className="flex items-center gap-2">
                   <span
                     className="rounded-pill border px-1.5 py-px font-mono text-[8px] uppercase tracking-[0.12em]"
@@ -138,17 +145,18 @@ export function PlayerDock() {
                   {current.artist}
                 </p>
               </div>
-              <div className="flex items-center gap-0.5">
+              <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => toggleHeard(current.id, !heard)}
+                  onClick={() => void toggleHeard(current.id, !heard)}
                   className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-white/10 ${
                     heard ? "text-accent" : "text-ink-faint hover:text-heading"
                   }`}
                   aria-label={heard ? "Unmark heard" : "Mark heard"}
+                  title={heard ? "Marked heard (click to unmark)" : "Mark heard"}
                   aria-pressed={heard}
                 >
-                  <Heart size={15} fill={heard ? "currentColor" : "none"} />
+                  <Headphones size={15} />
                 </button>
                 <DownloadButton track={current} />
                 {current.store_url ? (
@@ -156,10 +164,12 @@ export function PlayerDock() {
                     href={current.store_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="hidden h-9 items-center gap-1 rounded-full border border-line px-2.5 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-line-strong hover:text-heading md:flex"
+                    className="hidden h-9 items-center gap-1 rounded-full border border-line px-2 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-line-strong hover:text-heading md:flex xl:px-2.5"
+                    aria-label="Open on iTunes"
                     title="Open this track on iTunes"
                   >
-                    STORE <ExternalLink size={11} />
+                    <span className="hidden xl:inline">STORE</span>
+                    <ExternalLink size={11} />
                   </a>
                 ) : null}
                 <Link
@@ -189,6 +199,22 @@ export function PlayerDock() {
 
         {/* centre — transport above the scrubber */}
         <div className="flex min-w-0 flex-col items-center gap-1.5">
+          {playbackError ? (
+            <div
+              role="alert"
+              className="flex max-w-full items-center gap-2 rounded-pill border border-danger/40 bg-danger/10 px-2.5 py-0.5 font-mono text-[10px] text-danger"
+            >
+              <span className="truncate">{playbackError}</span>
+              <button
+                type="button"
+                onClick={clearError}
+                className="shrink-0 text-danger/80 hover:text-danger"
+                aria-label="Dismiss audio error"
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ) : null}
           <div className="flex items-center gap-2.5">
             <button
               type="button"
@@ -324,7 +350,7 @@ export function PlayerDock() {
               value={muted ? 0 : volume}
               onChange={(e) => setVolume(Number(e.target.value))}
               aria-label="Volume"
-              className="hidden h-1 w-16 accent-accent xl:block"
+              className="hidden h-6 w-16 cursor-pointer accent-accent xl:block"
             />
           </div>
           <button

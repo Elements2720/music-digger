@@ -126,7 +126,13 @@ class FakeTrackRepository(ITrackRepository):
         ]
 
     async def find_by_filter(self, search_filter: SearchFilter) -> Sequence[Track]:
-        return ()
+        hits = [
+            t
+            for t in self.tracks.values()
+            if search_filter.matches(t, heard_ids=self.heard)
+        ]
+        hits.sort(key=lambda t: (t.artist.casefold(), t.title.casefold()))
+        return hits[: search_filter.limit]
 
     async def search_tracks(self, query: str, limit: int = 30) -> Sequence[Track]:
         needle = query.strip().casefold()
@@ -163,8 +169,14 @@ class FakeTrackRepository(ITrackRepository):
         max_per_artist: int = 0,
         hide_heard: bool = False,
         exclude_local: bool = False,
+        bpm_min: float | None = None,
+        bpm_max: float | None = None,
+        seed_artist: str | None = None,
     ) -> dict[str, float]:
         from domain._validation import normalize_artist_key
+
+        if bpm_min is not None and bpm_max is not None and bpm_min > bpm_max:
+            raise ValueError("bpm_min must be <= bpm_max")
 
         self.taste_kwargs = {
             "mode": mode,
@@ -175,8 +187,21 @@ class FakeTrackRepository(ITrackRepository):
             "max_per_artist": max_per_artist,
             "hide_heard": hide_heard,
             "exclude_local": exclude_local,
+            "bpm_min": bpm_min,
+            "bpm_max": bpm_max,
+            "seed_artist": seed_artist,
         }
         liked_norm = {normalize_artist_key(k) for k in liked_artist_keys}
+        seed_norm = (
+            normalize_artist_key(seed_artist)
+            if seed_artist is not None and seed_artist.strip()
+            else None
+        )
+        if seed_norm is not None and not any(
+            t.embedding is not None and normalize_artist_key(t.artist) == seed_norm
+            for t in self.tracks.values()
+        ):
+            return {}
         scores: dict[str, float] = {}
         for t in self.tracks.values():
             if t.embedding is None:
@@ -185,18 +210,25 @@ class FakeTrackRepository(ITrackRepository):
                 continue
             if source and t.source != source:
                 continue
+            if bpm_min is not None and (t.bpm is None or t.bpm.value < bpm_min):
+                continue
+            if bpm_max is not None and (t.bpm is None or t.bpm.value > bpm_max):
+                continue
             if hide_heard and t.id in self.heard:
                 continue
             if exclude_local and t.source == "local":
                 continue
-            is_local = t.source == "local"
-            is_liked = normalize_artist_key(t.artist) in liked_norm
-            if mode == "local" and not is_local:
-                continue
-            if mode == "liked" and not is_liked:
-                continue
+            if seed_norm is None:
+                is_local = t.source == "local"
+                is_liked = normalize_artist_key(t.artist) in liked_norm
+                if mode == "local" and not is_local:
+                    continue
+                if mode == "liked" and not is_liked:
+                    continue
+            else:
+                is_liked = normalize_artist_key(t.artist) == seed_norm
             base = 80.0 + (hash(t.id) % 1500) / 100.0
-            if mode == "both" and is_liked:
+            if (seed_norm is not None or mode == "both") and is_liked:
                 base = min(99.0, base + 5.0)
             scores[t.id] = min(99.0, base)
         if max_per_artist > 0:

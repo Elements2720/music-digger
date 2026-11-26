@@ -15,8 +15,9 @@ import {
   PanelHead,
   TrackRow,
 } from "../components/ui";
-import { fmtBpm, fmtClock, fmtPercent } from "../lib/format";
+import { fmtBpm, fmtClock, fmtPercent, normalizePct } from "../lib/format";
 import { useJobsStore } from "../stores/jobsStore";
+import { useSettingsStore } from "../stores/settingsStore";
 
 type DetailView = "tracklist" | "tracks" | "sets";
 
@@ -24,7 +25,25 @@ function Timeline({ passages }: { passages: PassagePayload[] }) {
   const total = Math.max(...passages.map((p) => p.end_seconds), 1);
   return (
     <div className="panel">
-      <PanelHead title="TIMELINE" />
+      <PanelHead
+        title="TIMELINE"
+        right={
+          <div className="flex flex-wrap items-center gap-3 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-[1px]" style={{ background: "var(--color-accent)" }} aria-hidden />
+              130+ BPM
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-[1px]" style={{ background: "var(--color-info)" }} aria-hidden />
+              120–129
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-[1px]" style={{ background: "var(--color-warn)" }} aria-hidden />
+              &lt;120
+            </span>
+          </div>
+        }
+      />
       <div className="relative h-10 m-3" data-testid="mix-timeline">
         {passages.map((p, i) => {
           const left = (p.start_seconds / total) * 100;
@@ -78,7 +97,9 @@ export function MixView() {
   const [view, setView] = useState<DetailView>("tracklist");
   const [bpmTolerance, setBpmTolerance] = useState(6);
   const [genre, setGenre] = useState("");
-  const [excludeHeard, setExcludeHeard] = useState(false);
+  const [excludeHeard, setExcludeHeard] = useState(
+    () => useSettingsStore.getState().hideHeard,
+  );
   const [limit, setLimit] = useState(20);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -136,7 +157,7 @@ export function MixView() {
       await startJob("analyze-set", {
         source: source.trim(),
         shazam,
-        parse_comments: comments,
+        comments,
         keep_audio: keepAudio,
         cookies_file: cookiesFile.trim() || null,
         cookies_from_browser: cookiesBrowser.trim() || null,
@@ -255,7 +276,15 @@ export function MixView() {
         </div>
       ) : null}
 
-      {error ? <ErrorState message={error} /> : null}
+      {error ? (
+        <ErrorState
+          message={error}
+          onRetry={() => {
+            setError(null);
+            refresh();
+          }}
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
         <section className="panel self-start">
@@ -265,7 +294,7 @@ export function MixView() {
               <span className="pill font-num">{sets?.sets.length ?? 0}</span>
               <button
                 type="button"
-                className="btn btn-ghost !min-h-0 px-2 py-1 font-mono text-[9px]"
+                className="btn btn-ghost !min-h-7 px-2.5 py-1 font-mono text-[9px]"
                 onClick={refresh}
               >
                 REFRESH
@@ -362,13 +391,13 @@ export function MixView() {
                     SOURCE
                   </a>
                 ) : null}
-                <Link className="btn !min-h-0 py-1.5" to={`/dig?mode=catalog`}>
+                <Link className="btn !min-h-0 py-1.5" to="/dig?mode=vibe">
                   DIG
                 </Link>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <div role="tablist" aria-label="Set detail views" className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-3 border-b border-line pb-2">
+                <div role="tablist" aria-label="Set detail views" className="flex gap-4">
                   {VIEW_TABS.map((t) => (
                     <button
                       key={t.id}
@@ -376,12 +405,7 @@ export function MixView() {
                       role="tab"
                       aria-selected={view === t.id}
                       onClick={() => setView(t.id)}
-                      className="btn !min-h-0 py-1.5 font-mono text-[10px]"
-                      style={
-                        view === t.id
-                          ? { borderColor: "var(--color-accent)", color: "var(--color-accent)" }
-                          : undefined
-                      }
+                      className="tab !min-h-11"
                     >
                       {t.label}
                     </button>
@@ -393,7 +417,7 @@ export function MixView() {
                     type="number"
                     min={0}
                     max={40}
-                    className="input !w-16"
+                    className="input !min-h-0 !h-10 !w-16"
                     value={bpmTolerance}
                     onChange={(e) => setBpmTolerance(Number(e.target.value))}
                     aria-label="BPM tolerance"
@@ -402,7 +426,7 @@ export function MixView() {
                 <label className="flex items-center gap-2 font-mono text-[10px] uppercase text-ink-dim">
                   LIMIT
                   <select
-                    className="input !w-auto"
+                    className="input !min-h-0 !h-10 !w-auto"
                     value={limit}
                     onChange={(e) => setLimit(Number(e.target.value))}
                     aria-label="Result limit"
@@ -415,13 +439,13 @@ export function MixView() {
                   </select>
                 </label>
                 <input
-                  className="input max-w-[160px]"
+                  className="input !min-h-0 !h-10 max-w-[160px]"
                   placeholder="genre"
                   value={genre}
                   onChange={(e) => setGenre(e.target.value)}
                   aria-label="Genre filter"
                 />
-                <label className="flex items-center gap-2 font-mono text-[10px] uppercase text-ink-dim">
+                <label className="flex min-h-10 items-center gap-2 font-mono text-[10px] uppercase text-ink-dim">
                   <input
                     type="checkbox"
                     checked={excludeHeard}
@@ -468,7 +492,7 @@ export function MixView() {
                             {p.matches.length > 0 ? (
                               <button
                                 type="button"
-                                className="font-mono text-[10px] text-ink-faint hover:text-accent"
+                                className="inline-flex min-h-7 items-center rounded-[4px] border border-line/70 px-2 py-0.5 font-mono text-[10px] text-ink-dim transition-colors hover:border-accent/60 hover:text-accent"
                                 aria-expanded={openMatches.has(i)}
                                 onClick={() =>
                                   setOpenMatches((prev) => {
@@ -490,7 +514,7 @@ export function MixView() {
                                   key={m.track.id}
                                   track={m.track}
                                   queue={p.matches.map((x) => x.track)}
-                                  showMatch={Math.round(m.similarity * 100)}
+                                  showMatch={normalizePct(m.similarity)}
                                 />
                               ))
                             : null}
@@ -510,7 +534,7 @@ export function MixView() {
                       <TrackRow
                         key={m.track.id}
                         track={m.track}
-                        showMatch={Math.round(m.similarity * 100)}
+                        showMatch={normalizePct(m.similarity)}
                       />
                     ))}
                   </div>
@@ -537,7 +561,7 @@ export function MixView() {
                           </span>
                         </span>
                         <span className="font-num text-sm text-accent">
-                          {fmtPercent(s.similarity * 100)}
+                          {fmtPercent(normalizePct(s.similarity))}
                         </span>
                       </button>
                     ))}

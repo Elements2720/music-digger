@@ -1,13 +1,11 @@
-import { Activity, ListMusic, Pause, Play, Settings2 } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { Activity, ChevronDown, Headphones, ListMusic, Pause, Play, Repeat, Repeat1, Settings2, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Link, NavLink } from "react-router-dom";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
 import { useLikesStore } from "../stores/likesStore";
 import { fmtBpm, fmtClock } from "../lib/format";
-import { Artwork, DownloadButton, KeyPill } from "./ui";
-import { Link } from "react-router-dom";
-import { Heart, Volume2, VolumeX, Repeat, Repeat1, SkipBack, SkipForward, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { Artwork, DownloadButton, KeyPill, useModalFocusTrap } from "./ui";
 import { NAV_ITEMS } from "./Shell";
 
 const SHORT_LABEL: Record<string, string> = {
@@ -29,6 +27,8 @@ export function MobileChrome() {
   const toggle = usePlayerStore((s) => s.toggle);
   const progress = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
+  const playbackError = usePlayerStore((s) => s.playbackError);
+  const clearError = usePlayerStore((s) => s.clearError);
   const crateCount = useCrateStore((s) => s.tracks.length);
   const toggleCrate = useCrateStore((s) => s.toggle);
   const [deckOpen, setDeckOpen] = useState(false);
@@ -62,7 +62,7 @@ export function MobileChrome() {
               DIGDEEPER
             </span>
             <span className="block truncate text-[10px] leading-tight text-ink-faint">
-              Dig without leaving the room
+              Local DJ crate
             </span>
           </span>
         </div>
@@ -104,6 +104,22 @@ export function MobileChrome() {
         className="fixed inset-x-0 bottom-0 z-30 px-3"
         style={{ paddingBottom: "max(10px, env(safe-area-inset-bottom))" }}
       >
+        {playbackError ? (
+          <div
+            role="alert"
+            className="mb-2 flex items-center justify-between gap-2 rounded-card border border-danger/40 bg-panel px-3 py-2 font-mono text-[11px] text-danger shadow-lg"
+          >
+            <span className="truncate">{playbackError}</span>
+            <button
+              type="button"
+              onClick={clearError}
+              className="flex h-8 w-8 shrink-0 items-center justify-center text-danger"
+              aria-label="Dismiss audio error"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : null}
         {current ? (
           <div
             className="relative mb-2 overflow-hidden rounded-card border border-white/12 shadow-[0_24px_60px_-32px_rgba(0,0,0,1)]"
@@ -131,7 +147,7 @@ export function MobileChrome() {
               <button
                 type="button"
                 onClick={() => setDeckOpen(true)}
-                className="min-w-0 flex-1 text-left"
+                className="flex min-h-11 min-w-0 flex-1 flex-col justify-center text-left"
                 aria-label={`Expand deck — now playing ${current.title} by ${current.artist}`}
                 aria-expanded={deckOpen}
                 aria-controls="mobile-deck-sheet"
@@ -176,7 +192,6 @@ export function MobileChrome() {
                 key={item.to}
                 to={item.to}
                 end={item.to === "/"}
-                role="tab"
                 data-tab-label={item.label}
                 className={({ isActive }) =>
                   `relative flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-pill py-1.5 text-[9px] uppercase tracking-[0.1em] transition-colors ${
@@ -224,27 +239,39 @@ function MobileDeckSheet({ open, onClose }: { open: boolean; onClose: () => void
   const heardIds = useLikesStore((s) => s.heardIds);
   const toggleHeard = useLikesStore((s) => s.toggleHeard);
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
+  const scrubbingRef = useRef(false);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+
+  useModalFocusTrap(open && Boolean(current), sheetRef, onClose);
+
+  useEffect(() => {
+    scrubbingRef.current = false;
+    setScrubRatio(null);
+  }, [current?.id]);
 
   if (!open || !current) return null;
 
   const heard = heardIds.has(current.id);
 
   const scrub = (ratio: number) => {
-    setScrubRatio(ratio);
+    if (scrubbingRef.current) setScrubRatio(ratio);
     usePlayerStore.getState().seek(ratio * duration);
+  };
+
+  const endScrub = () => {
+    scrubbingRef.current = false;
+    setScrubRatio(null);
   };
 
   return (
     <div
+      ref={sheetRef}
       id="mobile-deck-sheet"
       role="dialog"
       aria-modal="true"
       aria-label={`Now playing — ${current.title}`}
       className="fixed inset-0 z-[70] flex flex-col lg:hidden"
       style={{ background: "rgba(0,0,0,0.92)", backdropFilter: "blur(28px)" }}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
-      }}
       tabIndex={-1}
     >
       <div className="flex items-center justify-between px-4 pt-4">
@@ -287,7 +314,18 @@ function MobileDeckSheet({ open, onClose }: { open: boolean; onClose: () => void
             min={0}
             max={1000}
             value={Math.round((scrubRatio ?? (duration > 0 ? currentTime / duration : 0)) * 1000)}
+            onPointerDown={() => {
+              scrubbingRef.current = true;
+            }}
+            onTouchStart={() => {
+              scrubbingRef.current = true;
+            }}
             onChange={(e) => scrub(Number(e.target.value) / 1000)}
+            onPointerUp={endScrub}
+            onPointerCancel={endScrub}
+            onTouchEnd={endScrub}
+            onBlur={endScrub}
+            onKeyUp={endScrub}
             aria-label="Seek"
             aria-valuemin={0}
             aria-valuemax={Math.round(duration || 0)}
@@ -363,14 +401,14 @@ function MobileDeckSheet({ open, onClose }: { open: boolean; onClose: () => void
           />
           <button
             type="button"
-            onClick={() => toggleHeard(current.id, !heard)}
+            onClick={() => void toggleHeard(current.id, !heard)}
             className={`flex h-11 w-11 items-center justify-center rounded-pill border border-white/12 active:bg-white/10 ${heard ? "text-accent" : "text-ink-faint"}`}
-            aria-label={heard ? `Unmark ${current.title} heard` : `Mark ${current.title} heard`}
+            aria-label={heard ? `Unmark ${current.title} as heard` : `Mark ${current.title} as heard`}
             aria-pressed={heard}
           >
-            <Heart size={16} fill={heard ? "currentColor" : "none"} />
+            <Headphones size={16} />
           </button>
-          <DownloadButton track={current} />
+          <DownloadButton track={current} className="!min-h-11 px-3" />
         </div>
 
         <div className="flex items-center gap-2">

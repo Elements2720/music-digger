@@ -16,11 +16,14 @@ interface PlayerState {
   muted: boolean;
   volume: number;
   repeat: RepeatMode;
+  playbackError: string | null;
 
   attach: (audio: HTMLAudioElement) => void;
   play: (track: Track, queue?: Track[]) => void;
   toggle: () => void;
   stop: () => void;
+  removeTrack: (id: string) => void;
+  clearError: () => void;
   seek: (seconds: number) => void;
   nudge: (seconds: number) => void;
   next: () => void;
@@ -30,11 +33,18 @@ interface PlayerState {
   cycleRepeat: () => void;
   _onTimeUpdate: (t: number, d: number) => void;
   _onEnded: () => void;
+  _onAudioError: (message?: string) => void;
 }
 
 function previewSrc(track: Track): string | null {
-  if (track.local_path) return `/api/catalog/tracks/${track.id}/audio`;
+  if (track.local_path) return `/api/catalog/tracks/${encodeURIComponent(track.id)}/audio`;
   return track.preview_url ?? null;
+}
+
+function playbackErrorMessage(err: unknown): string | null {
+  if (err instanceof DOMException && err.name === "AbortError") return null;
+  if (err instanceof Error && err.message) return err.message;
+  return "Playback could not start — click play or check preview URL";
 }
 
 export const usePlayerStore = create<PlayerState>()(
@@ -49,6 +59,7 @@ export const usePlayerStore = create<PlayerState>()(
       muted: false,
       volume: 0.9,
       repeat: "off" as RepeatMode,
+      playbackError: null,
 
       attach: (audio) => {
         const { current, volume, muted } = get();
@@ -67,13 +78,21 @@ export const usePlayerStore = create<PlayerState>()(
       play: (track, queue) => {
         const { audio, current } = get();
         const src = previewSrc(track);
-        if (!src) return;
+        if (!src) {
+          set({
+            current: track,
+            playing: false,
+            playbackError: `No preview or local file available for "${track.title}"`,
+          });
+          return;
+        }
         if (!audio) {
           // The <audio> element may not be mounted yet (PlayerDock lazy-mounts
           // once a track exists); persist the selection and let attach() bind it.
           set({
             current: track,
             playing: false,
+            playbackError: null,
             queue: queue ?? (current ? get().queue : []),
             ...(current?.id !== track.id ? { currentTime: 0 } : {}),
           });
@@ -83,6 +102,7 @@ export const usePlayerStore = create<PlayerState>()(
         set({
           current: track,
           playing: true,
+          playbackError: null,
           queue: queue ?? (current ? get().queue : []),
           ...(changed ? { currentTime: 0, duration: track.duration_seconds ?? 0 } : {}),
         });
@@ -95,7 +115,10 @@ export const usePlayerStore = create<PlayerState>()(
               ? (total * settings.introJumpPercent) / 100
               : 0;
         }
-        void audio.play().catch(() => set({ playing: false }));
+        void audio.play().catch((err) => {
+          const msg = playbackErrorMessage(err);
+          set({ playing: false, ...(msg ? { playbackError: msg } : {}) });
+        });
       },
 
   toggle: () => {
@@ -107,8 +130,11 @@ export const usePlayerStore = create<PlayerState>()(
       return;
     }
     if (audio.ended) audio.currentTime = 0;
-    set({ playing: true });
-    void audio.play().catch(() => set({ playing: false }));
+    set({ playing: true, playbackError: null });
+    void audio.play().catch((err) => {
+      const msg = playbackErrorMessage(err);
+      set({ playing: false, ...(msg ? { playbackError: msg } : {}) });
+    });
   },
 
   stop: () => {
@@ -117,8 +143,17 @@ export const usePlayerStore = create<PlayerState>()(
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
-    set({ current: null, playing: false, currentTime: 0, duration: 0 });
+    set({ current: null, playing: false, currentTime: 0, duration: 0, playbackError: null });
   },
+
+  removeTrack: (id) => {
+    const { current, queue } = get();
+    if (current?.id === id) get().stop();
+    const nextQueue = queue.filter((t) => t.id !== id);
+    if (nextQueue.length !== queue.length) set({ queue: nextQueue });
+  },
+
+  clearError: () => set({ playbackError: null }),
 
   seek: (seconds) => {
     const { audio } = get();
@@ -186,14 +221,21 @@ export const usePlayerStore = create<PlayerState>()(
     if (!settings.autoMarkHeard || !current) return;
     if (t < settings.heardThresholdSec) return;
     const likes = useLikesStore.getState();
-    if (!likes.heardIds.has(current.id)) likes.toggleHeard(current.id, true);
+    if (!likes.heardIds.has(current.id) && !likes.pendingIds.has(current.id)) {
+      void likes.toggleHeard(current.id, true);
+    }
   },
   _onEnded: () => {
     const { repeat } = get();
     if (repeat === "one") {
       get().seek(0);
       const { audio, current } = get();
-      if (audio && current) void audio.play().catch(() => undefined);
+      if (audio && current) {
+        void audio.play().catch((err) => {
+          const msg = playbackErrorMessage(err);
+          set({ playing: false, ...(msg ? { playbackError: msg } : {}) });
+        });
+      }
       return;
     }
     if (!useSettingsStore.getState().autoplayNext) {
@@ -202,6 +244,11 @@ export const usePlayerStore = create<PlayerState>()(
     }
     get().next();
   },
+  _onAudioError: (message) =>
+    set({
+      playing: false,
+      playbackError: message || "Audio stream failed to load — preview may have expired",
+    }),
     }),
     {
       name: "player",

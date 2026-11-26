@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -23,7 +24,14 @@ import type {
   Track,
   TransitionEvaluation,
 } from "../types/apiTypes";
-import { EmptyState, ErrorState, Loading, PanelHead, TrackRow } from "../components/ui";
+import {
+  ConfirmActionButton,
+  EmptyState,
+  ErrorState,
+  Loading,
+  PanelHead,
+  TrackRow,
+} from "../components/ui";
 import { useCrateStore } from "../stores/crateStore";
 import { useJobsStore } from "../stores/jobsStore";
 import { fmtBpm, fmtClock, fmtPercent } from "../lib/format";
@@ -225,28 +233,53 @@ export function BuilderView() {
   const [searchResults, setSearchResults] = useState<Track[] | null>(null);
   const [searching, setSearching] = useState(false);
 
+  const { hash } = useLocation();
+  const [savedLoading, setSavedLoading] = useState(false);
+
   const refreshSaved = () => {
+    setSavedLoading(true);
     api
       .listPlannedSets()
       .then(setSaved)
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setSavedLoading(false));
   };
 
   useEffect(refreshSaved, []);
 
   useEffect(() => {
-    if (!referenceId && crate.length > 0) setReferenceId(crate[crate.length - 1].id);
-    if (!bridgeA && crate.length > 0) setBridgeA(crate[0].id);
-    if (!bridgeB && crate.length > 1) setBridgeB(crate[crate.length - 1].id);
+    if (hash === "#saved") {
+      document.getElementById("saved")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [hash, saved.length]);
+
+  useEffect(() => {
+    if (crate.length === 0) {
+      if (referenceId) setReferenceId("");
+      if (bridgeA) setBridgeA("");
+      if (bridgeB) setBridgeB("");
+      return;
+    }
+    if (!crate.some((t) => t.id === referenceId)) setReferenceId(crate[crate.length - 1].id);
+    if (!crate.some((t) => t.id === bridgeA)) setBridgeA(crate[0].id);
+    if (!crate.some((t) => t.id === bridgeB)) setBridgeB(crate[crate.length - 1].id);
   }, [crate, referenceId, bridgeA, bridgeB]);
 
   useEffect(() => {
+    if (!sequenceOpen) return;
     const onClick = (event: MouseEvent) => {
       if (!sequenceRef.current?.contains(event.target as Node)) setSequenceOpen(false);
     };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSequenceOpen(false);
+    };
     document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [sequenceOpen]);
 
   const totalSeconds = crate.reduce((acc, t) => acc + (t.duration_seconds ?? 0), 0);
   const missingLocal = useMemo(() => crate.filter((t) => !t.has_local_file), [crate]);
@@ -499,7 +532,15 @@ export function BuilderView() {
         </span>
       </div>
 
-      {error ? <ErrorState message={error} /> : null}
+      {error ? (
+        <ErrorState
+          message={error}
+          onRetry={() => {
+            setError(null);
+            refreshSaved();
+          }}
+        />
+      ) : null}
       {status ? (
         <p className="font-mono text-xs text-accent" role="status">
           {status}
@@ -592,14 +633,25 @@ export function BuilderView() {
           <Download size={14} /> DOWNLOAD MISSING
           {missingLocal.length ? ` (${missingLocal.length})` : ""}
         </button>
-        <button
-          type="button"
+        <ConfirmActionButton
+          onConfirm={() => {
+            clearCrate();
+            setLoadedSetId(null);
+            setName("");
+            setEvaluation(null);
+            setStatus("Crate cleared");
+          }}
+          label={
+            <>
+              <Trash2 size={14} /> CLEAR
+            </>
+          }
+          confirmLabel="CONFIRM CLEAR?"
           className="btn btn-danger"
-          onClick={clearCrate}
           disabled={crate.length === 0}
-        >
-          <Trash2 size={14} /> CLEAR
-        </button>
+          ariaLabel="Clear crate and reset active set"
+          confirmAriaLabel="Confirm clearing crate"
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
@@ -642,6 +694,7 @@ export function BuilderView() {
                             type="button"
                             className="btn btn-ghost !min-h-0 p-1.5"
                             onClick={() => move(i, -1)}
+                            disabled={i === 0}
                             aria-label={`Move ${t.title} up`}
                           >
                             <ArrowUp size={13} />
@@ -650,6 +703,7 @@ export function BuilderView() {
                             type="button"
                             className="btn btn-ghost !min-h-0 p-1.5"
                             onClick={() => move(i, 1)}
+                            disabled={i === crate.length - 1}
                             aria-label={`Move ${t.title} down`}
                           >
                             <ArrowDown size={13} />
@@ -692,15 +746,23 @@ export function BuilderView() {
                         </span>
                         <span className="hidden h-1 min-w-[40px] flex-1 overflow-hidden rounded bg-white/[0.05] sm:block">
                           <span
-                            className="block h-full rounded bg-accent"
+                            className="block h-full rounded"
                             style={{
                               width: `${transition ? Math.max(2, Math.min(100, transition.score)) : 0}%`,
+                              background:
+                                transition == null
+                                  ? "var(--color-line-strong)"
+                                  : transition.score >= 66
+                                    ? "var(--color-accent)"
+                                    : transition.score >= 33
+                                      ? "var(--color-warn)"
+                                      : "var(--color-danger)",
                             }}
                           />
                         </span>
                         <button
                           type="button"
-                          className="btn btn-ghost !min-h-0 px-2 py-1 font-mono text-[9px]"
+                          className="btn btn-ghost !min-h-7 px-2.5 py-1 font-mono text-[9px]"
                           onClick={() => void bridgeBetween(i)}
                           title={`Find a bridge between ${t.title} and ${next.title}`}
                         >
@@ -716,38 +778,28 @@ export function BuilderView() {
         </section>
 
         <section className="panel min-w-0 self-start" aria-label="Set helper">
-          <div className="panel-head !items-start">
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-3" role="tablist">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === "next"}
-                  className={`font-mono text-[11px] uppercase tracking-[0.12em] ${
-                    tab === "next"
-                      ? "border-b-2 border-accent pb-1.5 text-accent"
-                      : "pb-1.5 text-ink-dim hover:text-heading"
-                  }`}
-                  onClick={() => setTab("next")}
-                >
-                  NEXT TRACK
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === "bridge"}
-                  className={`font-mono text-[11px] uppercase tracking-[0.12em] ${
-                    tab === "bridge"
-                      ? "border-b-2 border-accent pb-1.5 text-accent"
-                      : "pb-1.5 text-ink-dim hover:text-heading"
-                  }`}
-                  onClick={() => setTab("bridge")}
-                >
-                  FIND BRIDGE
-                </button>
-              </div>
+          <div className="panel-head !items-center">
+            <div className="flex items-center gap-5" role="tablist" aria-label="Set helper modes">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "next"}
+                className="tab !min-h-10"
+                onClick={() => setTab("next")}
+              >
+                NEXT TRACK
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "bridge"}
+                className="tab !min-h-10"
+                onClick={() => setTab("bridge")}
+              >
+                FIND BRIDGE
+              </button>
             </div>
-            <label className="flex items-center gap-2 font-mono text-[10px] uppercase text-ink-dim">
+            <label className="flex min-h-8 items-center gap-2 font-mono text-[10px] uppercase text-ink-dim">
               <input
                 type="checkbox"
                 checked={localOnly}
@@ -913,7 +965,9 @@ export function BuilderView() {
                     value={bridgeA}
                     onChange={(e) => setBridgeA(e.target.value)}
                     aria-label="Bridge start track"
+                    disabled={crate.length === 0}
                   >
+                    {crate.length === 0 ? <option value="">No tracks in set</option> : null}
                     {crate.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.artist} — {t.title}
@@ -928,7 +982,9 @@ export function BuilderView() {
                     value={bridgeB}
                     onChange={(e) => setBridgeB(e.target.value)}
                     aria-label="Bridge end track"
+                    disabled={crate.length === 0}
                   >
+                    {crate.length === 0 ? <option value="">No tracks in set</option> : null}
                     {crate.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.artist} — {t.title}
@@ -937,9 +993,11 @@ export function BuilderView() {
                   </select>
                 </label>
               </div>
-              <div className="flex items-center justify-between px-3 py-2">
+              <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <p className="text-[11px] text-ink-faint">
-                  Find a track that connects A to B harmonically and rhythmically.
+                  {crate.length < 2
+                    ? "Add at least 2 tracks to the crate to find a harmonic bridge between them."
+                    : "Find a track that connects A to B harmonically and rhythmically."}
                 </p>
                 <button
                   type="button"
@@ -979,15 +1037,15 @@ export function BuilderView() {
         </section>
       </div>
 
-      <section className="panel">
+      <section id="saved" className="panel scroll-mt-16">
         <div className="panel-head">
           <span className="eyebrow">SAVED SETS</span>
           {saved.length > 0 ? <span className="pill font-num">{saved.length}</span> : null}
         </div>
-        {saved.length === 0 ? (
-          <p className="p-4 text-sm text-ink-dim">No saved sets yet.</p>
-        ) : busy ? (
+        {savedLoading && saved.length === 0 ? (
           <Loading />
+        ) : saved.length === 0 ? (
+          <p className="p-4 text-sm text-ink-dim">No saved sets yet.</p>
         ) : (
           <ul className="divide-y divide-line">
             {saved.map((s) => (
@@ -1018,14 +1076,14 @@ export function BuilderView() {
                 >
                   .M3U8
                 </button>
-                <button
-                  type="button"
+                <ConfirmActionButton
+                  onConfirm={() => deleteSet(s.id)}
+                  label={<Trash2 size={13} />}
+                  confirmLabel="DEL?"
                   className="btn btn-danger !min-h-0 py-1.5"
-                  onClick={() => void deleteSet(s.id)}
-                  aria-label={`Delete ${s.name}`}
-                >
-                  <Trash2 size={13} />
-                </button>
+                  ariaLabel={`Delete ${s.name}`}
+                  confirmAriaLabel={`Confirm deleting ${s.name}`}
+                />
               </li>
             ))}
           </ul>

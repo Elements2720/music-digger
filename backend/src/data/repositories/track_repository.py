@@ -173,6 +173,8 @@ class HybridTrackRepository(ITrackRepository):
             or search_filter.max_year is not None
             or search_filter.genres
             or search_filter.exclude_heard
+            or search_filter.has_local is not None
+            or search_filter.source_filter is not None
         )
         vector_limit = (
             min(1000, max(search_filter.limit * 8, 200))
@@ -231,6 +233,13 @@ class HybridTrackRepository(ITrackRepository):
         elif search_filter.genre_filter is not None:
             clauses.append("LOWER(genre) = LOWER(?)")
             parameters.append(search_filter.genre_filter)
+        if search_filter.has_local is True:
+            clauses.append("(local_path IS NOT NULL AND local_path != '')")
+        elif search_filter.has_local is False:
+            clauses.append("(local_path IS NULL OR local_path = '')")
+        if search_filter.source_filter is not None:
+            clauses.append("LOWER(source) = LOWER(?)")
+            parameters.append(search_filter.source_filter)
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         parameters.append(search_filter.limit)
@@ -506,10 +515,13 @@ class HybridTrackRepository(ITrackRepository):
         liked_artist_keys: frozenset[str] = frozenset(),
         liked_weight: float = 2.0,
         local_weight: float = 1.0,
+        seed_artist: str | None = None,
     ) -> tuple[list[str], dict[str, float] | None, dict[str, str]]:
         """Pick the embedded seed track IDs (and weights) for a taste mode.
 
         Returns (seed_ids, weights, artist_by_track_id) over all embedded rows.
+        When ``seed_artist`` is provided, only embedded tracks matching that
+        normalized artist key are used as seeds.
         ``liked_weight``/``local_weight`` only matter for ``mode="both"``; a track
         that is both local and from a liked artist takes the liked weight.
         """
@@ -520,6 +532,15 @@ class HybridTrackRepository(ITrackRepository):
             return [], None, {}
 
         artist_by_tid = {str(r["id"]): str(r["artist"]) for r in embedded_rows}
+        if seed_artist is not None and seed_artist.strip():
+            target_artist = normalize_artist_key(seed_artist)
+            artist_ids = [
+                str(r["id"])
+                for r in embedded_rows
+                if normalize_artist_key(str(r["artist"])) == target_artist
+            ]
+            return artist_ids, None, artist_by_tid
+
         local_ids: list[str] = []
         liked_ids: list[str] = []
         for r in embedded_rows:
@@ -556,23 +577,31 @@ class HybridTrackRepository(ITrackRepository):
         max_per_artist: int = 0,
         hide_heard: bool = False,
         exclude_local: bool = False,
+        bpm_min: float | None = None,
+        bpm_max: float | None = None,
+        seed_artist: str | None = None,
     ) -> dict[str, float]:
         """Rank embedded catalog tracks against the taste profile.
 
         Returns a mapping of track_id to similarity percentage (0.0 to 100.0).
-        ``genre``/``source``/``hide_heard``/``exclude_local`` narrow the ranked
-        candidates (not the seeds); ``max_per_artist`` keeps at most that many
-        tracks per artist (0 = unlimited) after ranking.
+        ``genre``/``source``/``bpm_min``/``bpm_max``/``hide_heard``/``exclude_local``
+        narrow the ranked candidates (not the seeds); ``max_per_artist`` keeps at
+        most that many tracks per artist (0 = unlimited) after ranking. When
+        ``seed_artist`` is provided, that artist's embedded tracks become the
+        ranking seed.
         """
         if liked_weight < 0.0 or local_weight < 0.0:
             raise ValueError("taste weights must be >= 0")
         if max_per_artist < 0:
             raise ValueError("max_per_artist must be >= 0")
+        if bpm_min is not None and bpm_max is not None and bpm_min > bpm_max:
+            raise ValueError("bpm_min must be <= bpm_max")
         seed_ids, weights, artist_by_tid = await self._select_taste_seed_ids(
             mode=mode,
             liked_artist_keys=liked_artist_keys,
             liked_weight=liked_weight,
             local_weight=local_weight,
+            seed_artist=seed_artist,
         )
         if not seed_ids:
             return {}
@@ -580,8 +609,10 @@ class HybridTrackRepository(ITrackRepository):
             seed_ids, weights=weights
         )
         if (
-            genre is None
-            and source is None
+            (genre is None or not genre.strip())
+            and (source is None or not source.strip())
+            and bpm_min is None
+            and bpm_max is None
             and not hide_heard
             and not exclude_local
             and max_per_artist <= 0
@@ -589,13 +620,19 @@ class HybridTrackRepository(ITrackRepository):
             return scores
 
         clauses = ["is_embedded = 1"]
-        params: list[str] = []
-        if genre is not None:
-            clauses.append("genre = ?")
-            params.append(genre)
-        if source is not None:
+        params: list[Any] = []
+        if genre is not None and genre.strip():
+            clauses.append("LOWER(genre) = LOWER(?)")
+            params.append(genre.strip())
+        if source is not None and source.strip():
             clauses.append("source = ?")
-            params.append(source)
+            params.append(source.strip())
+        if bpm_min is not None:
+            clauses.append("bpm IS NOT NULL AND bpm >= ?")
+            params.append(bpm_min)
+        if bpm_max is not None:
+            clauses.append("bpm IS NOT NULL AND bpm <= ?")
+            params.append(bpm_max)
         if exclude_local:
             clauses.append("source != 'local'")
         candidate_rows = await self._sqlite.fetchall(

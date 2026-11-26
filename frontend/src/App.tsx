@@ -32,8 +32,11 @@ function KeyboardShortcuts() {
   const navigate = useNavigate();
   const { toggle, nudge, current } = usePlayerStore();
   const toggleCrate = useCrateStore((s) => s.toggle);
+  const enabled = useSettingsStore((s) => s.keyboardShortcutsEnabled);
+  const seekStepSec = useSettingsStore((s) => s.seekStepSec);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === " ") {
@@ -45,13 +48,19 @@ function KeyboardShortcuts() {
         navigate("/pipeline");
       } else if (e.key === "ArrowLeft" && e.shiftKey) {
         navigate("/");
+      } else if (e.key === "ArrowRight" && !e.shiftKey && current) {
+        e.preventDefault();
+        nudge(seekStepSec);
+      } else if (e.key === "ArrowLeft" && !e.shiftKey && current) {
+        e.preventDefault();
+        nudge(-seekStepSec);
       } else if (e.key === "c" || e.key === "C") {
         toggleCrate();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [navigate, toggle, nudge, current, toggleCrate]);
+  }, [enabled, seekStepSec, navigate, toggle, nudge, current, toggleCrate]);
 
   return null;
 }

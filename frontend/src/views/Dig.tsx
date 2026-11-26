@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Disc3, Search, Sparkles, Trash2 } from "lucide-react";
+import { Disc3, Search, Sparkles, X } from "lucide-react";
 import { api } from "../api/client";
 import type {
   DigResponse,
@@ -18,6 +18,7 @@ import { DigSeedPanel } from "../components/DigSeedPanel";
 import { SeedCard } from "../components/SeedCard";
 import { useDigTrailStore } from "../stores/digTrailStore";
 import { useActiveProfile, useSettingsStore } from "../stores/settingsStore";
+import { normalizePct } from "../lib/format";
 
 type SubMode = "match" | "foryou" | "vibe";
 
@@ -40,15 +41,14 @@ const CAMELOT_KEYS = Array.from({ length: 12 }, (_, i) => `${i + 1}A`).flatMap((
 
 const SOURCES = ["local", "itunes", "deezer"] as const;
 
-/** Backend similarity is 0-100; older payloads may still be 0-1. Never *100 twice. */
-export function normalizePct(n: number): number {
-  const pct = n > 0 && n <= 1 ? n * 100 : n;
-  return Math.round(pct);
-}
-
 export function DigView() {
   const [params, setParams] = useSearchParams();
-  const mode = (params.get("mode") as SubMode) || "match";
+  const rawMode = params.get("mode");
+  const mode: SubMode =
+    rawMode === "match" || rawMode === "foryou" || rawMode === "vibe"
+      ? rawMode
+      : "match";
+  const artistParam = params.get("artist")?.trim() ?? "";
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -71,29 +71,46 @@ export function DigView() {
   const hideHeard = useSettingsStore((s) => s.hideHeard);
   const excludeLocal = useSettingsStore((s) => s.excludeLocal);
   const harmonicMode = useSettingsStore((s) => s.harmonicMode);
-  const [harmonic, setHarmonic] = useState(() => {
-    const s = useSettingsStore.getState();
-    return s.defaultHarmonic;
-  });
-  const [bpmTolerance, setBpmTolerance] = useState(() => {
-    const s = useSettingsStore.getState();
-    return s.defaultBpmTolerance;
-  });
-  const [limit, setLimit] = useState<number>(profile?.defaultLimit ?? 20);
+  const [harmonic, setHarmonic] = useState(() => useSettingsStore.getState().defaultHarmonic);
+  const [bpmToleranceInput, setBpmToleranceInput] = useState(() =>
+    String(useSettingsStore.getState().defaultBpmTolerance),
+  );
+  const [limitInput, setLimitInput] = useState(() => String(profile?.defaultLimit ?? 20));
   const [digGenre, setDigGenre] = useState(profile?.genre ?? "");
   const [digMinYear, setDigMinYear] = useState("");
   const [excludeHeard, setExcludeHeard] = useState(
     () => useSettingsStore.getState().hideHeard,
   );
   const [digNonce, setDigNonce] = useState(0);
+  const bpmTolerance = useMemo(() => {
+    const n = Number(bpmToleranceInput);
+    return bpmToleranceInput.trim() === "" || !Number.isFinite(n)
+      ? 6
+      : Math.min(30, Math.max(0, Math.round(n)));
+  }, [bpmToleranceInput]);
+  const limit = useMemo(() => {
+    const n = Number(limitInput);
+    return limitInput.trim() === "" || !Number.isFinite(n)
+      ? (profile?.defaultLimit ?? 20)
+      : Math.min(200, Math.max(1, Math.round(n)));
+  }, [limitInput, profile?.defaultLimit]);
   // the last dig actually requested, so a re-render never re-queries the same seed
   const fetchedKey = useRef<string | null>(null);
   // seed preloaded from a deep link (?mode=match&seed=<id>) — runs once per seed
   const seedRequested = useRef<string | null>(null);
 
   // for you
-  const [tasteMode, setTasteMode] = useState<"both" | "local" | "liked">("local");
+  const [tasteMode, setTasteMode] = useState<"both" | "local" | "liked">(
+    () => profile?.defaultMode ?? "both",
+  );
   const [taste, setTaste] = useState<TasteRankingResponse | null>(null);
+
+  useEffect(() => {
+    if (!profile) return;
+    setTasteMode(profile.defaultMode);
+    setLimitInput(String(profile.defaultLimit));
+    setDigGenre(profile.genre ?? "");
+  }, [profile]);
 
   // vibe
   const [vibeQuery, setVibeQuery] = useState("");
@@ -101,10 +118,11 @@ export function DigView() {
   const [filterKey, setFilterKey] = useState("");
   const [filterBpmMin, setFilterBpmMin] = useState("");
   const [filterBpmMax, setFilterBpmMax] = useState("");
+  const [filterGenre, setFilterGenre] = useState("");
   const [filterSource, setFilterSource] = useState("");
   const [filterResult, setFilterResult] = useState<Track[] | null>(null);
   const [vibeRangeError, setVibeRangeError] = useState<string | null>(null);
-  const camelotRequested = useRef<string | null>(null);
+  const vibeDeepLinkKey = useRef<string | null>(null);
 
   const setMode = (m: SubMode) => {
     // a pending match/foryou request must not bleed its busy state into the new mode
@@ -126,6 +144,9 @@ export function DigView() {
           mode: tasteMode,
           limit: profile?.defaultLimit ?? 30,
           genre: profile?.genre ?? undefined,
+          bpm_min: profile?.bpmMin ?? undefined,
+          bpm_max: profile?.bpmMax ?? undefined,
+          artist: artistParam || undefined,
           liked_weight: profile?.likedWeight,
           local_weight: profile?.localWeight,
           max_per_artist: maxPerArtist,
@@ -147,19 +168,22 @@ export function DigView() {
       alive = false;
       controller.abort();
     };
-  }, [mode, tasteMode, profile, maxPerArtist, hideHeard, excludeLocal]);
+  }, [mode, tasteMode, profile, artistParam, maxPerArtist, hideHeard, excludeLocal]);
 
   const runDig = (track: Track) => {
     setError(null);
     pushSeed(track);
   };
 
+  const makeDigKey = (id: string) =>
+    `${id}|${bpmTolerance}|${harmonic}|${limit}|${digGenre}|${digMinYear}|${excludeHeard}|${harmonicMode}|${maxPerArtist}|${digNonce}`;
+
   // One place fetches matches: the active trail seed, the BPM window or the
   // harmonic switch changing. Debounced so dragging the slider is one request.
   const seedId = activeSeed?.id ?? null;
   useEffect(() => {
     if (mode !== "match" || !seedId) return;
-    const key = `${seedId}|${bpmTolerance}|${harmonic}|${limit}|${digGenre}|${digMinYear}|${excludeHeard}|${harmonicMode}|${maxPerArtist}|${digNonce}`;
+    const key = makeDigKey(seedId);
     if (fetchedKey.current === key) return;
     let alive = true;
     setBusy(true);
@@ -205,21 +229,6 @@ export function DigView() {
     digNonce,
   ]);
 
-  const deleteTrackFromCatalog = async (track: Track) => {
-    if (!window.confirm(`Delete “${track.title}” from the catalog?`)) return;
-    try {
-      await api.deleteTrack(track.id);
-      setDigResult((prev) =>
-        prev ? { ...prev, matches: prev.matches.filter((m) => m.track.id !== track.id) } : prev,
-      );
-      setTaste((prev) =>
-        prev ? { ...prev, matches: prev.matches.filter((m) => m.id !== track.id) } : prev,
-      );
-    } catch (err) {
-      if (err instanceof Error) setError(err.message);
-    }
-  };
-
   // Deep link: /dig?mode=match&seed=<track id> — load the seed and dig it once.
   const seedParam = params.get("seed");
   useEffect(() => {
@@ -233,13 +242,23 @@ export function DigView() {
     let alive = true;
     setBusy(true);
     setError(null);
+    const expectedKey = makeDigKey(seedParam);
     api
-      .dig(seedParam, { limit: 20, bpm_tolerance: bpmTolerance, harmonic })
+      .dig(seedParam, {
+        limit,
+        bpm_tolerance: bpmTolerance,
+        harmonic,
+        harmonic_mode: harmonicMode,
+        max_per_artist: maxPerArtist,
+        genre: digGenre.trim() || undefined,
+        min_year: digMinYear ? Number(digMinYear) : undefined,
+        exclude_heard: excludeHeard || undefined,
+      })
       .then((res) => {
         if (!alive) return;
+        fetchedKey.current = expectedKey;
         pushSeed(res.reference);
         setDigResult(res);
-        fetchedKey.current = `${seedParam}|${bpmTolerance}|${harmonic}`;
       })
       .catch((err: unknown) => {
         if (alive && err instanceof Error) setError(err.message);
@@ -267,11 +286,20 @@ export function DigView() {
     setError(null);
     try {
       if (vibeQuery.trim()) {
-        const res = await api.vibeSearch({ query: vibeQuery, limit: 30 });
+        const res = await api.vibeSearch({
+          query: vibeQuery.trim(),
+          limit: 30,
+          bpm_min: min ?? undefined,
+          bpm_max: max ?? undefined,
+          camelot_keys: filterKey ? [filterKey] : undefined,
+          exclude_heard: hideHeard || undefined,
+          genre: filterGenre.trim() || undefined,
+        });
         setVibeResult(res);
         setFilterResult(null);
       } else {
         const res = await api.filterCatalog({
+          q: filterGenre.trim() || undefined,
           key: filterKey || undefined,
           bpm_min: min ?? undefined,
           bpm_max: max ?? undefined,
@@ -288,23 +316,36 @@ export function DigView() {
     }
   };
 
-  // Deep link: /dig?mode=vibe&camelot=12A — prefill the key and run immediately.
+  // Deep links: /dig?mode=vibe&camelot=12A or &bpm_min=125&bpm_max=129 — prefill & run.
   const camelotParam = params.get("camelot");
+  const bpmMinParam = params.get("bpm_min");
+  const bpmMaxParam = params.get("bpm_max");
   useEffect(() => {
-    if (
-      mode !== "vibe" ||
-      !camelotParam ||
-      camelotRequested.current === camelotParam
-    )
-      return;
-    camelotRequested.current = camelotParam;
+    if (mode !== "vibe") return;
+    if (!camelotParam && !bpmMinParam && !bpmMaxParam) return;
+    const reqKey = `${camelotParam ?? ""}|${bpmMinParam ?? ""}|${bpmMaxParam ?? ""}`;
+    if (vibeDeepLinkKey.current === reqKey) return;
+    vibeDeepLinkKey.current = reqKey;
+
     let alive = true;
-    setFilterKey(camelotParam);
+    setFilterKey(camelotParam ?? "");
+    setFilterBpmMin(bpmMinParam ?? "");
+    setFilterBpmMax(bpmMaxParam ?? "");
+    setVibeRangeError(null);
     setBusy(true);
     setError(null);
     api
-      .filterCatalog({ key: camelotParam, limit: 60 })
-      .then((res) => alive && setFilterResult(res.tracks))
+      .filterCatalog({
+        key: camelotParam || undefined,
+        bpm_min: bpmMinParam ? Number(bpmMinParam) : undefined,
+        bpm_max: bpmMaxParam ? Number(bpmMaxParam) : undefined,
+        limit: 60,
+      })
+      .then((res) => {
+        if (!alive) return;
+        setFilterResult(res.tracks);
+        setVibeResult(null);
+      })
       .catch((err: unknown) => {
         if (alive && err instanceof Error) setError(err.message);
       })
@@ -314,8 +355,7 @@ export function DigView() {
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, camelotParam]);
+  }, [mode, camelotParam, bpmMinParam, bpmMaxParam]);
 
   const modeHint = useMemo(
     () => MODES.find((m) => m.id === mode)?.hint ?? "",
@@ -332,7 +372,7 @@ export function DigView() {
       <div
         role="tablist"
         aria-label="Dig modes"
-        className="flex flex-wrap gap-2"
+        className="no-scrollbar flex flex-nowrap items-center gap-4 overflow-x-auto border-b border-line"
         data-testid="dig-modes"
       >
         {MODES.map((m) => (
@@ -342,12 +382,7 @@ export function DigView() {
             role="tab"
             aria-selected={mode === m.id}
             onClick={() => setMode(m.id)}
-            className="btn !min-h-0 py-2"
-            style={
-              mode === m.id
-                ? { borderColor: "var(--color-accent)", color: "var(--color-accent)" }
-                : undefined
-            }
+            className="tab shrink-0 gap-2 whitespace-nowrap"
           >
             {m.id === "match" ? <Disc3 size={14} /> : m.id === "foryou" ? <Sparkles size={14} /> : <Search size={14} />}
             {m.label}
@@ -355,7 +390,16 @@ export function DigView() {
         ))}
       </div>
 
-      {error ? <ErrorState message={error} /> : null}
+      {error ? (
+        <ErrorState
+          message={error}
+          onRetry={() => {
+            setError(null);
+            if (mode === "match") setDigNonce((n) => n + 1);
+            else if (mode === "vibe") void runVibe();
+          }}
+        />
+      ) : null}
 
       {mode === "match" ? (
         <section
@@ -377,7 +421,7 @@ export function DigView() {
                   const next = new URLSearchParams(params);
                   next.set("mode", "vibe");
                   if (activeSeed.key) next.set("camelot", activeSeed.key);
-                  camelotRequested.current = null;
+                  vibeDeepLinkKey.current = null;
                   setParams(next, { replace: true });
                 }}
               />
@@ -398,74 +442,74 @@ export function DigView() {
               </span>
             </div>
             <form
-              className="panel flex flex-wrap items-end gap-2 p-2.5"
+              className="panel flex flex-wrap items-end gap-3 p-3"
               onSubmit={(e) => {
                 e.preventDefault();
                 setDigNonce((n) => n + 1);
               }}
             >
-              <label className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+              <label className="filter-field font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
                 LIMIT
                 <input
                   type="number"
                   min={1}
                   max={200}
-                  className="input mt-1 !min-h-0 !w-[76px] py-1.5 font-num text-xs"
-                  value={limit}
-                  onChange={(e) => setLimit(Math.max(1, Number(e.target.value) || 1))}
+                  className="input !min-h-0 !h-10 !w-[76px] py-1.5 font-num text-xs"
+                  value={limitInput}
+                  onChange={(e) => setLimitInput(e.target.value)}
+                  onBlur={() => setLimitInput(String(limit))}
                   aria-label="Result limit"
                 />
               </label>
-              <label className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+              <label className="filter-field font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
                 BPM ±
                 <input
                   type="number"
                   min={0}
                   max={30}
-                  className="input mt-1 !min-h-0 !w-[76px] py-1.5 font-num text-xs"
-                  value={bpmTolerance}
-                  onChange={(e) =>
-                    setBpmTolerance(Math.max(0, Number(e.target.value) || 0))
-                  }
+                  className="input !min-h-0 !h-10 !w-[76px] py-1.5 font-num text-xs"
+                  value={bpmToleranceInput}
+                  onChange={(e) => setBpmToleranceInput(e.target.value)}
+                  onBlur={() => setBpmToleranceInput(String(bpmTolerance))}
                   aria-label="BPM tolerance"
                 />
               </label>
-              <label className="min-w-[110px] flex-1 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+              <label className="filter-field min-w-[120px] flex-1 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
                 GENRE
                 <input
-                  className="input mt-1 !min-h-0 py-1.5 text-xs"
+                  className="input !min-h-0 !h-10 py-1.5 text-xs"
                   placeholder="exact genre"
                   value={digGenre}
                   onChange={(e) => setDigGenre(e.target.value)}
                   aria-label="Genre filter"
                 />
               </label>
-              <label className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+              <label className="filter-field font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
                 MIN YEAR
                 <input
                   type="number"
                   min={1900}
                   max={2100}
-                  className="input mt-1 !min-h-0 !w-[96px] py-1.5 font-num text-xs"
+                  className="input !min-h-0 !h-10 !w-[96px] py-1.5 font-num text-xs"
                   placeholder="any"
                   value={digMinYear}
                   onChange={(e) => setDigMinYear(e.target.value)}
                   aria-label="Minimum year"
                 />
               </label>
-              <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase text-ink-dim">
+              <label className="flex h-10 items-center gap-1.5 font-mono text-[10px] uppercase text-ink-dim">
                 <input
                   type="checkbox"
-                  className="h-3.5 w-3.5 accent-accent"
+                  className="h-4 w-4 accent-accent"
                   checked={harmonic}
                   onChange={(e) => setHarmonic(e.target.checked)}
                 />
                 HARMONIC
               </label>
-              <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase text-ink-dim">
+              <label className="flex h-10 items-center gap-1.5 font-mono text-[10px] uppercase text-ink-dim">
                 <input
                   type="checkbox"
-                  className="h-3.5 w-3.5 accent-accent"
+                  className="h-4 w-4 accent-accent"
                   checked={excludeHeard}
                   onChange={(e) => setExcludeHeard(e.target.checked)}
                 />
@@ -473,7 +517,7 @@ export function DigView() {
               </label>
               <button
                 type="submit"
-                className="btn btn-primary !min-h-0 py-2 font-mono text-[10px]"
+                className="btn btn-primary !min-h-0 h-10 font-mono text-[10px]"
                 disabled={!activeSeed}
               >
                 DIG &gt;
@@ -495,17 +539,6 @@ export function DigView() {
                       track={m.track}
                       queue={digResult.matches.map((x) => x.track)}
                       showMatch={normalizePct(m.similarity)}
-                      trailing={
-                        <button
-                          type="button"
-                          className="btn btn-ghost !min-h-0 !border-0 p-1.5 text-danger hover:!bg-fill"
-                          onClick={() => void deleteTrackFromCatalog(m.track)}
-                          aria-label={`Delete ${m.track.title} from the catalog`}
-                          title="Delete this track from the catalog"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      }
                     />
                   ))}
                 </div>
@@ -523,12 +556,10 @@ export function DigView() {
       {mode === "foryou" ? (
         <section className="flex flex-col gap-3">
           <div
-            role="tablist"
-            aria-label="Taste mode"
-            className="flex flex-wrap items-center justify-between gap-2"
+            className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2"
             data-testid="taste-modes"
           >
-            <div className="flex gap-2">
+            <div className="flex gap-4" role="tablist" aria-label="Taste mode">
               {TASTE_MODES.map((m) => (
                 <button
                   key={m.id}
@@ -536,39 +567,60 @@ export function DigView() {
                   role="tab"
                   aria-selected={tasteMode === m.id}
                   onClick={() => setTasteMode(m.id)}
-                  className="btn !min-h-0 py-2"
-                  style={
-                    tasteMode === m.id
-                      ? { borderColor: "var(--color-accent)", color: "var(--color-accent)" }
-                      : undefined
-                  }
+                  className="tab !min-h-11"
                 >
                   {m.label}
                 </button>
               ))}
             </div>
-            <label className="flex min-h-11 items-center gap-2 rounded-pill border border-line bg-white/[0.03] px-3">
-              <span className="eyebrow !text-[9px]">Profile</span>
-              <select
-                aria-label="Taste profile"
-                className="h-9 rounded-pill border-0 bg-transparent pr-5 text-[12px] text-heading outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
-                value={profile?.id ?? ""}
-                onChange={(event) => setActiveProfile(event.target.value)}
-              >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-panel text-ink">
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              {artistParam ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = new URLSearchParams(params);
+                    next.delete("artist");
+                    setParams(next, { replace: true });
+                  }}
+                  className="pill pill-active min-h-9 gap-1.5 px-2.5 py-1 font-mono text-[10px]"
+                  title="Clear artist seed filter"
+                >
+                  SEED ARTIST: {artistParam}
+                  <X size={12} />
+                </button>
+              ) : null}
+              {profile?.bpmMin != null || profile?.bpmMax != null ? (
+                <span className="pill font-num">
+                  {profile?.bpmMin ?? "—"}–{profile?.bpmMax ?? "—"} BPM
+                </span>
+              ) : null}
+              <label className="flex min-h-11 items-center gap-2 rounded-pill border border-line bg-white/[0.03] px-3">
+                <span className="eyebrow !text-[9px]">Profile</span>
+                <select
+                  aria-label="Taste profile"
+                  className="h-9 rounded-pill border-0 bg-transparent pr-5 text-[12px] text-heading outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                  value={profile?.id ?? ""}
+                  onChange={(event) => setActiveProfile(event.target.value)}
+                >
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id} className="bg-panel text-ink">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
           {busy && !taste ? <Loading label="RANKING YOUR TASTE…" /> : null}
           {taste ? (
             taste.matches.length === 0 ? (
               <EmptyState
                 title="NOTHING RANKED YET"
-                hint="Taste ranking needs embedded local tracks (and liked artists for LIKED mode). Run the index job first."
+                hint={
+                  artistParam
+                    ? `No catalog tracks matched from ${artistParam}'s embedded tracks (or profile BPM/genre constraints).`
+                    : "Taste ranking needs embedded local tracks (and liked artists for LIKED mode). Run the index job first."
+                }
               />
             ) : (
               <div className="panel" data-testid="taste-results">
@@ -579,17 +631,6 @@ export function DigView() {
                     index={i}
                     queue={taste.matches}
                     showMatch={normalizePct(m.taste_percent)}
-                    trailing={
-                      <button
-                        type="button"
-                        className="btn btn-ghost !min-h-0 !border-0 p-1.5 text-danger hover:!bg-fill"
-                        onClick={() => void deleteTrackFromCatalog(m)}
-                        aria-label={`Delete ${m.title} from the catalog`}
-                        title="Delete this track from the catalog"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    }
                   />
                 ))}
               </div>
@@ -623,7 +664,7 @@ export function DigView() {
 
             <fieldset className="flex flex-wrap items-end gap-3 border-t border-line pt-3">
               <legend className="eyebrow mb-1">CATALOG FILTERS</legend>
-              <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+              <label className="filter-field font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
                 CAMELOT KEY
                 <select
                   className="input !w-auto font-num"
@@ -639,7 +680,7 @@ export function DigView() {
                   ))}
                 </select>
               </label>
-              <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+              <label className="filter-field font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
                 BPM MIN
                 <input
                   className="input !w-20 font-num"
@@ -653,7 +694,7 @@ export function DigView() {
                   aria-label="BPM minimum"
                 />
               </label>
-              <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+              <label className="filter-field font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
                 BPM MAX
                 <input
                   className="input !w-20 font-num"
@@ -667,7 +708,17 @@ export function DigView() {
                   aria-label="BPM maximum"
                 />
               </label>
-              <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+              <label className="filter-field min-w-[120px] flex-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+                GENRE
+                <input
+                  className="input"
+                  placeholder="exact genre"
+                  value={filterGenre}
+                  onChange={(e) => setFilterGenre(e.target.value)}
+                  aria-label="Vibe genre filter"
+                />
+              </label>
+              <label className="filter-field font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
                 SOURCE
                 <select
                   className="input !w-auto"
@@ -685,12 +736,13 @@ export function DigView() {
               </label>
               <button
                 type="button"
-                className="btn !min-h-0 py-2 font-mono text-[10px]"
+                className="btn font-mono text-[10px]"
                 onClick={() => {
                   setVibeQuery("");
                   setFilterKey("");
                   setFilterBpmMin("");
                   setFilterBpmMax("");
+                  setFilterGenre("");
                   setFilterSource("");
                   setFilterResult(null);
                   setVibeResult(null);

@@ -305,6 +305,7 @@ export function PipelineView() {
   const speed = useJobsStore((s) => s.speed);
   const memory = useJobsStore((s) => s.memory);
   const logLines = useJobsStore((s) => s.logLines);
+  const jobError = useJobsStore((s) => s.error);
   const start = useJobsStore((s) => s.start);
   const cancel = useJobsStore((s) => s.cancel);
   const refresh = useJobsStore((s) => s.refresh);
@@ -378,7 +379,15 @@ export function PipelineView() {
         </p>
       </div>
 
-      {error ? <ErrorState message={error} /> : null}
+      {error || jobError ? (
+        <ErrorState
+          message={error ?? jobError ?? ""}
+          onRetry={() => {
+            setError(null);
+            void refresh();
+          }}
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <section className="panel self-start" aria-label="Launch a job">
@@ -411,8 +420,10 @@ export function PipelineView() {
               {spec.fields.map((f) => (
                 <label
                   key={f.key}
-                  className={`flex min-w-0 flex-col gap-1 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-dim ${
-                    f.type === "checkbox" ? "flex-row items-center gap-2" : ""
+                  className={`flex min-w-0 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-dim ${
+                    f.type === "checkbox"
+                      ? "flex-row items-center gap-2 sm:col-span-2"
+                      : "flex-col gap-1"
                   }`}
                 >
                   {f.type === "checkbox" ? (
@@ -493,7 +504,7 @@ export function PipelineView() {
             </span>
             <button
               type="button"
-              className="btn btn-ghost !min-h-0 px-2.5 py-1 font-mono text-[9px]"
+              className="btn btn-ghost !min-h-7 px-2.5 py-1 font-mono text-[9px]"
               onClick={() => void cancel()}
               disabled={!active}
             >

@@ -21,7 +21,10 @@ function toPath(rawPath: string, options: M3u8Options): string {
     const prefix = options.pathPrefix.trim().replace(/\/+$/, "");
     return prefix ? `${prefix}/${basename(normalised)}` : basename(normalised);
   }
-  return normalised.startsWith("file://") ? normalised : `file://${normalised}`;
+  if (/^(https?:\/\/|file:\/\/|\/api\/)/i.test(normalised)) return normalised;
+  return /^[a-zA-Z]:\//.test(normalised)
+    ? `file:///${normalised}`
+    : `file://${normalised.startsWith("/") ? "" : "/"}${normalised}`;
 }
 
 function metaLine(track: Track): string {

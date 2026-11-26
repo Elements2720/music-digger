@@ -161,3 +161,32 @@ def test_search_filter_is_immutable() -> None:
     search_filter = SearchFilter()
     with pytest.raises(dataclasses.FrozenInstanceError):
         search_filter.limit = 10  # type: ignore[misc]
+
+
+def test_search_filter_has_local_and_source_filter() -> None:
+    local_only = SearchFilter(has_local=True)
+    remote_only = SearchFilter(has_local=False)
+    itunes_only = SearchFilter(source_filter=" iTunes ")
+    assert itunes_only.source_filter == "iTunes"
+    local_track = Track(
+        id="t-local",
+        title="Local",
+        artist="Artist",
+        source="itunes",
+        local_path="/music/track.m4a",
+    )
+    remote_track = Track(
+        id="t-remote",
+        title="Remote",
+        artist="Artist",
+        source="deezer",
+        local_path=None,
+    )
+    assert local_only.matches(local_track)
+    assert not local_only.matches(remote_track)
+    assert not remote_only.matches(local_track)
+    assert remote_only.matches(remote_track)
+    assert itunes_only.matches(local_track)
+    assert not itunes_only.matches(remote_track)
+    with pytest.raises(TypeError):
+        SearchFilter(has_local="yes")  # type: ignore[arg-type]

@@ -13,7 +13,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { create } from "zustand";
 import { api } from "../api/client";
 import { useCrateStore } from "../stores/crateStore";
@@ -128,7 +128,7 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
             DIGDEEPER
           </span>
           <span className="block truncate text-[10px] tracking-[0.02em] text-ink-faint">
-            Dig without leaving the room
+            Local DJ crate
           </span>
         </span>
       )}
@@ -179,7 +179,6 @@ export function Sidebar() {
               key={item.to}
               to={item.to}
               end={item.to === "/"}
-              role="tab"
               data-tab-label={item.label}
               className={({ isActive }) =>
                 `nav-item ${isActive ? "!text-heading" : ""}`
@@ -239,8 +238,8 @@ export function Sidebar() {
             </span>
           ) : null}
         </button>
-        <NavLink
-          to="/builder"
+        <Link
+          to="/builder#saved"
           className="nav-item mt-0.5 w-full justify-start"
           title="Saved Sets in the Set Builder"
         >
@@ -250,7 +249,7 @@ export function Sidebar() {
           ) : (
             <span className="flex-1 truncate">Saved Sets</span>
           )}
-        </NavLink>
+        </Link>
       </div>
 
       <div className="px-2 pb-3">

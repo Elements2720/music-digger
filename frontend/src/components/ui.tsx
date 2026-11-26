@@ -1,15 +1,127 @@
-import { Heart, ExternalLink, Pause, Play, Plus, Sparkles } from "lucide-react";
-import { useState } from "react";
-import type { ReactNode } from "react";
+import { ExternalLink, Headphones, Pause, Play, Plus, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
 import { Link } from "react-router-dom";
 import { useLikesStore } from "../stores/likesStore";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
 import { useDigTrailStore } from "../stores/digTrailStore";
+import { useSettingsStore } from "../stores/settingsStore";
 import { api } from "../api/client";
 import type { TasteRankedMatch, Track } from "../types/apiTypes";
 import { fmtBpm, hueOf, initials } from "../lib/format";
 import { camelotColor } from "../lib/camelot";
+
+/** Trap focus inside a dialog/drawer while open, handle Escape, and restore prior focus on close. */
+export function useModalFocusTrap(
+  open: boolean,
+  containerRef: RefObject<HTMLElement | null>,
+  onClose: () => void,
+) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) return;
+    const prev =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const container = containerRef.current;
+    const focusables = () =>
+      Array.from(
+        container?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    const first = focusables()[0] ?? container;
+    first?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !container) return;
+      const items = focusables();
+      if (items.length === 0) {
+        e.preventDefault();
+        container.focus();
+        return;
+      }
+      const head = items[0];
+      const tail = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === head || !container.contains(document.activeElement))) {
+        e.preventDefault();
+        tail.focus();
+      } else if (!e.shiftKey && (document.activeElement === tail || !container.contains(document.activeElement))) {
+        e.preventDefault();
+        head.focus();
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      prev?.focus?.();
+    };
+  }, [open, containerRef]);
+}
+
+/** Two-step inline confirmation for destructive actions (resets automatically after 4s). */
+export function ConfirmActionButton({
+  onConfirm,
+  label,
+  confirmLabel = "CONFIRM?",
+  className = "btn btn-danger",
+  disabled = false,
+  title,
+  ariaLabel,
+  confirmAriaLabel,
+}: {
+  onConfirm: () => void | Promise<void>;
+  label: ReactNode;
+  confirmLabel?: string;
+  className?: string;
+  disabled?: boolean;
+  title?: string;
+  ariaLabel?: string;
+  confirmAriaLabel?: string;
+}) {
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmed(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
+
+  useEffect(() => {
+    if (disabled && armed) setArmed(false);
+  }, [disabled, armed]);
+
+  const handleClick = () => {
+    if (disabled) return;
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setArmed(false);
+    void onConfirm();
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={disabled}
+      title={armed ? `Click again to confirm` : title}
+      aria-label={armed ? (confirmAriaLabel ?? confirmLabel) : ariaLabel}
+      className={armed ? "btn btn-primary" : className}
+    >
+      {armed ? confirmLabel : label}
+    </button>
+  );
+}
 
 // --------------------------------------------------------------- artwork
 
@@ -128,11 +240,21 @@ export function SourcePill({ source }: { source: string | null | undefined }) {
 
 // ------------------------------------------------------- download action
 
-export function DownloadButton({ track }: { track: Track }) {
+export function DownloadButton({
+  track,
+  className = "",
+}: {
+  track: Track;
+  className?: string;
+}) {
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">(
     track.has_local_file ? "done" : "idle",
   );
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setState(track.has_local_file ? "done" : "idle");
+  }, [track.id, track.has_local_file]);
 
   if (state === "done") return <LocalBadge has />;
 
@@ -140,8 +262,11 @@ export function DownloadButton({ track }: { track: Track }) {
     setState("busy");
     setMessage(null);
     try {
-      await api.downloadTrack(track.id);
+      const updated = await api.downloadTrack(track.id);
       setState("done");
+      const post = useSettingsStore.getState().postDownloadAction;
+      if (post === "play") usePlayerStore.getState().play(updated);
+      else if (post === "crate") useCrateStore.getState().add(updated);
     } catch (err) {
       setState("error");
       setMessage(err instanceof Error ? err.message : "Download failed");
@@ -149,18 +274,16 @@ export function DownloadButton({ track }: { track: Track }) {
   };
 
   return (
-    <span className="flex items-center gap-1">
-      <button
-        type="button"
-        onClick={() => void download()}
-        disabled={state === "busy"}
-        className="btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px]"
-        aria-label={`Download ${track.title}`}
-        title={message ?? "Download full track from source"}
-      >
-        {state === "busy" ? "…" : state === "error" ? "RETRY" : "↓ DL"}
-      </button>
-    </span>
+    <button
+      type="button"
+      onClick={() => void download()}
+      disabled={state === "busy"}
+      className={`btn btn-ghost !min-h-0 px-2 py-2 font-mono text-[10px] ${className}`}
+      aria-label={`Download ${track.title}`}
+      title={message ?? "Download full track from source"}
+    >
+      {state === "busy" ? "…" : state === "error" ? "RETRY" : "↓ DL"}
+    </button>
   );
 }
 
@@ -228,13 +351,28 @@ export function EmptyState({
   );
 }
 
-export function ErrorState({ message }: { message: string }) {
+export function ErrorState({
+  message,
+  onRetry,
+  retryLabel = "RETRY",
+}: {
+  message: string;
+  onRetry?: () => void;
+  retryLabel?: string;
+}) {
   return (
-    <div className="panel p-6">
-      <p className="font-mono text-xs uppercase tracking-[0.1em] text-danger">
-        ERROR
-      </p>
-      <p className="mt-2 text-sm text-ink-dim">{message}</p>
+    <div className="panel flex flex-wrap items-center justify-between gap-4 p-6">
+      <div>
+        <p className="font-mono text-xs uppercase tracking-[0.1em] text-danger">
+          ERROR
+        </p>
+        <p className="mt-2 text-sm text-ink-dim">{message}</p>
+      </div>
+      {onRetry ? (
+        <button type="button" className="btn" onClick={onRetry}>
+          {retryLabel}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -263,14 +401,8 @@ function useTrackActions() {
   const inCrate = useCrateStore((s) => s.tracks);
   const play = usePlayerStore((s) => s.play);
 
-  const toggleHeard = async (track: Track) => {
-    const next = !heard.has(track.id);
-    toggleHeardLocal(track.id, next);
-    try {
-      await api.setHeard(track.id, next);
-    } catch {
-      toggleHeardLocal(track.id, !next);
-    }
+  const toggleHeard = (track: Track) => {
+    void toggleHeardLocal(track.id, !heard.has(track.id));
   };
 
   return { heard, toggleHeard, addToCrate, inCrate, play };
@@ -323,7 +455,7 @@ export function TrackRow({
       <button
         type="button"
         onClick={() => play(track, queue)}
-        className="min-w-0 flex-1 overflow-hidden text-left"
+        className="min-w-[160px] flex-1 overflow-hidden text-left"
       >
         <p
           className={`line-clamp-3 break-words text-[13px] leading-snug sm:line-clamp-2 sm:text-sm ${isCurrent ? "text-accent" : "text-heading"}`}
@@ -351,19 +483,18 @@ export function TrackRow({
         <BpmPill bpm={track.bpm} />
         <KeyPill k={track.key} />
       </div>
-      <div className="track-actions flex shrink-0 basis-full items-center justify-end gap-0.5 sm:basis-auto sm:justify-start sm:gap-1">
+      <div className="track-actions ml-auto flex shrink-0 basis-full items-center justify-end gap-0.5 sm:basis-auto sm:justify-start sm:gap-1">
         <button
           type="button"
-          onClick={() => void toggleHeard(track)}
-          className="btn btn-ghost !min-h-0 !border-0 !bg-transparent p-1.5 hover:!bg-fill"
-          aria-label={isHeardNow ? `Unlike ${track.title}` : `Like ${track.title}`}
+          onClick={() => toggleHeard(track)}
+          className={`btn btn-ghost !min-h-0 !border-0 !bg-transparent p-1.5 hover:!bg-fill ${
+            isHeardNow ? "text-accent" : "text-ink-faint"
+          }`}
+          aria-label={isHeardNow ? `Unmark ${track.title} as heard` : `Mark ${track.title} as heard`}
+          title={isHeardNow ? "Marked heard (click to unmark)" : "Mark heard"}
           aria-pressed={isHeardNow}
         >
-          <Heart
-            size={16}
-            className={isHeardNow ? "heart-on" : "text-ink-faint"}
-            fill={isHeardNow ? "currentColor" : "none"}
-          />
+          <Headphones size={16} />
         </button>
         <button
           type="button"

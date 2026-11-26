@@ -54,6 +54,39 @@ export class ApiError extends Error {
 
 const BASE = "";
 
+export interface HeardTrackPayload {
+  id: string;
+  is_heard?: boolean;
+}
+
+type HeardObserver = (items: HeardTrackPayload[]) => void;
+let heardObserver: HeardObserver | null = null;
+
+export function registerHeardObserver(fn: HeardObserver): void {
+  heardObserver = fn;
+}
+
+function collectHeardPayloads(
+  value: unknown,
+  out: HeardTrackPayload[],
+  depth = 0,
+): void {
+  if (depth > 4 || !value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectHeardPayloads(item, out, depth + 1);
+    return;
+  }
+  const rec = value as Record<string, unknown>;
+  if (typeof rec.id === "string" && typeof rec.is_heard === "boolean") {
+    out.push({ id: rec.id, is_heard: rec.is_heard });
+  }
+  for (const child of Object.values(rec)) {
+    if (child && typeof child === "object") {
+      collectHeardPayloads(child, out, depth + 1);
+    }
+  }
+}
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
@@ -104,7 +137,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     }
     throw new ApiError(detail, res.status);
   }
-  return (await res.json()) as T;
+  const data = (await res.json()) as T;
+  if (heardObserver) {
+    const items: HeardTrackPayload[] = [];
+    collectHeardPayloads(data, items);
+    if (items.length > 0) heardObserver(items);
+  }
+  return data;
 }
 
 function encodedPath(value: string): string {
@@ -304,6 +343,9 @@ export const api = {
       max_per_artist?: number;
       hide_heard?: boolean;
       exclude_local?: boolean;
+      bpm_min?: number;
+      bpm_max?: number;
+      artist?: string;
     },
     options?: { signal?: AbortSignal },
   ): Promise<TasteRankingResponse> {
@@ -348,7 +390,7 @@ export const api = {
   },
 
   deleteSeed(name: string): Promise<{ name: string; deleted: boolean }> {
-    return request(`/api/catalog/seeds/${name}`, { method: "DELETE" });
+    return request(`/api/catalog/seeds/${encodedPath(name)}`, { method: "DELETE" });
   },
 
   purgeSeeds(payload: SeedPurgeBody): Promise<{ purged: number }> {

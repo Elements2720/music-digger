@@ -36,6 +36,8 @@ class SearchFilter:
     min_year: int | None = None
     max_year: int | None = None
     genres: tuple[str, ...] = ()
+    has_local: bool | None = None
+    source_filter: str | None = None
 
     def __post_init__(self) -> None:
         minimum = self._normalize_bpm_bound(self.bpm_min, "bpm_min")
@@ -99,6 +101,15 @@ class SearchFilter:
                     seen_g.add(key_g)
                     normalized_genres.append(clean_g)
         object.__setattr__(self, "genres", tuple(normalized_genres))
+        if self.has_local is not None:
+            object.__setattr__(
+                self, "has_local", require_bool(self.has_local, "has_local")
+            )
+        object.__setattr__(
+            self,
+            "source_filter",
+            optional_str(self.source_filter, "source_filter"),
+        )
 
     @staticmethod
     def _normalize_bpm_bound(value: object | None, field: str) -> float | None:
@@ -150,6 +161,16 @@ class SearchFilter:
         elif self.genre_filter is not None and (
             track.genre is None
             or track.genre.casefold() != self.genre_filter.casefold()
+        ):
+            return False
+
+        if self.has_local is True and not track.local_path:
+            return False
+        if self.has_local is False and track.local_path:
+            return False
+        if (
+            self.source_filter is not None
+            and track.source.casefold() != self.source_filter.casefold()
         ):
             return False
 

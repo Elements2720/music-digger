@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import type { DashboardResponse, Track } from "../types/apiTypes";
 import {
@@ -44,11 +44,20 @@ function wedge(r0: number, r1: number, a0: number, a1: number): string {
 
 function CamelotWheel({ keys }: { keys: KeyCount[] }) {
   const navigate = useNavigate();
+  const [focusIdx, setFocusIdx] = useState(0);
+  const wheelRef = useRef<SVGSVGElement | null>(null);
   const real = keys.filter((k) => k.camelot_key);
   const max = real.length ? Math.max(...real.map((k) => k.track_count)) : 0;
   const total = real.reduce((sum, k) => sum + k.track_count, 0);
   const countFor = (key: string) =>
     real.find((k) => k.camelot_key === key)?.track_count ?? 0;
+
+  const moveFocus = (nextIdx: number) => {
+    const wrapped = ((nextIdx % 24) + 24) % 24;
+    setFocusIdx(wrapped);
+    const items = wheelRef.current?.querySelectorAll<SVGGElement>(".wheel-seg");
+    items?.[wrapped]?.focus();
+  };
 
   return (
     <section className="panel overflow-hidden" aria-label="Camelot wheel">
@@ -69,6 +78,7 @@ function CamelotWheel({ keys }: { keys: KeyCount[] }) {
         <div className="grid gap-2 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <div className="mx-auto w-full max-w-[320px]">
             <svg
+              ref={wheelRef}
               viewBox="0 0 320 320"
               role="group"
               aria-label="Camelot wheel, 24 keys"
@@ -81,7 +91,8 @@ function CamelotWheel({ keys }: { keys: KeyCount[] }) {
                 return [
                   { key: `${n}B`, ring: OUTER, name: "B major" },
                   { key: `${n}A`, ring: INNER, name: "A minor" },
-                ].map(({ key, ring, name }) => {
+                ].map(({ key, ring, name }, ringIdx) => {
+                  const idx = (n - 1) * 2 + ringIdx;
                   const count = countFor(key);
                   const mix =
                     count === 0
@@ -93,8 +104,9 @@ function CamelotWheel({ keys }: { keys: KeyCount[] }) {
                       key={key}
                       className="wheel-seg"
                       role="link"
-                      tabIndex={0}
+                      tabIndex={idx === focusIdx ? 0 : -1}
                       aria-label={`Dig ${key} ${name}, ${count} tracks`}
+                      onFocus={() => setFocusIdx(idx)}
                       onClick={() =>
                         navigate(`/dig?mode=vibe&camelot=${key}`)
                       }
@@ -102,6 +114,12 @@ function CamelotWheel({ keys }: { keys: KeyCount[] }) {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           navigate(`/dig?mode=vibe&camelot=${key}`);
+                        } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                          e.preventDefault();
+                          moveFocus(idx + 1);
+                        } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                          e.preventDefault();
+                          moveFocus(idx - 1);
                         }
                       }}
                     >
@@ -207,11 +225,11 @@ function CamelotWheel({ keys }: { keys: KeyCount[] }) {
 
 // ----------------------------------------------------------------- bpm
 
-function bpmLabelToRange(label: string): { min: number; max: number } | null {
+function bpmLabelToRange(label: string): { min?: number; max?: number } | null {
   const under = /^<\s*(\d+)$/.exec(label);
-  if (under) return { min: 0, max: Number(under[1]) - 1 };
+  if (under) return { max: Number(under[1]) - 1 };
   const over = /^(\d+)\+$/.exec(label);
-  if (over) return { min: Number(over[1]), max: 200 };
+  if (over) return { min: Number(over[1]) };
   const span = /^(\d+)\s*-\s*(\d+)$/.exec(label);
   if (span) return { min: Number(span[1]), max: Number(span[2]) };
   return null;
@@ -245,9 +263,10 @@ function BpmHistogram({
           <div className="flex h-[132px] items-end gap-1.5">
             {buckets.map((b) => {
               const range = bpmLabelToRange(b.label);
-              const to = range
-                ? `/dig?mode=vibe&bpm_min=${range.min}&bpm_max=${range.max}`
-                : null;
+              const qs = new URLSearchParams({ mode: "vibe" });
+              if (range?.min != null) qs.set("bpm_min", String(range.min));
+              if (range?.max != null) qs.set("bpm_max", String(range.max));
+              const to = range ? `/dig?${qs.toString()}` : null;
               const height = Math.max(
                 6,
                 Math.round((b.track_count / max) * 92),
@@ -530,7 +549,17 @@ export function DashboardView() {
     };
   }, [reloadKey]);
 
-  if (error) return <ErrorState message={error} />;
+  if (error) {
+    return (
+      <ErrorState
+        message={error}
+        onRetry={() => {
+          setError(null);
+          setReloadKey((k) => k + 1);
+        }}
+      />
+    );
+  }
   if (!data) return <Loading label="LOADING DASHBOARD…" />;
 
   const { stats, analytics, recent_tracks: recent } = data;
@@ -538,59 +567,61 @@ export function DashboardView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="panel relative overflow-hidden">
-        <span
-          aria-hidden
-          className="absolute inset-x-0 top-0 h-px"
-          style={{
-            background:
-              "linear-gradient(90deg, var(--color-accent), transparent 55%)",
-          }}
-        />
-        <div className="grid gap-5 p-5 sm:p-6 lg:gap-8">
-          <div>
-            <p className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.2em] text-ink-faint">
-              <span
-                aria-hidden
-                className="h-1.5 w-1.5"
-                style={{ background: "var(--color-accent)" }}
-              />
-              DigDeeper — Set command center
-            </p>
-            <h1 className="mt-2.5 text-[27px] leading-[1.08] text-heading sm:text-[34px]">
-              Every key, knob and cue{" "}
-              <span style={{ color: "var(--color-accent)" }}>
-                in one console.
-              </span>
-            </h1>
-            <p className="mt-3 max-w-xl text-[13px] leading-relaxed text-ink-dim">
-              Six workspaces on a single dark grid, plus Settings: dig with three search modes,
-              plot harmony on the Camelot wheel, audit mixes, and keep the deck
-              one keystroke away.
-            </p>
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              <a href="#console" className="btn btn-primary">
-                Open the dashboard
-                <ArrowDown size={13} />
-              </a>
-              <Link to="/dig" className="btn">
-                Start digging
-              </Link>
-              <span className="ml-1 hidden font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint sm:inline">
-                {fmtCount(totalTracks)} tracks on disk
-              </span>
+      {totalTracks === 0 ? (
+        <section className="panel relative overflow-hidden">
+          <div className="grid gap-4 p-5 sm:p-6">
+            <div>
+              <h1 className="text-[26px] leading-[1.1] text-heading sm:text-[32px]">
+                Every key, knob and cue{" "}
+                <span style={{ color: "var(--color-accent)" }}>
+                  in one console.
+                </span>
+              </h1>
+              <p className="mt-2.5 max-w-xl text-[13px] leading-relaxed text-ink-dim">
+                Seven workspaces on a single dark grid: dig with three search modes,
+                plot harmony on the Camelot wheel, audit mixes, and keep the deck
+                one keystroke away.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <Link to="/pipeline" className="btn btn-primary">
+                  Open Pipeline
+                </Link>
+                <Link to="/dig" className="btn">
+                  Start digging
+                </Link>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
+      ) : (
+        <section className="panel flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-5">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-[-0.02em] text-heading sm:text-2xl">
+              Set command center
+            </h1>
+            <p className="font-num mt-0.5 text-[11px] text-ink-dim">
+              {fmtCount(totalTracks)} tracks · {fmtCount(stats.tracks.embedded)} indexed ·{" "}
+              {fmtCount(stats.sets.total)} sets · Seven workspaces
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to="/dig" className="btn btn-primary">
+              Start digging
+            </Link>
+            <Link to="/builder" className="btn">
+              Set Builder
+            </Link>
+          </div>
+        </section>
+      )}
 
       {active && job ? (
         <div
-          className="panel flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5"
+          className="panel flex flex-wrap items-center justify-between gap-3 border-accent/40 bg-accent/[0.06] px-3.5 py-2.5"
           role="status"
-          style={{ borderLeft: "2px solid var(--color-accent)" }}
         >
-          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-accent">
+          <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-accent">
+            <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
             Job running — {job.kind}
           </p>
           <p className="font-mono text-[10px] text-ink-dim">
@@ -604,7 +635,7 @@ export function DashboardView() {
           <p className="eyebrow">Primary instruments</p>
           <Link
             to="/dig"
-            className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-dim underline-offset-4 hover:text-heading hover:underline"
+            className="inline-flex min-h-7 items-center font-mono text-[9px] uppercase tracking-[0.14em] text-ink-dim underline-offset-4 hover:text-heading hover:underline"
           >
             Open Dig →
           </Link>

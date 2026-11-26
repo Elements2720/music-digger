@@ -34,8 +34,8 @@
 
 /* Accent themes (Settings → Appearance). Tailwind utilities read these vars. */
 html[data-accent="violet"] {
-  --color-accent: #8b5cf6;
-  --color-accent-dim: #7440e6;
+  --color-accent: #a78bfa;
+  --color-accent-dim: #916ef7;
   --color-accent-ink: #0e0618;
 }
 html[data-accent="amber"] {
@@ -83,6 +83,7 @@ html[data-density="roomy"] .density-row {
 }
 
 html {
+  color-scheme: dark;
   scroll-behavior: smooth;
 }
 
@@ -172,7 +173,7 @@ h2 {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-console);
@@ -219,6 +220,18 @@ select:focus-visible,
   background: var(--color-accent-dim);
   border-color: var(--color-accent-dim);
   color: var(--color-accent-ink);
+}
+
+.btn-accent {
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-panel-2));
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: var(--color-heading);
+  font-weight: 600;
+}
+.btn-accent:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 26%, var(--color-panel-2));
+  border-color: var(--color-accent);
+  color: var(--color-heading);
 }
 
 .btn-ghost {
@@ -300,10 +313,14 @@ select:focus-visible,
 .tab:hover {
   color: var(--color-heading);
 }
-.tab[aria-selected="true"] {
+.tab[aria-selected="true"],
+.tab[aria-pressed="true"],
+.tab[data-active="true"] {
   color: var(--color-heading);
 }
-.tab[aria-selected="true"]::after {
+.tab[aria-selected="true"]::after,
+.tab[aria-pressed="true"]::after,
+.tab[data-active="true"]::after {
   content: "";
   position: absolute;
   left: 0;
@@ -399,10 +416,12 @@ select:focus-visible,
 .seg > button:hover {
   color: var(--color-heading);
 }
-.seg > button[aria-selected="true"] {
+.seg > button[aria-selected="true"],
+.seg > button[aria-pressed="true"],
+.seg > button[data-on="true"] {
   background: var(--color-fill);
-  color: var(--color-accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: var(--color-heading);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
 
 .nav-item {
@@ -545,7 +564,7 @@ select.input option {
   font-size: 11px;
 }
 
-/* TrackRow action row: 44px touch targets on touch screens */
+/* TrackRow & segmented controls: 44px touch targets on touch screens */
 @media (hover: none) and (pointer: coarse) {
   .track-actions > * {
     min-height: 44px;
@@ -554,5 +573,9 @@ select.input option {
   }
   .track-actions {
     gap: 2px;
+  }
+  .seg > button {
+    min-height: 44px;
+    padding: 0 12px;
   }
 }

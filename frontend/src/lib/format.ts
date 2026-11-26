@@ -17,6 +17,13 @@ export const fmtClock = (sec: number | null | undefined): string => {
 export const fmtPercent = (v: number | null | undefined): string =>
   v == null ? "—" : `${Math.round(v)}%`;
 
+/** Backend similarity is 0-100; older payloads may still be 0-1. Never *100 twice. */
+export function normalizePct(v: number | null | undefined): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  if (v > 0 && v <= 1) return Math.round(v * 100);
+  return Math.round(v);
+}
+
 export const fmtCount = (n: number | null | undefined): string =>
   n == null ? "—" : n.toLocaleString("en-US");
 
@@ -37,7 +44,7 @@ export function isHeard(t: Track | { id: string }, heard: Set<string>): boolean 
 }
 
 export function matchPercent(m: Match): string {
-  return fmtPercent(m.similarity * 100);
+  return fmtPercent(normalizePct(m.similarity));
 }
 
 export function tastePercent(t: TasteRankedMatch): string {

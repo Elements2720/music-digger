@@ -612,7 +612,7 @@ export function SettingsView() {
               {(
                 [
                   ["crimson", "#fa233b"],
-                  ["violet", "#8b5cf6"],
+                  ["violet", "#a78bfa"],
                   ["amber", "#f5b942"],
                   ["teal", "#2fcfb0"],
                 ] as [AccentTheme, string][]

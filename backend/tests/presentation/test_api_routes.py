@@ -11,6 +11,7 @@ import pytest
 from api_fakes import make_container, make_set, make_track
 
 from domain.entities.dj_set import SetMatch
+from domain.value_objects.audio_features import BPM
 from presentation.api import create_app
 
 
@@ -759,7 +760,39 @@ async def test_taste_ranking_forwards_tuning_params() -> None:
         "max_per_artist": 2,
         "hide_heard": True,
         "exclude_local": True,
+        "bpm_min": None,
+        "bpm_max": None,
+        "seed_artist": None,
     }
+
+
+async def test_taste_ranking_forwards_bpm_and_artist_seed() -> None:
+    container = make_container()
+    await container.track_repository.upsert_many(
+        [
+            replace(make_track("seed:a", artist="Solomun"), bpm=BPM(124.0)),
+            replace(make_track("cat:in", artist="Stephan Bodzin"), bpm=BPM(125.0)),
+            replace(make_track("cat:slow", artist="Ambient Artist"), bpm=BPM(95.0)),
+        ]
+    )
+    transport = httpx.ASGITransport(app=create_app(container=container))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/api/catalog/taste-ranking",
+            params={
+                "mode": "foryou" if False else "both",
+                "bpm_min": 120.0,
+                "bpm_max": 128.0,
+                "artist": "Solomun",
+            },
+        )
+    assert response.status_code == 200
+    assert container.track_repository.taste_kwargs["bpm_min"] == 120.0
+    assert container.track_repository.taste_kwargs["bpm_max"] == 128.0
+    assert container.track_repository.taste_kwargs["seed_artist"] == "Solomun"
+    ids = [m["id"] for m in response.json()["matches"]]
+    assert "cat:in" in ids
+    assert "cat:slow" not in ids
 
 
 async def test_taste_ranking_rejects_invalid_tuning(
@@ -770,9 +803,37 @@ async def test_taste_ranking_rejects_invalid_tuning(
         {"local_weight": -0.5},
         {"max_per_artist": -1},
         {"max_per_artist": 51},
+        {"bpm_min": 140, "bpm_max": 120},
     ):
         response = await client.get("/api/catalog/taste-ranking", params=params)
         assert response.status_code == 422, params
+
+
+async def test_filter_catalog_local_source_applies_before_limit() -> None:
+    container = make_container()
+    await container.track_repository.upsert_many(
+        [
+            replace(make_track("remote:a", artist="Alpha"), source="itunes", local_path=None),
+            replace(make_track("remote:b", artist="Beta"), source="deezer", local_path=None),
+            replace(
+                make_track("local:z", artist="Zulu"),
+                source="itunes",
+                local_path="downloads/zulu.m4a",
+            ),
+        ]
+    )
+    transport = httpx.ASGITransport(app=create_app(container=container))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        res_local = await client.get(
+            "/api/catalog/filter", params={"source": "local", "limit": 1}
+        )
+        res_deezer = await client.get(
+            "/api/catalog/filter", params={"source": "deezer", "limit": 5}
+        )
+    assert res_local.status_code == 200
+    assert [t["id"] for t in res_local.json()["tracks"]] == ["local:z"]
+    assert res_deezer.status_code == 200
+    assert [t["id"] for t in res_deezer.json()["tracks"]] == ["remote:b"]
 
 
 def _taste_tracks() -> list:

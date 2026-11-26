@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { CheckSquare, Heart, Plus, RotateCcw, Search, ShieldOff, Sparkles, Trash2, X } from "lucide-react";
+import {
+  CheckSquare,
+  Headphones,
+  Heart,
+  Plus,
+  RotateCcw,
+  Search,
+  ShieldOff,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import { api } from "../api/client";
 import type {
   ArtistSummary,
@@ -12,6 +23,7 @@ import type {
 } from "../types/apiTypes";
 import {
   Artwork,
+  ConfirmActionButton,
   EmptyState,
   ErrorState,
   Loading,
@@ -19,9 +31,13 @@ import {
   TasteBadge,
   TasteBadgeCompact,
   TrackRow,
+  useModalFocusTrap,
 } from "../components/ui";
 import { fmtCount, fmtPercent } from "../lib/format";
+import { useCrateStore } from "../stores/crateStore";
+import { useDigTrailStore } from "../stores/digTrailStore";
 import { useLikesStore } from "../stores/likesStore";
+import { usePlayerStore } from "../stores/playerStore";
 
 type SubTab = "artists" | "cleanup" | "seeds" | "hardware";
 
@@ -45,20 +61,24 @@ function ArtistModal({
   const [filter, setFilter] = useState("");
   const [fetchState, setFetchState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const [fetchMessage, setFetchMessage] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    let alive = true;
+  useModalFocusTrap(true, modalRef, onClose);
+
+  const loadTracks = useCallback(() => {
+    setError(null);
     api
       .artistTracks(summary.artist)
-      .then((res) => alive && setData(res))
-      .catch((err: unknown) => alive && err instanceof Error && setError(err.message));
-    return () => {
-      alive = false;
-    };
+      .then(setData)
+      .catch((err: unknown) => err instanceof Error && setError(err.message));
   }, [summary.artist]);
 
+  useEffect(() => {
+    loadTracks();
+  }, [loadTracks]);
+
   const heardIds = useLikesStore((s) => s.heardIds);
-  const toggleHeard = useLikesStore((s) => s.toggleHeard);
+  const bulkHeard = useLikesStore((s) => s.bulkHeard);
   const tracks = data?.tracks ?? [];
   const needle = filter.trim().toLowerCase();
   const visible = needle
@@ -90,10 +110,13 @@ function ArtistModal({
     }
   };
 
-  const removeTrack = async (trackId: string, title: string) => {
-    if (!window.confirm(`Remove “${title}” from the catalog?`)) return;
+  const removeTrack = async (trackId: string) => {
     try {
       await api.deleteTrack(trackId);
+      useCrateStore.getState().remove(trackId);
+      usePlayerStore.getState().removeTrack(trackId);
+      useDigTrailStore.getState().remove(trackId);
+      useLikesStore.getState().removeTrack(trackId);
       setData((prev) =>
         prev ? { ...prev, tracks: prev.tracks.filter((t) => t.id !== trackId) } : prev,
       );
@@ -107,9 +130,12 @@ function ArtistModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden />
       <div
+        ref={modalRef}
         role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
         aria-label={`Artist ${summary.artist}`}
-        className="panel relative flex max-h-[88vh] w-full max-w-3xl flex-col"
+        className="panel relative flex max-h-[88vh] w-full max-w-3xl flex-col focus:outline-none"
       >
         <div className="panel-head flex-wrap gap-2">
           <span className="min-w-0 flex-1">
@@ -142,15 +168,17 @@ function ArtistModal({
             }`}
             aria-pressed={allHeard}
             aria-label={
-              allHeard ? "Unmark this artist's tracks" : "Like this artist's tracks"
+              allHeard
+                ? `Unmark all ${summary.artist} tracks as heard`
+                : `Mark all ${summary.artist} tracks as heard`
             }
-            onClick={() => {
-              for (const track of tracks) toggleHeard(track.id, !allHeard);
-            }}
-            title={allHeard ? "Unmark this artist's tracks" : "Like this artist's tracks"}
+            onClick={() => void bulkHeard(tracks.map((t) => t.id), !allHeard)}
+            title={
+              allHeard ? "Unmark all tracks as heard" : "Mark all tracks as heard"
+            }
           >
-            <Heart size={13} fill={allHeard ? "currentColor" : "none"} />
-            {allHeard ? "Liked" : "Like"}
+            <Headphones size={13} />
+            {allHeard ? "All heard" : "Mark all heard"}
           </button>
           <button
             type="button"
@@ -205,7 +233,7 @@ function ArtistModal({
           </p>
         ) : null}
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-          {error ? <ErrorState message={error} /> : null}
+          {error ? <ErrorState message={error} onRetry={loadTracks} /> : null}
           {!data && !error ? <Loading /> : null}
           {data && visible.length === 0 ? (
             <p className="p-4 text-sm text-ink-dim">No tracks match that filter.</p>
@@ -216,15 +244,15 @@ function ArtistModal({
               track={t}
               queue={visible}
               trailing={
-                <button
-                  type="button"
+                <ConfirmActionButton
+                  onConfirm={() => removeTrack(t.id)}
+                  label={<X size={15} />}
+                  confirmLabel="DEL?"
                   className="btn btn-ghost !min-h-0 !border-0 !bg-transparent p-1.5 text-danger hover:!bg-fill"
-                  onClick={() => void removeTrack(t.id, t.title)}
-                  aria-label={`Delete ${t.title}`}
+                  ariaLabel={`Delete ${t.title}`}
+                  confirmAriaLabel={`Confirm deleting ${t.title}`}
                   title="Delete this track"
-                >
-                  <X size={15} />
-                </button>
+                />
               }
             />
           ))}
@@ -346,15 +374,10 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
 
   const bulkDelete = async () => {
     if (checked.size === 0) return;
-    if (
-      !window.confirm(
-        `Delete ${checked.size} artist(s) and all their tracks? Add them to the blacklist?`,
-      )
-    )
-      return;
     try {
+      const targetNames = [...checked];
       const res = await api.bulkDeleteArtists({
-        artist_names: [...checked],
+        artist_names: targetNames,
         blacklist: true,
         reason: "manual bulk delete",
       });
@@ -362,7 +385,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
       setError(null);
       load();
       setSimilar(null);
-      window.alert(
+      setStatus(
         `Deleted ${res.artists_deleted} artists / ${res.tracks_deleted} tracks · ${res.blacklisted_count} blacklisted`,
       );
     } catch (err) {
@@ -371,12 +394,12 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
   };
 
   const deleteArtist = async (a: { artist: string }) => {
-    if (!window.confirm(`Delete ${a.artist} and all their tracks?`)) return;
     try {
       await api.deleteArtist(a.artist, true, "manual delete");
       setSelected(null);
       load();
       if (similarOpen) loadSimilar();
+      setStatus(`Deleted "${a.artist}" and added to blacklist.`);
     } catch (err) {
       if (err instanceof Error) setError(err.message);
     }
@@ -397,15 +420,11 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
           load();
         }}
       >
-        <div className="flex flex-wrap gap-2">
-          <div className="relative min-w-[160px] flex-1">
-            <Search
-              size={14}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint"
-              aria-hidden
-            />
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          <div className="input-icon-wrap col-span-2 min-w-[160px] sm:flex-1">
+            <Search size={14} aria-hidden />
             <input
-              className="input pl-10"
+              className="input"
               placeholder="Search artists…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -413,7 +432,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
             />
           </div>
           <select
-            className="input !w-auto max-w-[150px]"
+            className="input w-full sm:!w-auto sm:max-w-[150px]"
             value={source}
             onChange={(e) => setSource(e.target.value)}
             aria-label="Source filter"
@@ -424,7 +443,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
             <option value="local">LOCAL</option>
           </select>
           <select
-            className="input !w-auto max-w-[170px]"
+            className="input w-full sm:!w-auto sm:max-w-[170px]"
             value={genre}
             onChange={(e) => setGenre(e.target.value)}
             aria-label="Genre filter"
@@ -437,7 +456,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
             ))}
           </select>
           <input
-            className="input !w-[112px]"
+            className="input w-full sm:!w-[112px]"
             type="number"
             inputMode="numeric"
             placeholder="Min Year"
@@ -446,7 +465,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
             aria-label="Minimum release year"
           />
           <select
-            className="input !w-auto max-w-[170px]"
+            className="input w-full sm:!w-auto sm:max-w-[170px]"
             value={sort}
             onChange={(e) => setSort(e.target.value)}
             aria-label="Sort artists"
@@ -456,7 +475,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
             <option value="name">NAME A–Z</option>
           </select>
           <select
-            className="input !w-auto max-w-[180px]"
+            className="input col-span-2 w-full sm:col-span-1 sm:!w-auto sm:max-w-[180px]"
             value={tasteMode}
             onChange={(e) => setTasteMode(e.target.value)}
             aria-label="Taste mode"
@@ -469,7 +488,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="btn btn-ghost !min-h-0 px-2.5 py-1.5 font-mono text-[10px]"
+            className="btn btn-ghost min-h-10 px-2.5 py-1.5 font-mono text-[10px] sm:!min-h-0"
             aria-pressed={likedOnly}
             onClick={() => setLikedOnly((v) => !v)}
             style={
@@ -482,7 +501,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
           </button>
           <button
             type="button"
-            className="btn btn-ghost !min-h-0 px-2.5 py-1.5 font-mono text-[10px]"
+            className="btn btn-ghost min-h-10 px-2.5 py-1.5 font-mono text-[10px] sm:!min-h-0"
             aria-pressed={similarOpen}
             onClick={toggleSimilar}
             style={
@@ -495,7 +514,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
           </button>
           <button
             type="button"
-            className="btn btn-accent !min-h-0 gap-1 px-2.5 py-1.5 font-mono text-[10px]"
+            className="btn btn-accent min-h-10 gap-1 px-2.5 py-1.5 font-mono text-[10px] sm:!min-h-0"
             aria-expanded={fetchOpen}
             onClick={() => setFetchOpen((v) => !v)}
           >
@@ -503,7 +522,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
           </button>
           <button
             type="button"
-            className="btn btn-ghost !min-h-0 gap-1 px-2.5 py-1.5 font-mono text-[10px]"
+            className="btn btn-ghost min-h-10 gap-1 px-2.5 py-1.5 font-mono text-[10px] sm:!min-h-0"
             onClick={onOpenCleanup}
           >
             <RotateCcw size={12} /> BULK CLEANUP
@@ -625,14 +644,14 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
                         fill={a.is_liked ? "currentColor" : "none"}
                       />
                     </button>
-                    <button
-                      type="button"
+                    <ConfirmActionButton
+                      onConfirm={() => deleteArtist(a)}
+                      label={<Trash2 size={14} />}
+                      confirmLabel="DEL?"
                       className="btn btn-ghost !min-h-0 p-1.5 text-danger"
-                      onClick={() => void deleteArtist(a)}
-                      aria-label={`Delete ${a.artist}`}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                      ariaLabel={`Delete ${a.artist}`}
+                      confirmAriaLabel={`Confirm deleting ${a.artist}`}
+                    />
                   </div>
                 </li>
               ))}
@@ -641,7 +660,7 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
         </section>
       ) : null}
 
-      {error ? <ErrorState message={error} /> : null}
+      {error ? <ErrorState message={error} onRetry={load} /> : null}
       {!data ? (
         <Loading label="LOADING ARTISTS…" />
       ) : data.length === 0 ? (
@@ -672,13 +691,16 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
                 <CheckSquare size={13} /> {allChecked ? "CLEAR" : "SELECT ALL"}
               </button>
               {checked.size > 0 ? (
-                <button
-                  type="button"
+                <ConfirmActionButton
+                  onConfirm={bulkDelete}
+                  label={
+                    <>
+                      <Trash2 size={13} /> DELETE {checked.size} + BLACKLIST
+                    </>
+                  }
+                  confirmLabel={`CONFIRM DELETE ${checked.size}?`}
                   className="btn btn-danger !min-h-0 py-1 font-mono text-[10px]"
-                  onClick={() => void bulkDelete()}
-                >
-                  <Trash2 size={13} /> DELETE {checked.size} + BLACKLIST
-                </button>
+                />
               ) : null}
             </div>
             <span className="hidden font-mono text-[8px] uppercase tracking-[0.12em] text-ink-faint lg:block">
@@ -831,15 +853,15 @@ function ArtistsHub({ onOpenCleanup }: { onOpenCleanup: () => void }) {
                       fill={a.is_liked ? "currentColor" : "none"}
                     />
                   </button>
-                  <button
-                    type="button"
+                  <ConfirmActionButton
+                    onConfirm={() => deleteArtist(a)}
+                    label={<Trash2 size={14} />}
+                    confirmLabel="DEL?"
                     className="btn btn-ghost !min-h-0 p-1.5 text-danger"
-                    onClick={() => void deleteArtist(a)}
-                    aria-label={`Delete ${a.artist}`}
+                    ariaLabel={`Delete ${a.artist}`}
+                    confirmAriaLabel={`Confirm deleting ${a.artist}`}
                     title="Delete artist and blacklist"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  />
                   <Link
                     to={`/dig?mode=foryou&artist=${encodeURIComponent(a.artist)}`}
                     className="btn btn-ghost !min-h-0 px-2 py-1.5 font-mono text-[9px]"
@@ -939,7 +961,7 @@ function CleanupWizard() {
             max={100}
             value={maxTaste}
             onChange={(e) => setMaxTaste(Number(e.target.value))}
-            className="mt-2 w-full accent-accent"
+            className="mt-2 h-6 w-full cursor-pointer accent-accent"
             aria-label="Maximum taste percent"
           />
         </label>
@@ -1058,42 +1080,41 @@ function SeedsBlacklist() {
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      {error ? <ErrorState message={error} /> : null}
+      {error ? (
+        <div className="lg:col-span-2">
+          <ErrorState
+            message={error}
+            onRetry={() => {
+              setError(null);
+              load();
+            }}
+          />
+        </div>
+      ) : null}
 
       <section className="panel self-start">
         <PanelHead
-          title={`PENDING SEEDS${seeds ? ` — ${fmtCount(seeds.total)}` : ""}`}
+          title={`CATALOG SEEDS${seeds ? ` — ${fmtCount(seeds.total)}` : ""}`}
           right={
             <span className="flex flex-wrap gap-1">
-              <button
-                type="button"
+              <ConfirmActionButton
+                onConfirm={() => api.purgeSeeds({ status: "failed" }).then(load).catch((e) => setError(e instanceof Error ? e.message : "Purge failed"))}
+                label="PURGE FAILED"
+                confirmLabel="CONFIRM?"
                 className="btn btn-ghost !min-h-0 py-1 font-mono text-[10px]"
-                onClick={() => {
-                  void api.purgeSeeds({ status: "failed" }).then(load);
-                }}
-              >
-                PURGE FAILED
-              </button>
-              <button
-                type="button"
+              />
+              <ConfirmActionButton
+                onConfirm={() => api.purgeSeeds({ category: "general" }).then(load).catch((e) => setError(e instanceof Error ? e.message : "Purge failed"))}
+                label="PURGE GENERAL"
+                confirmLabel="CONFIRM?"
                 className="btn btn-ghost !min-h-0 py-1 font-mono text-[10px]"
-                onClick={() => {
-                  void api.purgeSeeds({ category: "general" }).then(load);
-                }}
-              >
-                PURGE GENERAL
-              </button>
-              <button
-                type="button"
+              />
+              <ConfirmActionButton
+                onConfirm={() => api.purgeSeeds({ status: "pending" }).then(load).catch((e) => setError(e instanceof Error ? e.message : "Purge failed"))}
+                label="PURGE PENDING"
+                confirmLabel="CONFIRM?"
                 className="btn btn-danger !min-h-0 py-1 font-mono text-[10px]"
-                onClick={() => {
-                  if (window.confirm("Clear every pending seed?")) {
-                    void api.purgeSeeds({ status: "pending" }).then(load);
-                  }
-                }}
-              >
-                PURGE PENDING
-              </button>
+              />
             </span>
           }
         />
@@ -1112,16 +1133,14 @@ function SeedsBlacklist() {
                     {s.source ? ` · ${s.source}` : ""}
                   </span>
                 </span>
-                <button
-                  type="button"
+                <ConfirmActionButton
+                  onConfirm={() => api.deleteSeed(s.name).then(load).catch((e) => setError(e instanceof Error ? e.message : "Delete failed"))}
+                  label={<Trash2 size={14} />}
+                  confirmLabel="DEL?"
                   className="btn btn-ghost !min-h-0 p-2 text-danger"
-                  onClick={() => {
-                    void api.deleteSeed(s.name).then(load);
-                  }}
-                  aria-label={`Delete seed ${s.name}`}
-                >
-                  <Trash2 size={14} />
-                </button>
+                  ariaLabel={`Delete seed ${s.name}`}
+                  confirmAriaLabel={`Confirm deleting seed ${s.name}`}
+                />
               </li>
             ))}
           </ul>
@@ -1180,16 +1199,14 @@ function SeedsBlacklist() {
                   {b.display_name}
                 </span>
                 <span className="pill font-num uppercase text-ink-faint">{b.kind}</span>
-                <button
-                  type="button"
+                <ConfirmActionButton
+                  onConfirm={() => api.removeBlacklistEntry(b.id).then(load).catch((e) => setError(e instanceof Error ? e.message : "Failed to unblock"))}
+                  label={<X size={14} />}
+                  confirmLabel="UNBLOCK?"
                   className="btn btn-ghost !min-h-0 p-2"
-                  onClick={() => {
-                    void api.removeBlacklistEntry(b.id).then(load);
-                  }}
-                  aria-label={`Unblock ${b.display_name}`}
-                >
-                  <X size={14} />
-                </button>
+                  ariaLabel={`Unblock ${b.display_name}`}
+                  confirmAriaLabel={`Confirm unblocking ${b.display_name}`}
+                />
               </li>
             ))}
           </ul>
@@ -1204,15 +1221,17 @@ function HardwarePanel() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadHw = useCallback(() => {
+    setError(null);
     api
       .hardware()
       .then(setHw)
       .catch((err: unknown) => err instanceof Error && setError(err.message));
   }, []);
 
+  useEffect(loadHw, [loadHw]);
+
   const reset = async () => {
-    if (!window.confirm("Delete every stored embedding? You will need to re-index.")) return;
     try {
       const res = await api.resetEmbeddings(true);
       setStatus(`Cleared ${res.cleared} embeddings`);
@@ -1221,7 +1240,7 @@ function HardwarePanel() {
     }
   };
 
-  if (error) return <ErrorState message={error} />;
+  if (error) return <ErrorState message={error} onRetry={loadHw} />;
   if (!hw) return <Loading label="PROBING HARDWARE…" />;
 
   const rows: [string, string][] = [
@@ -1254,9 +1273,16 @@ function HardwarePanel() {
             Rebuild the embedding index from scratch. Tracks and metadata stay; similarity needs a
             new index run.
           </p>
-          <button type="button" className="btn btn-danger" onClick={() => void reset()}>
-            <RotateCcw size={14} /> RESET EMBEDDINGS
-          </button>
+          <ConfirmActionButton
+            onConfirm={reset}
+            label={
+              <>
+                <RotateCcw size={14} /> RESET EMBEDDINGS
+              </>
+            }
+            confirmLabel="CONFIRM RESET?"
+            className="btn btn-danger"
+          />
         </div>
         {status ? (
           <p className="px-3 pb-3 font-mono text-xs text-accent" role="status">
@@ -1294,7 +1320,7 @@ export function LibraryView() {
               aria-selected={sub === t.id}
               data-libmode={t.id}
               onClick={() => setSub(t.id)}
-              className="btn shrink-0 !min-h-0"
+              className="btn shrink-0"
               style={
                 sub === t.id
                   ? {

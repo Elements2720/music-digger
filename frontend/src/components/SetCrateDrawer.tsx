@@ -1,10 +1,10 @@
 import { Download, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useCrateStore } from "../stores/crateStore";
 import { usePlayerStore } from "../stores/playerStore";
 import { api } from "../api/client";
 import type { PlannedSet } from "../types/apiTypes";
-import { Artwork, EmptyState } from "./ui";
+import { Artwork, ConfirmActionButton, EmptyState, useModalFocusTrap } from "./ui";
 import { fmtBpm } from "../lib/format";
 import { useSettingsStore } from "../stores/settingsStore";
 import { buildM3u8, downloadPlaylist } from "../lib/m3u8";
@@ -40,18 +40,7 @@ export function SetCrateDrawer() {
   const [message, setMessage] = useState<string | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, setOpen]);
-
-  useEffect(() => {
-    if (open) drawerRef.current?.focus();
-  }, [open]);
+  useModalFocusTrap(open, drawerRef, () => setOpen(false));
 
   if (!open) return null;
 
@@ -62,12 +51,8 @@ export function SetCrateDrawer() {
     setMessage(null);
     try {
       const name = `Crate ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
-      const created = await api.createPlannedSet({ name, track_ids: tracks.map((t) => t.id) });
-      const updated = await api.updatePlannedSet(created.id, {
-        track_ids: tracks.map((t) => t.id),
-      });
-      void updated;
-      setMessage(`Saved "${name}" — export it from Set Builder`);
+      await api.createPlannedSet({ name, track_ids: tracks.map((t) => t.id) });
+      setMessage(`Saved "${name}" — open Saved Sets in Set Builder`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Save failed");
     } finally {
@@ -103,7 +88,7 @@ export function SetCrateDrawer() {
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/60"
+        className="fixed inset-x-0 top-0 bottom-0 z-50 bg-black/60 lg:bottom-[84px]"
         onClick={() => setOpen(false)}
         aria-hidden
       />
@@ -114,10 +99,7 @@ export function SetCrateDrawer() {
         aria-label="Set Crate"
         tabIndex={-1}
         data-testid="crate-drawer"
-        onKeyDown={(e) => {
-          if (e.key === "Escape") setOpen(false);
-        }}
-        className="fixed inset-y-0 right-0 z-[60] flex w-[300px] max-w-[88vw] flex-col border-l border-line bg-panel focus:outline-none"
+        className="fixed top-0 bottom-0 right-0 z-[60] flex w-[300px] max-w-[88vw] flex-col border-l border-line bg-panel focus:outline-none lg:bottom-[84px]"
       >
         <div className="panel-head">
           <span className="eyebrow">SET CRATE — {tracks.length}</span>
@@ -177,7 +159,7 @@ export function SetCrateDrawer() {
                 </span>
                 <button
                   type="button"
-                  className="btn btn-ghost !min-h-0 p-1 text-ink-faint"
+                  className="btn btn-ghost !min-h-7 !min-w-7 p-1.5 text-ink-faint"
                   onClick={() => remove(t.id)}
                   aria-label={`Remove ${t.title} from crate`}
                 >
@@ -213,16 +195,16 @@ export function SetCrateDrawer() {
             >
               <Download size={14} />
             </button>
-            <button
-              type="button"
+            <ConfirmActionButton
+              onConfirm={clear}
+              label={<Trash2 size={14} />}
+              confirmLabel="CLEAR?"
               className="btn btn-danger !px-2.5"
               disabled={tracks.length === 0}
-              onClick={clear}
-              aria-label="Clear crate"
+              ariaLabel="Clear crate"
+              confirmAriaLabel="Confirm clear crate"
               title="Clear crate"
-            >
-              <Trash2 size={14} />
-            </button>
+            />
           </div>
         </div>
       </aside>
