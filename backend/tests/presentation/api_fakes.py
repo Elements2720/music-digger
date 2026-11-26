@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -85,6 +86,7 @@ class FakeTrackRepository(ITrackRepository):
     ) -> None:
         self.tracks: dict[str, Track] = {track.id: track for track in tracks}
         self.heard: set[str] = set(heard)
+        self.taste_kwargs: dict[str, object] = {}
 
     async def upsert_many(self, tracks: Sequence[Track]) -> int:
         for track in tracks:
@@ -124,7 +126,13 @@ class FakeTrackRepository(ITrackRepository):
         ]
 
     async def find_by_filter(self, search_filter: SearchFilter) -> Sequence[Track]:
-        return ()
+        hits = [
+            t
+            for t in self.tracks.values()
+            if search_filter.matches(t, heard_ids=self.heard)
+        ]
+        hits.sort(key=lambda t: (t.artist.casefold(), t.title.casefold()))
+        return hits[: search_filter.limit]
 
     async def search_tracks(self, query: str, limit: int = 30) -> Sequence[Track]:
         needle = query.strip().casefold()
@@ -148,6 +156,94 @@ class FakeTrackRepository(ITrackRepository):
 
     async def get_heard_ids(self) -> frozenset[str]:
         return frozenset(self.heard)
+
+    async def get_track_taste_ranking(
+        self,
+        *,
+        mode: str = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+        genre: str | None = None,
+        source: str | None = None,
+        liked_weight: float = 2.0,
+        local_weight: float = 1.0,
+        max_per_artist: int = 0,
+        hide_heard: bool = False,
+        exclude_local: bool = False,
+        bpm_min: float | None = None,
+        bpm_max: float | None = None,
+        seed_artist: str | None = None,
+    ) -> dict[str, float]:
+        from domain._validation import normalize_artist_key
+
+        if bpm_min is not None and bpm_max is not None and bpm_min > bpm_max:
+            raise ValueError("bpm_min must be <= bpm_max")
+
+        self.taste_kwargs = {
+            "mode": mode,
+            "genre": genre,
+            "source": source,
+            "liked_weight": liked_weight,
+            "local_weight": local_weight,
+            "max_per_artist": max_per_artist,
+            "hide_heard": hide_heard,
+            "exclude_local": exclude_local,
+            "bpm_min": bpm_min,
+            "bpm_max": bpm_max,
+            "seed_artist": seed_artist,
+        }
+        liked_norm = {normalize_artist_key(k) for k in liked_artist_keys}
+        seed_norm = (
+            normalize_artist_key(seed_artist)
+            if seed_artist is not None and seed_artist.strip()
+            else None
+        )
+        if seed_norm is not None and not any(
+            t.embedding is not None and normalize_artist_key(t.artist) == seed_norm
+            for t in self.tracks.values()
+        ):
+            return {}
+        scores: dict[str, float] = {}
+        for t in self.tracks.values():
+            if t.embedding is None:
+                continue
+            if genre and (t.genre or "").casefold() != genre.casefold():
+                continue
+            if source and t.source != source:
+                continue
+            if bpm_min is not None and (t.bpm is None or t.bpm.value < bpm_min):
+                continue
+            if bpm_max is not None and (t.bpm is None or t.bpm.value > bpm_max):
+                continue
+            if hide_heard and t.id in self.heard:
+                continue
+            if exclude_local and t.source == "local":
+                continue
+            if seed_norm is None:
+                is_local = t.source == "local"
+                is_liked = normalize_artist_key(t.artist) in liked_norm
+                if mode == "local" and not is_local:
+                    continue
+                if mode == "liked" and not is_liked:
+                    continue
+            else:
+                is_liked = normalize_artist_key(t.artist) == seed_norm
+            base = 80.0 + (hash(t.id) % 1500) / 100.0
+            if (seed_norm is not None or mode == "both") and is_liked:
+                base = min(99.0, base + 5.0)
+            scores[t.id] = min(99.0, base)
+        if max_per_artist > 0:
+            kept: dict[str, float] = {}
+            seen: dict[str, int] = {}
+            for tid, score in sorted(
+                scores.items(), key=lambda kv: kv[1], reverse=True
+            ):
+                artist = normalize_artist_key(self.tracks[tid].artist)
+                if seen.get(artist, 0) >= max_per_artist:
+                    continue
+                seen[artist] = seen.get(artist, 0) + 1
+                kept[tid] = score
+            scores = kept
+        return scores
 
     async def count(self) -> int:
         return len(self.tracks)
@@ -338,7 +434,40 @@ class FakeTrackRepository(ITrackRepository):
             if tid in self.tracks and self.tracks[tid].embedding is not None
         }
 
-    async def get_artist_taste_scores(self) -> tuple[dict[str, float], int]:
+    async def list_artists_summary_by_names(
+        self,
+        artist_names: Sequence[str],
+        *,
+        genre: str | None = None,
+        source: str | None = None,
+        taste_scores: Mapping[str, float | None] | None = None,
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        wanted = {name for name in artist_names}
+        in_scope, total = await self.list_artists_summary(
+            genre=genre,
+            source=source,
+            taste_mode="both",
+            liked_artist_keys=liked_artist_keys,
+            limit=100_000,
+        )
+        matched = []
+        for summary in in_scope:
+            if summary.artist not in wanted:
+                continue
+            if taste_scores is not None and summary.artist in taste_scores:
+                summary = replace(
+                    summary, taste_match_percent=taste_scores[summary.artist]
+                )
+            matched.append(summary)
+        return tuple(matched), total
+
+    async def get_artist_taste_scores(
+        self,
+        *,
+        mode: str = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[dict[str, float], int]:
         local_count = sum(1 for t in self.tracks.values() if t.source == "local")
         return ({}, local_count)
 

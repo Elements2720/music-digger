@@ -110,7 +110,7 @@ backend/
         schemas.py                                # Pydantic schemas, JobKind literal, Blacklist schemas, SetHelper schemas & analytics serializers
         routes/
           __init__.py
-          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig, analytics, artists, bulk delete, bulk cleanup, blacklist, liked-artists)
+          catalog.py                              # /api/catalog endpoints (tracks, seeds, stats, dig, analytics, artists, bulk delete, bulk cleanup preview w/ skipped_count, blacklist, liked-artists)
           hardware.py                             # /api/hardware endpoints (GPU, VRAM, RAM, FFmpeg probe)
           jobs.py                                 # /api/jobs endpoints (start, cancel, snapshot, SSE stream)
           set_helper.py                           # /api/set-helper endpoints (suggest-next, bridge, auto-sequence, evaluate, sets CRUD, export.m3u8)

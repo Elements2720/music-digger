@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
 import pytest
@@ -199,6 +199,43 @@ class FakeTrackRepository(ITrackRepository):
                 )
             )
         return tuple(summaries[offset : offset + limit]), len(summaries)
+
+    async def list_artists_summary_by_names(
+        self,
+        artist_names: Sequence[str],
+        *,
+        genre: str | None = None,
+        source: str | None = None,
+        taste_scores: Mapping[str, float | None] | None = None,
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        wanted = {name for name in artist_names}
+        in_scope, total = await self.list_artists_summary(
+            genre=genre,
+            source=source,
+            taste_mode="both",
+            liked_artist_keys=liked_artist_keys,
+            limit=100_000,
+        )
+        matched = []
+        for summary in in_scope:
+            if summary.artist not in wanted:
+                continue
+            if taste_scores is not None and summary.artist in taste_scores:
+                summary = replace(
+                    summary, taste_match_percent=taste_scores[summary.artist]
+                )
+            matched.append(summary)
+        return tuple(matched), total
+
+    async def get_artist_taste_scores(
+        self,
+        *,
+        mode: str = "both",
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[dict[str, float], int]:
+        scores: dict[str, float] = getattr(self, "artist_taste_map", {})
+        return (dict(scores), len(liked_artist_keys))
 
 
 class FakeSeedRepository(ISeedRepository):
@@ -676,3 +713,51 @@ async def test_bulk_cleanup_preview_and_execute() -> None:
     assert await track_repo.get_by_id("t2") is not None
     assert await track_repo.get_by_id("t3") is not None
     assert await track_repo.get_by_id("t4") is not None
+
+
+@pytest.mark.asyncio
+async def test_bulk_cleanup_reports_skipped_unscored_artists() -> None:
+    """Regression: unscored artists were silently dropped from cleanup previews.
+
+    The old resolver filtered them out with no counter, so the wizard showed
+    "0 ARTISTS" (or a bare low count) with no explanation. They must now be
+    reported through ``skipped_count`` and never matched.
+    """
+    t1 = Track(id="t1", title="Trk1", artist="Scored Low", genre="Techno")
+    t2 = Track(id="t2", title="Trk2", artist="Unscored A", genre="Techno")
+    t3 = Track(id="t3", title="Trk3", artist="Unscored B", genre="Techno")
+    t4 = Track(id="t4", title="Trk4", artist="Scored High", genre="Techno")
+
+    track_repo = FakeTrackRepository([t1, t2, t3, t4])
+    track_repo.artist_taste_map = {  # type: ignore
+        "Scored Low": 20.0,
+        "Scored High": 90.0,
+    }
+    manage = ManageCatalog(
+        track_repository=track_repo,
+        seed_repository=FakeSeedRepository(),
+        blacklist_repository=FakeBlacklistRepository(),
+    )
+
+    preview = await manage.preview_bulk_cleanup(
+        BulkCleanupCriteria(max_taste_percent=40.0)
+    )
+
+    # Only the below-threshold artist matches...
+    assert preview.artist_count == 1
+    assert preview.sample_artists[0].artist == "Scored Low"
+    # ...and everything else in scope (2 unscored + 1 above threshold) is reported.
+    assert preview.skipped_count == 3
+
+    # A catalog with no taste scores at all matches nothing but explains why.
+    empty_repo = FakeTrackRepository([t1, t2, t3, t4])
+    manage_empty = ManageCatalog(
+        track_repository=empty_repo,
+        seed_repository=FakeSeedRepository(),
+        blacklist_repository=FakeBlacklistRepository(),
+    )
+    empty_preview = await manage_empty.preview_bulk_cleanup(
+        BulkCleanupCriteria(max_taste_percent=40.0)
+    )
+    assert empty_preview.artist_count == 0
+    assert empty_preview.skipped_count == 4

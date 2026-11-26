@@ -96,12 +96,15 @@ class BulkCleanupPreview:
     artist_count: int
     track_count: int
     sample_artists: tuple[ArtistSummary, ...]
+    skipped_count: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.artist_count, int) or self.artist_count < 0:
             raise ValueError("artist_count must be a non-negative integer")
         if not isinstance(self.track_count, int) or self.track_count < 0:
             raise ValueError("track_count must be a non-negative integer")
+        if not isinstance(self.skipped_count, int) or self.skipped_count < 0:
+            raise ValueError("skipped_count must be a non-negative integer")
         object.__setattr__(self, "sample_artists", tuple(self.sample_artists))
 
 
@@ -329,20 +332,41 @@ class ManageCatalog:
 
     async def _resolve_cleanup_matches(
         self, criteria: BulkCleanupCriteria
-    ) -> list[ArtistSummary]:
+    ) -> tuple[list[ArtistSummary], int]:
+        """Return (matched_artists, total_in_scope_artists)."""
         liked_keys: frozenset[str] = frozenset()
         if self._liked_artist_repository is not None:
             liked_keys = await self._liked_artist_repository.get_liked_keys()
 
-        summaries, _ = await self._track_repository.list_artists_summary(
-            genre=criteria.genre,
-            source=criteria.source,
-            taste_mode=criteria.taste_mode,
-            liked_artist_keys=liked_keys,
-            sort="taste_asc",
-            limit=100_000,
-            offset=0,
-        )
+        if criteria.max_taste_percent is not None:
+            taste_scores, _ = await self._track_repository.get_artist_taste_scores(
+                mode=criteria.taste_mode, liked_artist_keys=liked_keys
+            )
+            candidates = [
+                name
+                for name, pct in taste_scores.items()
+                if pct < criteria.max_taste_percent
+            ]
+            (
+                summaries,
+                in_scope,
+            ) = await self._track_repository.list_artists_summary_by_names(
+                candidates,
+                genre=criteria.genre,
+                source=criteria.source,
+                taste_scores=taste_scores,
+                liked_artist_keys=liked_keys,
+            )
+        else:
+            summaries, in_scope = await self._track_repository.list_artists_summary(
+                genre=criteria.genre,
+                source=criteria.source,
+                taste_mode=criteria.taste_mode,
+                liked_artist_keys=liked_keys,
+                sort="tracks_desc",
+                limit=100_000,
+                offset=0,
+            )
 
         matched: list[ArtistSummary] = []
         for artist in summaries:
@@ -359,20 +383,18 @@ class ManageCatalog:
                 continue
             matched.append(artist)
 
-        return matched
+        return matched, in_scope
 
     async def preview_bulk_cleanup(
         self, criteria: BulkCleanupCriteria, *, sample_limit: int = 25
     ) -> BulkCleanupPreview:
         """Preview artists matching cleanup criteria without deleting anything."""
-        matched = await self._resolve_cleanup_matches(criteria)
-        artist_count = len(matched)
-        track_count = sum(a.track_count for a in matched)
-        sample_artists = tuple(matched[:sample_limit])
+        matched, in_scope = await self._resolve_cleanup_matches(criteria)
         return BulkCleanupPreview(
-            artist_count=artist_count,
-            track_count=track_count,
-            sample_artists=sample_artists,
+            artist_count=len(matched),
+            track_count=sum(a.track_count for a in matched),
+            sample_artists=tuple(matched[:sample_limit]),
+            skipped_count=max(in_scope - len(matched), 0),
         )
 
     async def execute_bulk_cleanup(
@@ -383,7 +405,7 @@ class ManageCatalog:
         reason: str | None = None,
     ) -> BulkDeleteArtistsResult:
         """Execute bulk cleanup for artists matching criteria."""
-        matched = await self._resolve_cleanup_matches(criteria)
+        matched, _ = await self._resolve_cleanup_matches(criteria)
         if not matched:
             return BulkDeleteArtistsResult(
                 artists_requested=0,

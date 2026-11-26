@@ -9,7 +9,7 @@ blocking the event loop. Remote services use the async interfaces in
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from ..entities.analytics import ArtistSummary, CatalogAnalytics, SeedBreakdown
@@ -183,6 +183,24 @@ class ITrackRepository(ABC):
         liked_only: bool = False,
     ) -> tuple[Sequence[ArtistSummary], int]:
         """List artists summary with counts and genres, returning (artists, total_count)."""
+        return ((), 0)
+
+    async def list_artists_summary_by_names(
+        self,
+        artist_names: Sequence[str],
+        *,
+        genre: str | None = None,
+        source: str | None = None,
+        taste_scores: Mapping[str, float | None] | None = None,
+        liked_artist_keys: frozenset[str] = frozenset(),
+    ) -> tuple[Sequence[ArtistSummary], int]:
+        """Summaries for exactly these artist names, scoped by genre/source.
+
+        Returns (summaries, total_in_scope) where ``total_in_scope`` counts all
+        distinct artists matching the genre/source filters regardless of the
+        requested names. ``taste_scores`` (artist name -> percent) is attached
+        to each summary; names absent from it score ``None``.
+        """
         return ((), 0)
 
     async def get_artist_taste_scores(

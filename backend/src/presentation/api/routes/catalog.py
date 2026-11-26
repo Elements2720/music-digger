@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -101,12 +101,23 @@ async def filter_catalog(
     touches CLAP text embeddings.
     """
     keys = (key.strip(),) if key and key.strip() else ()
+    clean_source = source.strip().lower() if source and source.strip() else None
+    has_local: bool | None = None
+    source_filter: str | None = None
+    if clean_source == "local":
+        has_local = True
+    elif clean_source == "remote":
+        has_local = False
+    elif clean_source is not None:
+        source_filter = clean_source
     try:
         search_filter = SearchFilter(
             bpm_min=bpm_min,
             bpm_max=bpm_max,
             camelot_keys=keys,
             genre_filter=q.strip() if q and q.strip() else None,
+            has_local=has_local,
+            source_filter=source_filter,
             limit=limit,
         )
     except ValueError as err:
@@ -114,10 +125,6 @@ async def filter_catalog(
 
     tracks = await container.track_repository.find_by_filter(search_filter)
     heard = await container.track_repository.get_heard_ids()
-    if source == "local":
-        tracks = [t for t in tracks if t.local_path]
-    elif source == "remote":
-        tracks = [t for t in tracks if not t.local_path]
     return {"tracks": [track_payload(t, heard=heard) for t in tracks]}
 
 
@@ -154,6 +161,8 @@ async def dig(
     limit: int = Query(10, ge=1, le=500),
     bpm_tolerance: float | None = Query(None, ge=0),
     harmonic: bool = Query(False),
+    harmonic_mode: Literal["strict", "energy_boost"] = Query("strict"),
+    max_per_artist: int = Query(0, ge=0, le=50),
     genre: str | None = Query(None),
     genres: str | None = Query(None),
     min_year: int | None = Query(None, ge=1900, le=2100),
@@ -179,6 +188,8 @@ async def dig(
             search_filter,
             bpm_tolerance=bpm_tolerance,
             harmonic=harmonic,
+            harmonic_mode=harmonic_mode,
+            max_per_artist=max_per_artist,
         )
     except TrackNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -399,6 +410,69 @@ async def get_artists_summary(
     }
 
 
+@router.get("/catalog/taste-ranking")
+async def get_taste_ranking(
+    mode: str = Query("both"),
+    genre: str | None = Query(None),
+    source: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    liked_weight: float = Query(2.0, ge=0.0, le=10.0),
+    local_weight: float = Query(1.0, ge=0.0, le=10.0),
+    max_per_artist: int = Query(0, ge=0, le=50),
+    hide_heard: bool = Query(False),
+    exclude_local: bool = Query(False),
+    bpm_min: float | None = Query(None, ge=20.0, le=300.0),
+    bpm_max: float | None = Query(None, ge=20.0, le=300.0),
+    artist: str | None = Query(None),
+    container: Any = Depends(get_container),
+) -> dict[str, Any]:
+    """Rank the full embedded catalog against the CLAP taste vector.
+
+    ``mode`` selects the taste profile seeds: ``local`` (downloaded tracks),
+    ``liked`` (liked artists' catalog tracks) or ``both`` (liked weighted 2x by
+    default; ``liked_weight``/``local_weight`` tune that blend for
+    ``mode="both"``). ``artist`` overrides those seeds with a specific artist's
+    embedded tracks. ``bpm_min``/``bpm_max``, ``max_per_artist``,
+    ``hide_heard``, and ``exclude_local`` narrow the ranked candidates.
+    """
+    if bpm_min is not None and bpm_max is not None and bpm_min > bpm_max:
+        raise HTTPException(status_code=422, detail="bpm_min must be <= bpm_max")
+    liked_keys = (
+        await container.liked_artist_repository.get_liked_keys()
+        if getattr(container, "liked_artist_repository", None)
+        else frozenset()
+    )
+    taste_mode = mode if mode in ("local", "liked", "both") else "both"
+    try:
+        ranking = await container.track_repository.get_track_taste_ranking(
+            mode=taste_mode,
+            liked_artist_keys=liked_keys,
+            genre=genre,
+            source=source,
+            liked_weight=liked_weight,
+            local_weight=local_weight,
+            max_per_artist=max_per_artist,
+            hide_heard=hide_heard,
+            exclude_local=exclude_local,
+            bpm_min=bpm_min,
+            bpm_max=bpm_max,
+            seed_artist=artist,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ordered = sorted(ranking.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    tracks = await container.track_repository.get_many([tid for tid, _ in ordered])
+    scores = dict(ordered)
+    heard = await container.track_repository.get_heard_ids()
+    matches = [
+        {**track_payload(t, heard=heard), "taste_percent": scores[t.id]}
+        for t in tracks
+        if t.id in scores
+    ]
+    matches.sort(key=lambda m: m["taste_percent"], reverse=True)
+    return {"matches": matches, "total": len(matches), "mode": taste_mode}
+
+
 @router.get("/catalog/artists/{artist_name}/tracks")
 async def get_artist_tracks(
     artist_name: str,
@@ -486,6 +560,7 @@ async def preview_bulk_cleanup_endpoint(
     return {
         "artist_count": preview.artist_count,
         "track_count": preview.track_count,
+        "skipped_count": preview.skipped_count,
         "sample_artists": [artist_summary_payload(a) for a in preview.sample_artists],
     }
 
